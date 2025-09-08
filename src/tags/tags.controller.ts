@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, UseGuards } from '@nestjs/common';
+import { Controller, Post, Get, Body, UseGuards, Patch } from '@nestjs/common';
 import { TagsService } from './tags.service';
 import { TagDto } from './dtos/tag.dto';
 import { AuthGuard } from 'src/auth/auth.guard';
@@ -20,4 +20,9 @@ export class TagsController {
     console.log(tagDto);
     return this.tagsService.create(tagDto);
   }
+
+  @Patch()
+  @UseGuards(AuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  update(@Body() tagDto: TagDto){}
 }
