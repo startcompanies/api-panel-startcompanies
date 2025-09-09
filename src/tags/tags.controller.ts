@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, UseGuards, Patch } from '@nestjs/common';
+import { Controller, Post, Get, Body, UseGuards, Patch, Delete, Param } from '@nestjs/common';
 import { TagsService } from './tags.service';
 import { TagDto } from './dtos/tag.dto';
 import { AuthGuard } from 'src/auth/auth.guard';
@@ -9,6 +9,8 @@ export class TagsController {
   constructor(private readonly tagsService: TagsService) {}
 
   @Get()
+  @UseGuards(AuthGuard) // Este endpoint requiere un token JWT válido
+  @ApiBearerAuth('JWT-auth')
   findAll() {
     return this.tagsService.findAll();
   }
@@ -17,12 +19,13 @@ export class TagsController {
   @UseGuards(AuthGuard) // Este endpoint requiere un token JWT válido
   @ApiBearerAuth('JWT-auth')
   create(@Body() tagDto: TagDto) {
-    console.log(tagDto);
     return this.tagsService.create(tagDto);
   }
 
-  @Patch()
-  @UseGuards(AuthGuard)
+  @Patch(':id')
+  @UseGuards(AuthGuard) // Este endpoint requiere un token JWT válido
   @ApiBearerAuth('JWT-auth')
-  update(@Body() tagDto: TagDto){}
+  update(@Param('id') id: string, @Body() tagDto: TagDto){
+    this.tagsService.updateTagById(id, tagDto);
+  }
 }
