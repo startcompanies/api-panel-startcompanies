@@ -1,7 +1,7 @@
 import { Category } from "../../categories/entities/category.entity";
 import { Tag } from "../../tags/entities/tag.entity";
 import { User } from "../../user/entities/user.entity";
-import { Column, CreateDateColumn, Entity, JoinTable, ManyToMany, ManyToOne, PrimaryGeneratedColumn } from "typeorm";
+import { Column, CreateDateColumn, Entity, JoinColumn, JoinTable, ManyToMany, ManyToOne, PrimaryGeneratedColumn } from "typeorm";
 
 @Entity('posts')
 export class Post {
@@ -30,7 +30,8 @@ export class Post {
     published_at: Date
 
     // Relación Many-To-One con User (un post tiene solo un autor)
-    @ManyToOne(() => User, (user) => user.posts)
+    @ManyToOne(() => User, (user) => user.posts, {onDelete: 'CASCADE'})
+    @JoinColumn({name: 'user_id'})
     user: User;
 
     // Relación Many-to-Many con Category (un post puede tener varias categorías)

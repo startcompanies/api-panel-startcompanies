@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { CategoriesService } from './categories.services';
 import { AuthGuard } from 'src/auth/auth.guard';
 import { ApiBearerAuth } from '@nestjs/swagger';
@@ -7,6 +15,11 @@ import { CategoryDTO } from './dtos/category.dto';
 @Controller('categories')
 export class CategoriesController {
   constructor(private readonly categoriesService: CategoriesService) {}
+
+  @Get('with-posts-count')
+  async findAllWithPublishedPostsCount() {
+    return this.categoriesService.findAllWithPublishedPostsCount();
+  }
 
   @Get()
   @UseGuards(AuthGuard) // Este endpoint requiere un token JWT válido
