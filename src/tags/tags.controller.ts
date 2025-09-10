@@ -15,6 +15,13 @@ export class TagsController {
     return this.tagsService.findAll();
   }
 
+  @Get(':id')
+  @UseGuards(AuthGuard) // Este endpoint requiere un token JWT válido
+  @ApiBearerAuth('JWT-auth')
+  findById(@Param('id') id: string) {
+    return this.tagsService.findById(id);
+  }
+
   @Post()
   @UseGuards(AuthGuard) // Este endpoint requiere un token JWT válido
   @ApiBearerAuth('JWT-auth')

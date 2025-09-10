@@ -28,4 +28,11 @@ export class CategoriesController {
   update(@Param('id') id: string, @Body() categoryDto: CategoryDTO) {
     return this.categoriesService.updateCategoryById(id, categoryDto);
   }
+
+  @Get(':id')
+  @UseGuards(AuthGuard) // Este endpoint requiere un token JWT válido
+  @ApiBearerAuth('JWT-auth')
+  findById(@Param('id') id: string) {
+    return this.categoriesService.findById(id);
+  }
 }

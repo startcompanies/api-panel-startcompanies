@@ -14,7 +14,7 @@ export class TagDto {
   })
   name: string;
 
-  @ApiProperty({
+  /*@ApiProperty({
     example: 'impuestos',
     description: 'El slug del tag para URLs amigables',
     maxLength: 50,
@@ -24,5 +24,5 @@ export class TagDto {
   @MaxLength(50, {
     message: 'El slug del tag no puede exceder los 50 caracteres.',
   })
-  slug: string;
+  slug: string;*/
 }

@@ -14,7 +14,7 @@ export class CategoryDTO {
   })
   name: string;
 
-  @ApiProperty({
+  /*@ApiProperty({
     example: 'llc',
     description: 'El nombre del slug para URLs amigables',
     maxLength: 50,
@@ -24,5 +24,5 @@ export class CategoryDTO {
   @MaxLength(50, {
     message: 'El nombre del slug no puede exceder los 50 caracteres',
   })
-  slug: string;
+  slug: string;*/
 }
