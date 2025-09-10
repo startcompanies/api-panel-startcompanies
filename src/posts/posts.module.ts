@@ -1,4 +1,11 @@
 import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { Post } from './entities/post.entity';
+import { User } from '../user/entities/user.entity';
+import { Category } from '../categories/entities/category.entity';
+import { Tag } from '../tags/entities/tag.entity';
 
-@Module({})
+@Module({
+    imports: [TypeOrmModule.forFeature([Post, User, Category, Tag])]
+})
 export class PostsModule {}

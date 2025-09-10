@@ -1,4 +1,5 @@
-import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+import { Post } from '../../posts/entities/post.entity';
+import { Column, CreateDateColumn, Entity, OneToMany, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
 
 @Entity('users')
 export class User {
@@ -40,4 +41,8 @@ export class User {
     default: () => 'CURRENT_TIMESTAMP',
   })
   updatedAt: Date;
+
+  // Relación de One-to-Many: un usuario puede tener muchos posts
+  @OneToMany(() => Post, (post) => post.user)
+  posts: Post[]
 }
