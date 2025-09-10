@@ -41,4 +41,16 @@ export class UserService {
       throw new InternalServerErrorException('No se pudo crear el usuario');
     }
   }
+  /**
+   * Obtiene todos los usuarios de la base de datos.
+   * @returns {Promise<User[]>} Lista de todos los usuarios.
+   */
+  async findAll(): Promise<User[]> {
+    try {
+      return await this.userRepository.find();
+    } catch (e) {
+      console.error('Error al obtener todos los usuarios:', e);
+      throw new InternalServerErrorException('No se pudieron obtener los usuarios');
+    }
+  }
 }
