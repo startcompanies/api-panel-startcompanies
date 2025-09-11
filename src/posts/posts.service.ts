@@ -88,4 +88,37 @@ export class PostsService {
       this.exceptionsService.handleDBExceptions(err);
     }
   }
+
+  // Nuevo método para listar posts por slug de categoría
+  async findAllByCategorySlug(categorySlug: string): Promise<Post[] | undefined> {
+    try {
+      const posts = await this.postsRepository
+        .createQueryBuilder('post')
+        .leftJoinAndSelect('post.user', 'user')
+        .leftJoinAndSelect('post.categories', 'category')
+        .leftJoinAndSelect('post.tags', 'tag')
+        .where('category.slug = :slug', { slug: categorySlug })
+        .andWhere('post.is_published = :isPublished', { isPublished: true })
+        .select([
+          'post.title',
+          'post.slug',
+          'post.excerpt',
+          'post.image_url',
+          'post.published_at',
+          'user.id',
+          'user.first_name',
+          'user.last_name',
+          'category.name',
+          'category.slug',
+          'tag.name',
+          'tag.slug'
+        ])
+        .orderBy('post.published_at', 'DESC')
+        .getMany();
+
+      return posts;
+    } catch (error) {
+      this.exceptionsService.handleDBExceptions(error);
+    }
+  }
 }

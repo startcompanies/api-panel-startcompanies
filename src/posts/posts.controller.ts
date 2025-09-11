@@ -20,6 +20,12 @@ export class PostsController {
     return this.postsService.findOneBySlug(slug);
   }
 
+  // Obtener todos los posts correspondientes a una categoría
+  @Get('get-from-portal/category/:slug')
+  async findAllPostsByCategorySlug(@Param('slug') slug: string){
+    return this.postsService.findAllByCategorySlug(slug);
+  }
+
   @HttpPost()
   @UseGuards(AuthGuard)
   @ApiBearerAuth('JWT-auth')
