@@ -6,6 +6,16 @@ import { configService } from './config/config.service';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  // Habilitar CORS para permitir peticiones desde dominios especificos
+  app.enableCors({
+    origin: [
+      'http://localhost:4200',
+      'https://startcompanies.us/'
+    ],
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    credentials: true
+  });
+
   // Configuración de Swagger
   const config = new DocumentBuilder()
     .setTitle('API de Blog')
