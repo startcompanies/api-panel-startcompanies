@@ -21,6 +21,7 @@ export class PostsService {
     private readonly exceptionsService: HandleExceptionsService,
   ) {}
 
+  // Crear post
   async create(postDto: PostDto, userId: string): Promise<Post | undefined> {
     const { categories_ids, tags_ids, ...rest } = postDto;
 
@@ -90,7 +91,9 @@ export class PostsService {
   }
 
   // Nuevo método para listar posts por slug de categoría
-  async findAllByCategorySlug(categorySlug: string): Promise<Post[] | undefined> {
+  async findAllByCategorySlug(
+    categorySlug: string,
+  ): Promise<Post[] | undefined> {
     try {
       const posts = await this.postsRepository
         .createQueryBuilder('post')
@@ -111,7 +114,7 @@ export class PostsService {
           'category.name',
           'category.slug',
           'tag.name',
-          'tag.slug'
+          'tag.slug',
         ])
         .orderBy('post.published_at', 'DESC')
         .getMany();
@@ -119,6 +122,88 @@ export class PostsService {
       return posts;
     } catch (error) {
       this.exceptionsService.handleDBExceptions(error);
+    }
+  }
+
+  // Get post by ID
+  async findOneById(id: string): Promise<Post | undefined | null> {
+    try {
+      const post = await this.postsRepository.findOne({
+        where: { id: Number(id) },
+        relations: ['user', 'categories', 'tags'],
+      });
+
+      if (!post) {
+        this.exceptionsService.handleNotFoundExceptions(id);
+      }
+
+      return post;
+    } catch (err) {
+      this.exceptionsService.handleDBExceptions(err);
+    }
+  }
+
+  // Publicar post
+  async publishPostById(
+    id: string,
+    isPublished: boolean,
+  ): Promise<Post | undefined> {
+    try {
+      const post: any = await this.postsRepository.findOne({
+        where: { id: Number(id) },
+      });
+
+      if (!post) {
+        this.exceptionsService.handleNotFoundExceptions(id);
+      }
+
+      // Actualiza el estado de publicación a 'true'
+      post.is_published = isPublished;
+
+      // Guarda los cambios en la base de datos
+      return await this.postsRepository.save(post);
+    } catch (err) {
+      this.exceptionsService.handleDBExceptions(err);
+    }
+  }
+
+  //Actualizar post
+  async updatePost(
+    id: string,
+    postDto: PostDto,
+  ): Promise<Post | undefined | null> {
+    const { categories_ids, tags_ids, ...rest } = postDto;
+
+    try {
+      const post: any = await this.postsRepository.findOne({ where: { id: Number(id) } });
+
+      if (!post) {
+        this.exceptionsService.handleNotFoundExceptions(id);
+      }
+
+      // Actualiza los campos principales
+      post.title = postDto.title;
+      post.content = postDto.content;
+      post.image_url = postDto.image_url ?? '';
+      post.published_at = postDto.published_at
+        ? new Date(postDto.published_at)
+        : post.published_at; // Mantiene la fecha si no se provee una nueva
+      post.slug = slugify(postDto.title, { lower: true });
+      post.excerpt = postDto.content.substring(0, 150) + '...';
+
+      // Actualiza las relaciones
+      if (categories_ids) {
+        post.categories =
+          await this.categoriesRepository.findByIds(categories_ids);
+      }
+      if (tags_ids) {
+        post.tags = await this.categoriesRepository.findByIds(tags_ids);
+      }
+
+      // Guarda los cambios y retorna el post actualizado
+      return await this.postsRepository.save(post);
+    } catch (err) {
+      this.exceptionsService.handleDBExceptions(err);
     }
   }
 }
