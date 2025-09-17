@@ -9,6 +9,7 @@ import { CategoriesModule } from './categories/categories.module';
 import { TagsModule } from './tags/tags.module';
 import { AuthModule } from './auth/auth.module';
 import { CommonModule } from './common/common.module';
+import { UploadFileModule } from './upload-file/upload-file.module';
 
 @Module({
   imports: [
@@ -19,7 +20,8 @@ import { CommonModule } from './common/common.module';
     CategoriesModule,
     TagsModule,
     AuthModule,
-    CommonModule
+    CommonModule,
+    UploadFileModule
   ],
   controllers: [],
   providers: [AppService],

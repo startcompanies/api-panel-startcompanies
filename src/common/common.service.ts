@@ -1,8 +1,10 @@
 import {
   BadRequestException,
+  HttpStatus,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 
 @Injectable()
@@ -93,6 +95,44 @@ export class HandleExceptionsService {
       errorDetail: `App with id ${easxAppId} not found `,
       message: 'Aplicación no encontrada',
       code: 404,
+    });
+  }
+
+  handleBadRequestFileException() {
+    throw new BadRequestException({
+      errorDetail: 'No se ha subido ningún archivo.',
+      message: 'No se ha subido ningún archivo.',
+      code: HttpStatus.BAD_REQUEST,
+    });
+  }
+
+  /**
+   * Maneja errores específicos del SDK de AWS.
+   */
+  handleAwsS3Exception(error: any) {
+    // Error 403: El cliente no tiene los permisos para realizar la acción.
+    if (error.Code === 'SignatureDoesNotMatch') {
+      throw new UnauthorizedException({
+        errorDetail: 'La firma de la solicitud no coincide. Verifique sus credenciales.',
+        message: 'Credenciales de AWS S3 incorrectas o expiradas.',
+        code: HttpStatus.UNAUTHORIZED,
+      });
+    }
+
+    // Manejo de otros posibles errores de AWS
+    if (error.Code === 'NoSuchBucket' || error.Code === 'NoSuchKey') {
+      throw new NotFoundException({
+        errorDetail: error.message,
+        message: 'El bucket o la clave (archivo) no fue encontrado.',
+        code: HttpStatus.NOT_FOUND,
+      });
+    }
+
+    // Excepción genérica para cualquier otro error de S3
+    throw new InternalServerErrorException({
+      errorDetail: error,
+      message: 'Error en el servicio de S3. Revise los registros del servidor.',
+      code: HttpStatus.INTERNAL_SERVER_ERROR,
     });
   }
 }
