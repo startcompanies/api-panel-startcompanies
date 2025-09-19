@@ -38,7 +38,11 @@ export class PostsService {
       );
       const tags = await this.categoriesRepository.findByIds(tags_ids || []);
 
-      const slug = slugify(postDto.title, { lower: true });
+      const slug = slugify(postDto.title, {
+        lower: true,
+        strict: true,
+        remove: /[:.]/g,
+      });
       const excerpt = postDto.content.substring(0, 150) + '...';
 
       // Crear la entidad de forma segura
@@ -175,7 +179,9 @@ export class PostsService {
     const { categories_ids, tags_ids, ...rest } = postDto;
 
     try {
-      const post: any = await this.postsRepository.findOne({ where: { id: Number(id) } });
+      const post: any = await this.postsRepository.findOne({
+        where: { id: Number(id) },
+      });
 
       if (!post) {
         this.exceptionsService.handleNotFoundExceptions(id);
@@ -188,7 +194,11 @@ export class PostsService {
       post.published_at = postDto.published_at
         ? new Date(postDto.published_at)
         : post.published_at; // Mantiene la fecha si no se provee una nueva
-      post.slug = slugify(postDto.title, { lower: true });
+      post.slug = slugify(postDto.title, {
+        lower: true,
+        strict: true,
+        remove: /[:.]/g,
+      });
       post.excerpt = postDto.content.substring(0, 150) + '...';
 
       // Actualiza las relaciones
