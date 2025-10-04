@@ -1,17 +1,45 @@
-import { Controller, Post, Body, Get, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  Get,
+  UseGuards,
+  Patch,
+  Param,
+  Request,
+} from '@nestjs/common';
 import { UserService } from './user.service';
 import { UserDto } from './dtos/user.dto';
 import { ApiBearerAuth } from '@nestjs/swagger';
 import { AuthGuard } from 'src/auth/auth.guard';
+import { UpdateUserDto } from './dtos/update_user.dto';
 
 @Controller('users')
 export class UserController {
   constructor(private readonly userService: UserService) {}
 
   @Get()
-  @UseGuards(AuthGuard) // Este endpoint requiere un token JWT válido
+  @UseGuards(AuthGuard)
   @ApiBearerAuth('JWT-auth')
-  findAll() {
-    return this.userService.findAll();
+  findAll(@Request() req) {
+    const userId = req.user.id;
+    return this.userService.findAllExceptCurrent(userId);
+  }
+
+  @Patch(':id')
+  @UseGuards(AuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  updateUserInfo(
+    @Param('id') id: string,
+    @Body() updateUserDto: UpdateUserDto,
+  ) {
+    return this.userService.updateUserById(id, updateUserDto);
+  }
+
+  @Get(':id')
+  @UseGuards(AuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  getUserById(@Param('id') id: string) {
+    return this.userService.findUserById(id);
   }
 }
