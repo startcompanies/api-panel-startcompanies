@@ -12,7 +12,8 @@ async function bootstrap() {
       'http://localhost:4200',
       'http://localhost:4000',
       'http://0.0.0.0:4000',
-      'https://startcompanies.us'
+      'https://startcompanies.us',
+      "http://web-start-companies-portalblog-sygprw-79962c-168-231-74-52.traefik.me"
     ],
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true
