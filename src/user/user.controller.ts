@@ -7,12 +7,14 @@ import {
   Patch,
   Param,
   Request,
+  Query,
 } from '@nestjs/common';
 import { UserService } from './user.service';
 import { UserDto } from './dtos/user.dto';
-import { ApiBearerAuth } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { AuthGuard } from 'src/auth/auth.guard';
 import { UpdateUserDto } from './dtos/update_user.dto';
+import { PaginationDto } from 'src/common/dtos/pagination.dto';
 
 @Controller('users')
 export class UserController {
@@ -21,6 +23,9 @@ export class UserController {
   @Get()
   @UseGuards(AuthGuard)
   @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Obtener todos los usuarios excepto el autenticado',
+  })
   findAll(@Request() req) {
     const userId = req.user.id;
     return this.userService.findAllExceptCurrent(userId);

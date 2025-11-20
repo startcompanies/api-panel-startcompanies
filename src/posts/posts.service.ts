@@ -7,6 +7,8 @@ import { Tag } from 'src/tags/entities/tag.entity';
 import { HandleExceptionsService } from 'src/common/common.service';
 import { PostDto } from './dtos/post.dto';
 import slugify from 'slugify';
+import { PaginationDto } from 'src/common/dtos/pagination.dto';
+import { GetPostsFilterDto } from './dtos/get-posts-filter.dto';
 
 export class PostsService {
   constructor(
@@ -214,6 +216,21 @@ export class PostsService {
       return await this.postsRepository.save(post);
     } catch (err) {
       this.exceptionsService.handleDBExceptions(err);
+    }
+  }
+
+  /**
+   * Obtiene todos los posts sin filtros ni paginación.
+   */
+  async findAll(): Promise<Post[] | undefined> {
+    try {
+      return await this.postsRepository.find({
+        relations: ['user', 'categories', 'tags'],
+        order: { published_at: 'DESC' },
+      });
+    } catch (error) {
+      console.error('Error al obtener los posts:', error);
+      this.exceptionsService.handleDBExceptions(error);
     }
   }
 }

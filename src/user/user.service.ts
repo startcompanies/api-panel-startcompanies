@@ -4,6 +4,7 @@ import { User } from './entities/user.entity';
 import { Not, Repository } from 'typeorm';
 import { UserDto } from './dtos/user.dto';
 import { UpdateUserDto } from './dtos/update_user.dto';
+import { PaginationDto } from 'src/common/dtos/pagination.dto';
 
 @Injectable()
 export class UserService {
@@ -42,6 +43,7 @@ export class UserService {
       throw new InternalServerErrorException('No se pudo crear el usuario');
     }
   }
+
   /**
    * Obtiene todos los usuarios excepto el que está autenticado.
    * @param userId ID del usuario autenticado.
@@ -50,7 +52,7 @@ export class UserService {
   async findAllExceptCurrent(userId: string): Promise<User[]> {
     try {
       return await this.userRepository.find({
-        where: { id: Not(Number(userId)) }, // 🔑 excluye el id actual
+        where: { id: Not(Number(userId)) },
       });
     } catch (e) {
       console.error('Error al obtener los usuarios:', e);

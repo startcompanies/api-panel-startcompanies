@@ -10,6 +10,7 @@ import { TagsModule } from './tags/tags.module';
 import { AuthModule } from './auth/auth.module';
 import { CommonModule } from './common/common.module';
 import { UploadFileModule } from './upload-file/upload-file.module';
+import { ReusableElementsModule } from './reusable-elements/reusable-elements.module';
 
 @Module({
   imports: [
@@ -21,7 +22,8 @@ import { UploadFileModule } from './upload-file/upload-file.module';
     TagsModule,
     AuthModule,
     CommonModule,
-    UploadFileModule
+    UploadFileModule,
+    ReusableElementsModule
   ],
   controllers: [],
   providers: [AppService],
