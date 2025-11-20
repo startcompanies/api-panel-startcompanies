@@ -15,8 +15,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Instalar todas las dependencias (incluyendo devDependencies para el build)
-RUN echo "📦 Instalando dependencias..." && \
-    npm install --legacy-peer-deps && \
+RUN npm install --legacy-peer-deps && \
     npm cache clean --force
 
 # Copiar el resto del código fuente
@@ -45,8 +44,7 @@ COPY --from=builder --chown=nestjs:nodejs /app/dist ./dist
 COPY --from=builder --chown=nestjs:nodejs /app/package*.json ./
 
 # Instalar solo dependencias de producción
-RUN echo "📦 Instalando dependencias de producción..." && \
-    npm install --only=production --legacy-peer-deps && \
+RUN npm install --only=production --legacy-peer-deps && \
     npm cache clean --force
 
 # Cambiar al usuario no-root
