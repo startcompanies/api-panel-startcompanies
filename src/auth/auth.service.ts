@@ -37,7 +37,7 @@ export class authService {
     });
 
     if (!user) {
-      return this.handleExceptionService.handleErrorPasswordException(email);
+      return this.handleExceptionService.handleErrorLoginException(email);
     }
     
     const isMatch = await comparePasswords(password, user.password ?? '');

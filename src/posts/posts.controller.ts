@@ -6,18 +6,31 @@ import {
   Param,
   Patch,
   Put,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
 import { PostsService } from './posts.service';
 import { AuthGuard } from 'src/auth/auth.guard';
-import { ApiBearerAuth } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { PostDto } from './dtos/post.dto';
 import { UpdatePublicationStatusDto } from './dtos/update-publication-status.dto';
+import { PaginationDto } from 'src/common/dtos/pagination.dto';
+import { GetPostsFilterDto } from './dtos/get-posts-filter.dto';
 
 @Controller('posts')
 export class PostsController {
   constructor(private readonly postsService: PostsService) {}
+
+  @Get()
+  @UseGuards(AuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Obtener todos los posts sin filtros ni paginación',
+  })
+  async findAll() {
+    return this.postsService.findAll();
+  }
 
   // Obtener todos los post desde el portal
   @Get('get-from-portal')
@@ -55,12 +68,18 @@ export class PostsController {
 
   // Publicar post por id
   @Patch('publish/:id')
-  async publishPost(@Param('id') id: string, @Body() updatePublicationStatusDto: UpdatePublicationStatusDto) {
-    return this.postsService.publishPostById(id, updatePublicationStatusDto.is_published);
+  async publishPost(
+    @Param('id') id: string,
+    @Body() updatePublicationStatusDto: UpdatePublicationStatusDto,
+  ) {
+    return this.postsService.publishPostById(
+      id,
+      updatePublicationStatusDto.is_published,
+    );
   }
 
   @Put(':id')
-  async updatePost(@Param('id') id: string, @Body() postDto: PostDto){
+  async updatePost(@Param('id') id: string, @Body() postDto: PostDto) {
     return this.postsService.updatePost(id, postDto);
   }
 }

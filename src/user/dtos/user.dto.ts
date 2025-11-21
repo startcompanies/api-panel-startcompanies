@@ -26,4 +26,14 @@ export class UserDto {
   @IsNotEmpty({ message: 'La contraseña no puede estar vacia' })
   @MinLength(8, { message: 'La contraseña debe tener al menos 8 caracteres' })
   password: string;
+
+  @ApiProperty({example: 'Jhon', description: 'Nombre(s) del usuario'})
+  @IsString()
+  @IsNotEmpty({message: 'El nombre no puede estar vacio'})
+  first_name: string;
+
+  @ApiProperty({example: 'Smith', description: 'Apellido(s) del usuario'})
+  @IsString()
+  @IsNotEmpty({message: 'El apellido no puede estar vacio'})
+  last_name: string;
 }
