@@ -25,7 +25,7 @@ async function bootstrap() {
       'http://0.0.0.0:4000',
       'https://startcompanies.us',
       'https://admin-blog.startcompanies.us',
-      'https://startcompanies.io',
+      'https://staging.startcompanies.io',
     ],
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true
