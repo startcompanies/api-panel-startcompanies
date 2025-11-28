@@ -17,7 +17,8 @@ async function bootstrap() {
       'http://localhost:4000',
       'http://0.0.0.0:4000',
       'https://startcompanies.us',
-      "https://admin-blog.startcompanies.us"
+      'https://admin-blog.startcompanies.us',
+      'https://startcompanies.io',
     ],
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true
