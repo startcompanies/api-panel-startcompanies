@@ -93,7 +93,7 @@ export class CategoriesService {
       const result = await this.categoriesRepository
         .createQueryBuilder('category')
         .select(['category.name', 'category.slug'])
-        .addSelect('COUNT(post_categories.post_id)', 'post_count')
+        .addSelect('COUNT(DISTINCT posts.id)', 'post_count')
         .leftJoin(
           'post_categories',
           'post_categories',
@@ -105,7 +105,7 @@ export class CategoriesService {
           'posts.id = post_categories.post_id AND posts.is_published = true',
         )
         .groupBy('category.id')
-        .having('COUNT(post_categories.post_id) > 0') // <-- Aquí se agrega la cláusula HAVING
+        .having('COUNT(DISTINCT posts.id) > 0')
         .getRawMany();
 
       return result.map((row) => ({
