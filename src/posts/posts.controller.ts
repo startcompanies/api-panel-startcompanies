@@ -17,6 +17,7 @@ import { PostDto } from './dtos/post.dto';
 import { UpdatePublicationStatusDto } from './dtos/update-publication-status.dto';
 import { PaginationDto } from 'src/common/dtos/pagination.dto';
 import { GetPostsFilterDto } from './dtos/get-posts-filter.dto';
+import { UpdateSandboxStatusDto } from './dtos/update-sandbox-status.dto';
 
 @Controller('posts')
 export class PostsController {
@@ -36,6 +37,12 @@ export class PostsController {
   @Get('get-from-portal')
   async findAllPublishedForPortal() {
     return this.postsService.findAllPublishedForPortal();
+  }
+
+  // Obtener todos los posts en modo de revisión
+  @Get('get-sandbox-posts')
+  async findAllSandbox() {
+    return this.postsService.findAllSandbox();
   }
 
   // Obtener post por slug desde el portal
@@ -76,6 +83,15 @@ export class PostsController {
       id,
       updatePublicationStatusDto.is_published,
     );
+  }
+
+  // Actualizar el estado de revisión de un post
+  @Patch('sandbox/:id')
+  async updateSandboxStatus(
+    @Param('id') id: string,
+    @Body() updateSandboxStatusDto: UpdateSandboxStatusDto,
+  ) {
+    return this.postsService.updateSandboxStatus(id, updateSandboxStatusDto.sandbox);
   }
 
   @Put(':id')

@@ -34,6 +34,24 @@ export class PostDto {
   image_url?: string;
 
   @ApiProperty({
+    example: true,
+    description: 'Indica si el post está publicado o no.',
+    required: false,
+  })
+  @IsBoolean()
+  @IsOptional()
+  is_published?: boolean;
+
+  @ApiProperty({
+    example: true,
+    description: 'Indica si el post está en modo de revisión o no.',
+    required: false,
+  })
+  @IsBoolean()
+  @IsOptional()
+  sandbox?: boolean;
+
+  @ApiProperty({
     example: '2023-10-27T10:00:00Z',
     description: 'Fecha y hora de publicación del post. Si no se provee, se establece automáticamente al publicarse.',
     required: false,

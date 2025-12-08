@@ -21,7 +21,7 @@ export class PostsService {
     @InjectRepository(Tag)
     private tagsRepository: Repository<Tag>,
     private readonly exceptionsService: HandleExceptionsService,
-  ) {}
+  ) { }
 
   // Crear post
   async create(postDto: PostDto, userId: string): Promise<Post | undefined> {
@@ -60,12 +60,14 @@ export class PostsService {
       newPost.user = user!;
       newPost.categories = categories;
       newPost.tags = tags;
+      newPost.is_published = postDto.is_published ?? true;
       return await this.postsRepository.save(newPost);
     } catch (err) {
       this.exceptionsService.handleDBExceptions(err);
     }
   }
 
+  /** * Método para obtener todos los posts publicados para el portal */
   async findAllPublishedForPortal(): Promise<Post[] | undefined> {
     try {
       return this.postsRepository.find({
@@ -79,6 +81,21 @@ export class PostsService {
     }
   }
 
+  /** * Método para obtener todos los posts en modo de revisión */
+  async findAllSandbox(): Promise<Post[] | undefined> {
+    try {
+      return this.postsRepository.find({
+        where: { sandbox: true },
+        select: ['title', 'slug', 'excerpt', 'image_url', 'published_at'],
+        relations: ['user', 'categories', 'tags'],
+        order: { published_at: 'DESC' },
+      });
+    } catch (err) {
+      this.exceptionsService.handleDBExceptions(err);
+    }
+  }
+
+  /** * Método para obtener un post por su slug */
   async findOneBySlug(slug: string): Promise<Post | undefined | null> {
     try {
       const post = await this.postsRepository.findOne({
@@ -165,6 +182,28 @@ export class PostsService {
 
       // Actualiza el estado de publicación a 'true'
       post.is_published = isPublished;
+
+      // Guarda los cambios en la base de datos
+      return await this.postsRepository.save(post);
+    } catch (err) {
+      this.exceptionsService.handleDBExceptions(err);
+    }
+  }
+
+  /** * Método para actualizar el estado de revisión de un post */
+  async updateSandboxStatus(id: string, sandbox: boolean): Promise<Post | undefined> {
+    try {
+      const post: any = await this.postsRepository.findOne({
+        where: { id: Number(id) },
+      });
+
+      // Verifica si el post existe
+      if (!post) {
+        this.exceptionsService.handleNotFoundExceptions(id);
+      }
+
+      // Actualiza el estado de revisión del post
+      post.sandbox = sandbox;
 
       // Guarda los cambios en la base de datos
       return await this.postsRepository.save(post);
