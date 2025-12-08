@@ -34,6 +34,9 @@ export class UserController {
   @Patch(':id')
   @UseGuards(AuthGuard)
   @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Actualizar la información de un usuario',
+  })
   updateUserInfo(
     @Param('id') id: string,
     @Body() updateUserDto: UpdateUserDto,
@@ -44,6 +47,9 @@ export class UserController {
   @Get(':id')
   @UseGuards(AuthGuard)
   @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Obtener un usuario por su ID',
+  })
   getUserById(@Param('id') id: string) {
     return this.userService.findUserById(id);
   }

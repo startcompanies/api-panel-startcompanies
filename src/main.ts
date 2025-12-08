@@ -38,7 +38,6 @@ async function bootstrap() {
       'Documentación de la API de blog para el sitio de Start Companies LLC',
     )
     .setVersion('1.0')
-    .addTag('posts') // Agrega un tag para agrupar endpoints relacionados
     .addBearerAuth(
       {
         type: 'http',
