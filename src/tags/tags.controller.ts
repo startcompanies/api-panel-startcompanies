@@ -2,7 +2,7 @@ import { Controller, Post, Get, Body, UseGuards, Patch, Delete, Param } from '@n
 import { TagsService } from './tags.service';
 import { TagDto } from './dtos/tag.dto';
 import { AuthGuard } from 'src/auth/auth.guard';
-import { ApiBearerAuth } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 
 @Controller('tags')
 export class TagsController {
@@ -11,6 +11,9 @@ export class TagsController {
   @Get()
   @UseGuards(AuthGuard) // Este endpoint requiere un token JWT válido
   @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Obtener todas las etiquetas',
+  })
   findAll() {
     return this.tagsService.findAll();
   }
@@ -18,6 +21,9 @@ export class TagsController {
   @Get(':id')
   @UseGuards(AuthGuard) // Este endpoint requiere un token JWT válido
   @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Obtener una etiqueta por su ID',
+  })
   findById(@Param('id') id: string) {
     return this.tagsService.findById(id);
   }
@@ -25,6 +31,9 @@ export class TagsController {
   @Post()
   @UseGuards(AuthGuard) // Este endpoint requiere un token JWT válido
   @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Crear una nueva etiqueta',
+  })
   create(@Body() tagDto: TagDto) {
     return this.tagsService.create(tagDto);
   }
@@ -32,6 +41,9 @@ export class TagsController {
   @Patch(':id')
   @UseGuards(AuthGuard) // Este endpoint requiere un token JWT válido
   @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Actualizar una etiqueta por su ID',
+  })
   update(@Param('id') id: string, @Body() tagDto: TagDto){
     this.tagsService.updateTagById(id, tagDto);
   }
