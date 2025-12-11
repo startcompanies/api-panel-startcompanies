@@ -69,6 +69,7 @@ export class PostsController {
     return this.postsService.findAllByCategorySlug(slug);
   }
 
+  // Crear un nuevo post
   @HttpPost()
   @UseGuards(AuthGuard)
   @ApiBearerAuth('JWT-auth')

@@ -18,6 +18,7 @@ export class CategoriesService {
     private readonly exceptionsService: HandleExceptionsService,
   ) {}
 
+  // Crear una nueva categoría
   async create(categoryDto: CategoryDTO): Promise<Category> {
     try {
       const slug = slugify(categoryDto.name, { lower: true });
@@ -41,6 +42,7 @@ export class CategoriesService {
     }
   }
 
+  // Obtener todas las categorías
   async findAll(): Promise<Category[]> {
     try {
       return await this.categoriesRepository.find();
@@ -50,6 +52,7 @@ export class CategoriesService {
     }
   }
 
+  // Actualizar una categoría por su ID
   async updateCategoryById(
     id: string,
     categoryDto: Partial<CategoryDTO>,
@@ -77,6 +80,7 @@ export class CategoriesService {
     }
   }
 
+  // Obtener una categoría por su ID
   async findById(id: string): Promise<Category> {
     const category = await this.categoriesRepository.findOne({
       where: { id: Number(id) },
@@ -103,6 +107,36 @@ export class CategoriesService {
           'posts',
           'posts',
           'posts.id = post_categories.post_id AND posts.is_published = true',
+        )
+        .groupBy('category.id')
+        .having('COUNT(DISTINCT posts.id) > 0')
+        .getRawMany();
+
+      return result.map((row) => ({
+        name: row.category_name,
+        slug: row.category_slug,
+        count: parseInt(row.post_count, 10),
+      }));
+    } catch (error) {
+      this.exceptionsService.handleDBExceptions(error);
+    }
+  }
+
+  async findAllWithSandboxPostsCount(): Promise<any[] | undefined> {
+    try {
+      const result = await this.categoriesRepository
+        .createQueryBuilder('category')
+        .select(['category.name', 'category.slug'])
+        .addSelect('COUNT(DISTINCT posts.id)', 'post_count')
+        .leftJoin(
+          'post_categories',
+          'post_categories',
+          'post_categories.category_id = category.id',
+        )
+        .leftJoin(
+          'posts',
+          'posts',
+          'posts.id = post_categories.post_id AND posts.sandbox = true',
         )
         .groupBy('category.id')
         .having('COUNT(DISTINCT posts.id) > 0')
