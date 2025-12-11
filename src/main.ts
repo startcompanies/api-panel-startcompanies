@@ -27,8 +27,12 @@ async function bootstrap() {
       'https://admin-blog.startcompanies.us',
       'https://staging.startcompanies.io',
     ],
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-    credentials: true
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
+    exposedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
+    preflightContinue: false,
+    optionsSuccessStatus: 204
   });
 
   // Configuración de Swagger
@@ -38,7 +42,6 @@ async function bootstrap() {
       'Documentación de la API de blog para el sitio de Start Companies LLC',
     )
     .setVersion('1.0')
-    .addTag('posts') // Agrega un tag para agrupar endpoints relacionados
     .addBearerAuth(
       {
         type: 'http',
@@ -59,8 +62,9 @@ async function bootstrap() {
   //app.setGlobalPrefix('api');
 
   const port = configService.getPort() ?? 3000;
-  await app.listen(port);
+  // Escuchar en 0.0.0.0 para que sea accesible desde fuera del contenedor Docker
+  await app.listen(port, '0.0.0.0');
 
-  console.log(`Application is running on: http://localhost:${port}`);
+  console.log(`Application is running on: http://0.0.0.0:${port}`);
 }
 bootstrap();

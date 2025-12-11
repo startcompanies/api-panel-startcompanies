@@ -7,7 +7,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UploadFileService } from './upload-file.service';
 import { HandleExceptionsService } from 'src/common/common.service';
-import { ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UploadFileDto } from './dtos/upload-file.dto';
 
 @ApiTags('Upload Files')
@@ -24,6 +24,9 @@ export class UploadFileController {
   @ApiBody({
     description: 'Upload a file',
     type: UploadFileDto,
+  })
+  @ApiOperation({
+    summary: 'Subir un archivo',
   })
   async uploadFile(@UploadedFile() file: Express.Multer.File) {
     if (!file) {

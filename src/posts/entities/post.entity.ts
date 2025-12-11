@@ -26,6 +26,9 @@ export class Post {
     @Column({ default: true })
     is_published: boolean;
 
+    @Column({ default: false })
+    sandbox: boolean;
+
     @CreateDateColumn({ type: 'timestamp'})
     published_at: Date
 
