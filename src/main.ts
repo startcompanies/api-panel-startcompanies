@@ -62,8 +62,9 @@ async function bootstrap() {
   //app.setGlobalPrefix('api');
 
   const port = configService.getPort() ?? 3000;
-  await app.listen(port);
+  // Escuchar en 0.0.0.0 para que sea accesible desde fuera del contenedor Docker
+  await app.listen(port, '0.0.0.0');
 
-  console.log(`Application is running on: http://localhost:${port}`);
+  console.log(`Application is running on: http://0.0.0.0:${port}`);
 }
 bootstrap();
