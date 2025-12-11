@@ -27,8 +27,12 @@ async function bootstrap() {
       'https://admin-blog.startcompanies.us',
       'https://staging.startcompanies.io',
     ],
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-    credentials: true
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
+    exposedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
+    preflightContinue: false,
+    optionsSuccessStatus: 204
   });
 
   // Configuración de Swagger
