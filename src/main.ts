@@ -4,7 +4,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { configService } from './config/config.service';
 import * as express from 'express';
 
-import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+import { LoggingInterceptor } from './shared/common/interceptors/logging.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -37,9 +37,9 @@ async function bootstrap() {
 
   // Configuración de Swagger
   const config = new DocumentBuilder()
-    .setTitle('API de Blog')
+    .setTitle('API Start Companies')
     .setDescription(
-      'Documentación de la API de blog para el sitio de Start Companies LLC',
+      'Documentación de la API para Start Companies LLC - Blog y Panel Administrativo',
     )
     .setVersion('1.0')
     .addBearerAuth(
