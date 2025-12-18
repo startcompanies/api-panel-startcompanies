@@ -11,6 +11,7 @@ import { CreateUserDto } from './dtos/create-user.dto';
 import { UpdateUserDto } from './dtos/update_user.dto';
 import { PaginationDto } from 'src/shared/common/dtos/pagination.dto';
 import { Request } from '../../panel/requests/entities/request.entity';
+import { Client } from '../../panel/clients/entities/client.entity';
 import { encodePassword } from '../common/utils/bcrypt';
 import { EmailService } from '../common/services/email.service';
 import { JwtService } from '@nestjs/jwt';
@@ -22,6 +23,8 @@ export class UserService {
     private userRepository: Repository<User>,
     @InjectRepository(Request)
     private requestRepository: Repository<Request>,
+    @InjectRepository(Client)
+    private clientRepository: Repository<Client>,
     private emailService: EmailService,
     private jwtService: JwtService,
   ) {}
@@ -270,6 +273,38 @@ export class UserService {
       console.error('Error al obtener los partners:', e);
       throw new InternalServerErrorException(
         'No se pudieron obtener los partners',
+      );
+    }
+  }
+
+  /**
+   * Obtiene las estadísticas de un partner (conteo de clientes y solicitudes)
+   * @param partnerId ID del partner
+   * @returns Objeto con totalClients y totalRequests
+   */
+  async getPartnerStats(partnerId: number): Promise<{
+    totalClients: number;
+    totalRequests: number;
+  }> {
+    try {
+      // Contar clientes asociados al partner
+      const totalClients = await this.clientRepository.count({
+        where: { partnerId },
+      });
+
+      // Contar solicitudes asociadas al partner
+      const totalRequests = await this.requestRepository.count({
+        where: { partnerId },
+      });
+
+      return {
+        totalClients,
+        totalRequests,
+      };
+    } catch (e) {
+      console.error('Error al obtener estadísticas del partner:', e);
+      throw new InternalServerErrorException(
+        'No se pudieron obtener las estadísticas del partner',
       );
     }
   }

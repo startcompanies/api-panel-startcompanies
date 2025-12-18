@@ -6,6 +6,7 @@ import { User } from './entities/user.entity';
 import { UserController } from './user.controller';
 import { Post } from '../../blog/posts/entities/post.entity';
 import { Request } from '../../panel/requests/entities/request.entity';
+import { Client } from '../../panel/clients/entities/client.entity';
 import { RolesGuard } from '../../shared/auth/roles.guard';
 import { CommonModule } from '../common/common.module';
 import { JwtModule } from '@nestjs/jwt';
@@ -15,7 +16,7 @@ import { jwtConstants } from '../common/constants/jwtConstants';
   controllers: [UserController],
   providers: [UserService, UserSeedService, RolesGuard],
   imports: [
-    TypeOrmModule.forFeature([User, Post, Request]),
+    TypeOrmModule.forFeature([User, Post, Request, Client]),
     CommonModule,
     JwtModule.register({
       secret: jwtConstants.secret,

@@ -49,3 +49,4 @@ Ejemplo: `1734567890123-AddPhoneToUsers.ts`
 - Siempre revisa las migraciones generadas antes de ejecutarlas
 - Haz backup de la base de datos antes de ejecutar migraciones en producción
 
+

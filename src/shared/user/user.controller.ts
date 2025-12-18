@@ -70,6 +70,17 @@ export class UserController {
     return this.userService.getPartners();
   }
 
+  @Get('/partners/:id/stats')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Obtener estadísticas de un partner (conteo de clientes y solicitudes)',
+  })
+  getPartnerStats(@Param('id') id: string) {
+    return this.userService.getPartnerStats(parseInt(id, 10));
+  }
+
   @Get('/clients')
   @UseGuards(AuthGuard, RolesGuard)
   @Roles('admin')
