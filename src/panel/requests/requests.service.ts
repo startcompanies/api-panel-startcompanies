@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   InternalServerErrorException,
+  Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
@@ -24,10 +25,14 @@ import { CreateOwnerDto } from './dtos/create-owner.dto';
 import { UpdateOwnerDto } from './dtos/update-owner.dto';
 import { CreateBankAccountValidatorDto } from './dtos/create-bank-account-validator.dto';
 import { UpdateBankAccountValidatorDto } from './dtos/update-bank-account-validator.dto';
+// ZohoCrmService ya no se usa en findOne - solo se consulta la BD local
+// import { ZohoCrmService } from '../../zoho-config/zoho-crm.service';
 export type { RequestType } from './types/request-type';
 
 @Injectable()
 export class RequestsService {
+  private readonly logger = new Logger(RequestsService.name);
+
   constructor(
     @InjectRepository(Request)
     private readonly requestRepository: Repository<Request>,
@@ -49,6 +54,8 @@ export class RequestsService {
     private readonly userRepo: Repository<User>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    // ZohoCrmService ya no se usa - solo consultamos BD local
+    // private readonly zohoCrmService: ZohoCrmService,
   ) {}
 
   findAllByUser(userId: number, role: 'client' | 'partner') {
@@ -70,6 +77,22 @@ export class RequestsService {
     if (!request) {
       throw new NotFoundException(`Request ${id} not found`);
     }
+
+    // Cargar Members relacionados si es una solicitud de Apertura LLC
+    if (request.aperturaLlcRequest) {
+      const members = await this.memberRepo.find({
+        where: { requestId: id },
+        order: { id: 'ASC' },
+      });
+      // Agregar members al objeto de respuesta
+      (request as any).members = members;
+    }
+
+    // No consultamos Zoho - usamos solo datos de la BD local
+    // Los datos ya están sincronizados en aperturaLlcRequest/renovacionLlcRequest/cuentaBancariaRequest
+    // y en las relaciones con Members, Owners, Validators, etc.
+    // El zohoAccountId se mantiene solo como referencia
+    
     return request;
   }
 

@@ -100,3 +100,8 @@ DB_NAME=nombre_base_datos
 - Las migraciones deben ser reversibles cuando sea posible
 
 
+
+
+
+
+

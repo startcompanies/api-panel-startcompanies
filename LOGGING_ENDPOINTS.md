@@ -168,3 +168,8 @@ Response: Array[25]: [{"id":1,...},{"id":2,...}]...
 - Los logs incluyen información sensible (excepto contraseñas), ten cuidado en producción
 - El formato es legible y fácil de parsear si necesitas procesar los logs
 
+
+
+
+
+

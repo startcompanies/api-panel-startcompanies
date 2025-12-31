@@ -50,6 +50,9 @@ export class Request {
   @Column({ nullable: true, type: 'text' })
   notes?: string;
 
+  @Column({ name: 'zoho_account_id', nullable: true, length: 100 })
+  zohoAccountId?: string;
+
   @CreateDateColumn({
     type: 'timestamp with time zone',
     default: () => 'CURRENT_TIMESTAMP',

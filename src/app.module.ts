@@ -10,6 +10,7 @@ import { UploadFileModule } from './shared/upload-file/upload-file.module';
 // Módulos agrupados por funcionalidad
 import { BlogModule } from './blog/blog.module';
 import { PanelModule } from './panel/panel.module';
+import { ZohoConfigModule } from './zoho-config/zoho-config.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { PanelModule } from './panel/panel.module';
     // Módulos agrupados por funcionalidad
     BlogModule, // Agrupa: PostsModule, CategoriesModule, TagsModule, ReusableElementsModule
     PanelModule, // Agrupa: RequestsModule, ProcessStepsModule, DocumentsModule, NotificationsModule, SettingsModule, ReportsModule
+    ZohoConfigModule, // Configuración OAuth y SSO de Zoho
   ],
   controllers: [],
   providers: [AppService],

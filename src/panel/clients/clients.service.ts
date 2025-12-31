@@ -10,6 +10,7 @@ import { Client } from './entities/client.entity';
 import { CreateClientDto } from './dtos/create-client.dto';
 import { UpdateClientDto } from './dtos/update-client.dto';
 import { Request } from '../requests/entities/request.entity';
+import { User } from '../../shared/user/entities/user.entity';
 
 @Injectable()
 export class ClientsService {
@@ -18,6 +19,8 @@ export class ClientsService {
     private clientRepository: Repository<Client>,
     @InjectRepository(Request)
     private requestRepository: Repository<Request>,
+    @InjectRepository(User)
+    private userRepository: Repository<User>,
   ) {}
 
   /**
@@ -40,17 +43,72 @@ export class ClientsService {
 
   /**
    * Obtener clientes del admin
-   * El admin solo ve sus propios clientes (sin partner asignado)
+   * El admin ve:
+   * 1. Clientes de la tabla clients sin partner asignado
+   * 2. Usuarios con type: 'client' que no tienen registro en clients
    */
   async getAdminClients(): Promise<Client[]> {
     try {
-      return await this.clientRepository.find({
+      // 1. Obtener clientes de la tabla clients sin partner
+      const clientsFromTable = await this.clientRepository.find({
         where: {
-          partnerId: IsNull(), // Admin solo ve clientes sin partner asignado
+          partnerId: IsNull(),
         },
         relations: ['user'],
         order: { createdAt: 'DESC' },
       });
+
+      // 2. Obtener usuarios con type: 'client' que no tienen registro en clients
+      const usersAsClients = await this.userRepository.find({
+        where: {
+          type: 'client',
+        },
+        order: { createdAt: 'DESC' },
+      });
+
+      // 3. Filtrar usuarios que ya tienen registro en clients
+      const userIdsInClients = new Set(
+        clientsFromTable
+          .map(c => c.userId)
+          .filter(id => id !== null && id !== undefined)
+      );
+
+      const usersWithoutClientRecord = usersAsClients.filter(
+        user => !userIdsInClients.has(user.id)
+      );
+
+      // 4. Transformar usuarios al formato Client
+      // Nota: Estos "clientes" son en realidad usuarios, por lo que algunas operaciones
+      // (editar/eliminar) pueden requerir lógica especial en el frontend
+      const clientsFromUsers: Client[] = usersWithoutClientRecord.map(user => {
+        const client = new Client();
+        // Usar el userId como ID temporal (no habrá conflictos porque son tablas diferentes)
+        // El frontend puede usar userId para identificar que es un usuario
+        client.id = user.id;
+        client.userId = user.id;
+        client.full_name = `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username || user.email;
+        client.email = user.email;
+        client.phone = user.phone || undefined;
+        client.company = user.company || undefined;
+        client.status = user.status;
+        client.partnerId = undefined; // Sin partner asignado
+        client.createdAt = user.createdAt;
+        client.updatedAt = user.updatedAt;
+        client.user = user; // Relación con el usuario
+        return client;
+      });
+
+      // 5. Combinar y devolver
+      const allClients = [...clientsFromTable, ...clientsFromUsers];
+      
+      // Ordenar por fecha de creación descendente
+      allClients.sort((a, b) => {
+        const dateA = a.createdAt instanceof Date ? a.createdAt : new Date(a.createdAt);
+        const dateB = b.createdAt instanceof Date ? b.createdAt : new Date(b.createdAt);
+        return dateB.getTime() - dateA.getTime();
+      });
+
+      return allClients;
     } catch (e) {
       console.error('Error al obtener clientes del admin:', e);
       throw new InternalServerErrorException(
@@ -249,6 +307,7 @@ export class ClientsService {
 
   /**
    * Obtener estadísticas de un cliente
+   * Soporta tanto clientes de la tabla clients como usuarios con type: 'client'
    */
   async getClientStats(id: number, partnerId?: number): Promise<{
     totalRequests: number;
@@ -256,34 +315,40 @@ export class ClientsService {
     completedRequests: number;
   }> {
     try {
-      // TODO: Actualizar cuando Request use Client en lugar de User
-      // Por ahora, buscar por userId si el cliente tiene usuario asociado
-      const client = await this.clientRepository.findOne({
+      // 1. Primero intentar buscar en la tabla clients
+      let client = await this.clientRepository.findOne({
         where: { id },
         relations: ['user'],
       });
 
-      if (!client) {
-        throw new NotFoundException('Cliente no encontrado');
-      }
+      let userIdForRequests: number | undefined;
 
-      if (partnerId && client.partnerId !== partnerId) {
-        throw new NotFoundException('Cliente no encontrado');
-      }
-
-      // Si el cliente tiene usuario, buscar requests por userId
-      // Si no, buscar por clientId (cuando se actualice Request)
-      const where: any = client.userId 
-        ? { clientId: client.userId } // Temporal: buscar por userId del cliente
-        : { clientId: id }; // Futuro: buscar por clientId directamente
-      if (partnerId) {
-        // Verificar que el cliente pertenece al partner
-        const client = await this.clientRepository.findOne({
-          where: { id, partnerId },
-        });
-        if (!client) {
+      if (client) {
+        // Cliente encontrado en la tabla clients
+        if (partnerId && client.partnerId !== partnerId) {
           throw new NotFoundException('Cliente no encontrado');
         }
+        userIdForRequests = client.userId || id;
+      } else {
+        // 2. Si no se encuentra, buscar en la tabla users (puede ser un usuario con type: 'client')
+        const user = await this.userRepository.findOne({
+          where: { id, type: 'client' },
+        });
+
+        if (!user) {
+          throw new NotFoundException('Cliente no encontrado');
+        }
+
+        // Si es un usuario, usar su ID directamente
+        userIdForRequests = user.id;
+      }
+
+      // 3. Buscar requests por clientId (que en Request.entity es el ID del usuario)
+      const where: any = { clientId: userIdForRequests };
+      
+      if (partnerId) {
+        // Si hay partnerId, también filtrar por partnerId en las requests
+        where.partnerId = partnerId;
       }
 
       const allRequests = await this.requestRepository.find({ where });
@@ -308,4 +373,9 @@ export class ClientsService {
     }
   }
 }
+
+
+
+
+
 

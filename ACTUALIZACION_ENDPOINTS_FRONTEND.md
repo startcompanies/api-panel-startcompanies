@@ -115,3 +115,8 @@ Los siguientes endpoints del Panel están disponibles pero pueden no tener servi
 - Los endpoints compartidos (`/auth`, `/users`, `/upload-file`) no tienen prefijo y funcionan igual
 - Los servicios que usan datos mockup necesitarán implementación real cuando se integren con el backend
 
+
+
+
+
+

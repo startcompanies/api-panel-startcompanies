@@ -15,6 +15,7 @@ import { MembersController } from './members.controller';
 import { OwnersController } from './owners.controller';
 import { BankAccountValidatorController } from './bank-account-validator.controller';
 import { RolesGuard } from '../../shared/auth/roles.guard';
+import { ZohoConfigModule } from '../../zoho-config/zoho-config.module';
 
 @Module({
   imports: [
@@ -29,6 +30,7 @@ import { RolesGuard } from '../../shared/auth/roles.guard';
       RequestRequiredDocument,
       User,
     ]),
+    ZohoConfigModule,
   ],
   controllers: [
     RequestsController,

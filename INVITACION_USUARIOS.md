@@ -153,3 +153,8 @@ Los emails se envían con HTML formateado incluyendo:
 - El email de invitación se envía de forma asíncrona y no bloquea la creación del usuario
 - Los errores de email se loguean pero no impiden la creación del usuario
 
+
+
+
+
+

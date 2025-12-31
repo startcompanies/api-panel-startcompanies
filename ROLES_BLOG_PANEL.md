@@ -82,3 +82,8 @@
 - ✅ Backend acepta todos los roles (Blog + Panel)
 - ✅ DTOs actualizados con validaciones correctas
 
+
+
+
+
+

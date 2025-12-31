@@ -21,114 +21,78 @@ export class AperturaLlcRequest {
   @Column({ name: 'current_step_number', type: 'int' })
   currentStepNumber: number;
 
-  // Paso 1: Información de la LLC
+  // Campos mapeados desde Zoho CRM Accounts (según mapeo proporcionado)
+  // Account_Name -> llcName
   @Column({ name: 'llc_name', nullable: true, length: 255 })
   llcName?: string;
 
-  @Column({ name: 'business_type', nullable: true, length: 255 })
-  businessType?: string;
-
+  // Actividad_Principal_de_la_LLC -> businessDescription
   @Column({ name: 'business_description', nullable: true, type: 'text' })
   businessDescription?: string;
 
-  @Column({ name: 'llc_phone_number', nullable: true, length: 50 })
-  llcPhoneNumber?: string;
-
-  @Column({ name: 'llc_website', nullable: true, length: 500 })
-  llcWebsite?: string;
-
-  @Column({ name: 'llc_email', nullable: true, length: 255 })
-  llcEmail?: string;
-
+  // Estado_de_Registro -> incorporationState
   @Column({ name: 'incorporation_state', nullable: true, length: 100 })
   incorporationState?: string;
 
-  @Column({ name: 'incorporation_date', nullable: true, type: 'date' })
-  incorporationDate?: Date;
+  // Estructura_Societaria -> llcType (mapeado)
+  @Column({ name: 'llc_type', nullable: true, length: 20 })
+  llcType?: 'single' | 'multi';
 
-  @Column({ name: 'has_ein', nullable: true, type: 'boolean' })
-  hasEin?: boolean;
+  // P_gina_web_de_la_LLC o Website -> website
+  @Column({ name: 'website', nullable: true, length: 500 })
+  website?: string;
 
+  // N_mero_de_EIN -> einNumber
   @Column({ name: 'ein_number', nullable: true, length: 50 })
   einNumber?: string;
 
-  @Column({ name: 'ein_document_url', nullable: true, type: 'text' })
-  einDocumentUrl?: string;
+  @Column({ name: 'llc_name_option_2', nullable: true, length: 255 })
+  llcNameOption2?: string;
 
-  @Column({ name: 'no_ein_reason', nullable: true, type: 'text' })
-  noEinReason?: string;
+  @Column({ name: 'llc_name_option_3', nullable: true, length: 255 })
+  llcNameOption3?: string;
 
-  @Column({ name: 'certificate_of_formation_url', nullable: true, type: 'text' })
-  certificateOfFormationUrl?: string;
+  @Column({ name: 'annual_revenue', nullable: true, type: 'decimal', precision: 15, scale: 2 })
+  annualRevenue?: number;
 
-  // Paso 2: Dirección del Registered Agent
-  @Column({ name: 'registered_agent_address', nullable: true, type: 'jsonb' })
-  registeredAgentAddress?: {
-    street: string;
-    building?: string;
-    city: string;
-    state: string;
-    postalCode: string;
-    country: string;
-  };
+  @Column({ name: 'account_type', nullable: true, length: 50 })
+  accountType?: string;
 
-  @Column({ name: 'registered_agent_name', nullable: true, length: 255 })
-  registeredAgentName?: string;
+  @Column({ name: 'estado_constitucion', nullable: true, length: 100 })
+  estadoConstitucion?: string;
 
-  @Column({ name: 'registered_agent_email', nullable: true, length: 255 })
-  registeredAgentEmail?: string;
+  @Column({ name: 'linkedin', nullable: true, length: 255 })
+  linkedin?: string;
 
-  @Column({ name: 'registered_agent_phone', nullable: true, length: 50 })
-  registeredAgentPhone?: string;
+  @Column({ name: 'actividad_financiera_esperada', nullable: true, type: 'text' })
+  actividadFinancieraEsperada?: string;
 
-  @Column({ name: 'registered_agent_type', nullable: true, length: 20 })
-  registeredAgentType?: 'persona' | 'empresa';
+  @Column({ name: 'almacena_productos_deposito_usa', nullable: true, type: 'boolean' })
+  almacenaProductosDepositoUSA?: boolean;
 
-  // Paso 3: Información de la cuenta bancaria
-  @Column({ name: 'needs_bank_verification_help', nullable: true, type: 'boolean' })
-  needsBankVerificationHelp?: boolean;
+  @Column({ name: 'declaro_impuestos_antes', nullable: true, type: 'boolean' })
+  declaroImpuestosAntes?: boolean;
 
-  @Column({ name: 'bank_account_type', nullable: true, length: 50 })
-  bankAccountType?: string;
+  @Column({ name: 'llc_con_start_companies', nullable: true, type: 'boolean' })
+  llcConStartCompanies?: boolean;
 
-  @Column({ name: 'bank_name', nullable: true, length: 255 })
-  bankName?: string;
+  @Column({ name: 'ingresos_mayor_250k', nullable: true, type: 'boolean' })
+  ingresosMayor250k?: boolean;
 
-  @Column({ name: 'bank_account_number', nullable: true, length: 100 })
-  bankAccountNumber?: string;
+  @Column({ name: 'activos_en_usa', nullable: true, type: 'boolean' })
+  activosEnUSA?: boolean;
 
-  @Column({ name: 'bank_routing_number', nullable: true, length: 100 })
-  bankRoutingNumber?: string;
+  @Column({ name: 'ingresos_periodicos_10k', nullable: true, type: 'boolean' })
+  ingresosPeriodicos10k?: boolean;
 
-  @Column({ name: 'bank_statement_url', nullable: true, type: 'text' })
-  bankStatementUrl?: string;
+  @Column({ name: 'contrata_servicios_usa', nullable: true, type: 'boolean' })
+  contrataServiciosUSA?: boolean;
 
-  // Paso 4: Dirección Personal del Propietario
-  @Column({ name: 'owner_nationality', nullable: true, length: 100 })
-  ownerNationality?: string;
+  @Column({ name: 'propiedad_en_usa', nullable: true, type: 'boolean' })
+  propiedadEnUSA?: boolean;
 
-  @Column({ name: 'owner_country_of_residence', nullable: true, length: 100 })
-  ownerCountryOfResidence?: string;
-
-  @Column({ name: 'owner_personal_address', nullable: true, type: 'jsonb' })
-  ownerPersonalAddress?: {
-    street: string;
-    building?: string;
-    city: string;
-    state: string;
-    postalCode: string;
-    country: string;
-  };
-
-  @Column({ name: 'owner_phone_number', nullable: true, length: 50 })
-  ownerPhoneNumber?: string;
-
-  @Column({ name: 'owner_email', nullable: true, length: 255 })
-  ownerEmail?: string;
-
-  // Paso 5: Tipo de LLC
-  @Column({ name: 'llc_type', nullable: true, length: 20 })
-  llcType?: 'single' | 'multi';
+  @Column({ name: 'tiene_cuentas_bancarias', nullable: true, type: 'boolean' })
+  tieneCuentasBancarias?: boolean;
 
   @CreateDateColumn({
     name: 'created_at',

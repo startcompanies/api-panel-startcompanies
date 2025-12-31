@@ -126,3 +126,8 @@ client: Client;
 4. ✅ Flexible: soporta clientes con y sin acceso
 5. ✅ Compatible: puede coexistir con estructura actual durante migración
 
+
+
+
+
+

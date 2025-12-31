@@ -86,7 +86,7 @@ export class CreateAperturaLlcRequestDto {
 
   @IsOptional()
   @IsString()
-  llcWebsite?: string;
+  website?: string;
 
   @IsOptional()
   @IsEmail()

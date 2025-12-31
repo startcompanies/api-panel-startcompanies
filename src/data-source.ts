@@ -26,6 +26,7 @@ import { Notification } from './panel/notifications/entities/notification.entity
 import { UserPreferences } from './panel/settings/entities/user-preferences.entity';
 import { ProcessConfig } from './panel/settings/entities/process-config.entity';
 import { Client } from './panel/clients/entities/client.entity';
+import { ZohoConfig } from './zoho-config/zoho-config.entity';
 
 // Validar que existan las variables de entorno requeridas
 const requiredEnvVars = ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'];
@@ -66,6 +67,7 @@ export const dataSourceOptions: DataSourceOptions = {
     UserPreferences,
     ProcessConfig,
     Client,
+    ZohoConfig,
   ],
   migrations: [
     // Ruta relativa desde el directorio raíz del proyecto
