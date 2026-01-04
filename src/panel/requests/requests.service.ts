@@ -19,6 +19,8 @@ import { RequestRequiredDocument } from './entities/request-required-document.en
 import { User } from '../../shared/user/entities/user.entity';
 import { CreateRequestDto } from './dtos/create-request.dto';
 import { UpdateRequestDto } from './dtos/update-request.dto';
+import { ApproveRequestDto } from './dtos/approve-request.dto';
+import { RejectRequestDto } from './dtos/reject-request.dto';
 import { CreateMemberDto } from './dtos/create-member.dto';
 import { UpdateMemberDto } from './dtos/update-member.dto';
 import { CreateOwnerDto } from './dtos/create-owner.dto';
@@ -139,10 +141,10 @@ export class RequestsService {
         );
       }
 
-      // Crear la solicitud base
+      // Crear la solicitud base - estado inicial: solicitud-recibida (pendiente de aprobación)
       const request = this.requestRepository.create({
         type: createRequestDto.type,
-        status: 'pendiente',
+        status: 'solicitud-recibida',
         clientId: createRequestDto.clientId,
         partnerId: createRequestDto.partnerId,
         notes: createRequestDto.notes,
@@ -980,32 +982,62 @@ export class RequestsService {
 
   // ========== MÉTODOS ADICIONALES ==========
 
-  async findAll(filters?: {
-    status?: string;
-    type?: string;
-    clientId?: number;
-    partnerId?: number;
-  }) {
-    const where: any = {};
+  async findAll(
+    filters?: {
+      status?: string;
+      type?: string;
+      clientId?: number;
+      partnerId?: number;
+      search?: string;
+    },
+    page: number = 1,
+    limit: number = 10,
+  ) {
+    const queryBuilder = this.requestRepository
+      .createQueryBuilder('request')
+      .leftJoinAndSelect('request.client', 'client')
+      .leftJoinAndSelect('request.partner', 'partner');
 
+    // Aplicar filtros básicos
     if (filters?.status) {
-      where.status = filters.status;
+      queryBuilder.andWhere('request.status = :status', { status: filters.status });
     }
     if (filters?.type) {
-      where.type = filters.type;
+      queryBuilder.andWhere('request.type = :type', { type: filters.type });
     }
     if (filters?.clientId) {
-      where.clientId = filters.clientId;
+      queryBuilder.andWhere('request.clientId = :clientId', { clientId: filters.clientId });
     }
     if (filters?.partnerId) {
-      where.partnerId = filters.partnerId;
+      queryBuilder.andWhere('request.partnerId = :partnerId', { partnerId: filters.partnerId });
     }
 
-    return this.requestRepository.find({
-      where,
-      relations: ['client', 'partner'],
-      order: { createdAt: 'DESC' },
-    });
+    // Aplicar búsqueda en nombre, email del cliente o partner
+    if (filters?.search && filters.search.length > 0) {
+      const searchPattern = `%${filters.search}%`;
+      queryBuilder.andWhere(
+        '(client.email ILIKE :search OR client.username ILIKE :search OR client.first_name ILIKE :search OR client.last_name ILIKE :search OR partner.email ILIKE :search OR partner.username ILIKE :search OR partner.first_name ILIKE :search OR partner.last_name ILIKE :search)',
+        { search: searchPattern }
+      );
+    }
+
+    // Ordenar por fecha de creación descendente
+    queryBuilder.orderBy('request.createdAt', 'DESC');
+
+    // Aplicar paginación
+    const skip = (page - 1) * limit;
+    queryBuilder.skip(skip).take(limit);
+
+    // Ejecutar consulta
+    const [data, total] = await queryBuilder.getManyAndCount();
+
+    return {
+      data,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async getRequiredDocuments(
@@ -1054,10 +1086,10 @@ export class RequestsService {
         );
       }
 
-      // Solo se pueden eliminar solicitudes pendientes
-      if (request.status !== 'pendiente') {
+      // Solo se pueden eliminar solicitudes pendientes o solicitud-recibida
+      if (request.status !== 'pendiente' && request.status !== 'solicitud-recibida') {
         throw new BadRequestException(
-          'Solo se pueden eliminar solicitudes en estado pendiente',
+          'Solo se pueden eliminar solicitudes en estado pendiente o solicitud recibida',
         );
       }
     }
@@ -1066,6 +1098,125 @@ export class RequestsService {
     await this.requestRepository.remove(request);
 
     return { message: 'Solicitud eliminada correctamente' };
+  }
+
+  /**
+   * Aprobar una solicitud - cambia de 'solicitud-recibida' a 'en-proceso' con etapa inicial del blueprint
+   */
+  async approveRequest(id: number, approveDto: ApproveRequestDto) {
+    const request = await this.requestRepository.findOne({
+      where: { id },
+    });
+
+    if (!request) {
+      throw new NotFoundException(`Solicitud con ID ${id} no encontrada`);
+    }
+
+    if (request.status !== 'solicitud-recibida') {
+      throw new BadRequestException(
+        'Solo se pueden aprobar solicitudes en estado "Solicitud Recibida"',
+      );
+    }
+
+    // Etapa inicial del blueprint según el tipo de solicitud
+    let defaultStage = 'Apertura Confirmada';
+    if (request.type === 'cuenta-bancaria') {
+      defaultStage = 'Cuenta Bancaria Confirmada';
+    } else if (request.type === 'renovacion-llc') {
+      defaultStage = 'Renovación Confirmada';
+    }
+    
+    const initialStage = approveDto.initialStage || defaultStage;
+
+    // Actualizar estado y etapa
+    request.status = 'en-proceso';
+    request.stage = initialStage;
+    if (approveDto.notes) {
+      request.notes = approveDto.notes;
+    }
+
+    await this.requestRepository.save(request);
+
+    this.logger.log(
+      `Solicitud ${id} aprobada. Etapa inicial: ${initialStage}`,
+    );
+
+    return {
+      message: 'Solicitud aprobada correctamente',
+      request: {
+        id: request.id,
+        status: request.status,
+        stage: request.stage,
+      },
+    };
+  }
+
+  /**
+   * Rechazar una solicitud - cambia de 'solicitud-recibida' a 'rechazada'
+   */
+  async rejectRequest(id: number, rejectDto: RejectRequestDto) {
+    const request = await this.requestRepository.findOne({
+      where: { id },
+    });
+
+    if (!request) {
+      throw new NotFoundException(`Solicitud con ID ${id} no encontrada`);
+    }
+
+    if (request.status !== 'solicitud-recibida') {
+      throw new BadRequestException(
+        'Solo se pueden rechazar solicitudes en estado "Solicitud Recibida"',
+      );
+    }
+
+    // Actualizar estado a rechazada
+    request.status = 'rechazada';
+    if (rejectDto.notes) {
+      request.notes = rejectDto.notes;
+    }
+
+    await this.requestRepository.save(request);
+
+    this.logger.log(`Solicitud ${id} rechazada`);
+
+    return {
+      message: 'Solicitud rechazada correctamente',
+      request: {
+        id: request.id,
+        status: request.status,
+      },
+    };
+  }
+
+  /**
+   * Obtener las etapas del blueprint para Apertura LLC
+   */
+  getBlueprintStages(): string[] {
+    return [
+      'Apertura Confirmada',
+      'Filing Iniciado',
+      'EIN Solicitado',
+      'Operating Agreement',
+      'BOI Enviado',
+      'Cuenta Bancaria Confirmada',
+      'Confirmación pago',
+      'Apertura Activa',
+      'Apertura Perdida',
+      'Apertura Cuenta Bancaria',
+    ];
+  }
+
+  /**
+   * Obtener las etapas del blueprint para Cuenta Bancaria
+   */
+  getCuentaBancariaBlueprintStages(): string[] {
+    return [
+      'Cuenta Bancaria Confirmada',
+      'Onboarding',
+      // Las siguientes 2 etapas son especiales y se muestran condicionalmente:
+      // 'Cuenta Bancaria Finalizada' - Solo se muestra si es el stage actual
+      // 'Cuenta Bancaria Perdida' - Solo se muestra si es el stage actual (y ahí se queda)
+    ];
   }
 }
 

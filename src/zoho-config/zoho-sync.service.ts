@@ -2,6 +2,7 @@ import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { ZohoCrmService } from './zoho-crm.service';
+import { ZohoWorkDriveService } from './zoho-workdrive.service';
 import { Request } from 'src/panel/requests/entities/request.entity';
 import { AperturaLlcRequest } from 'src/panel/requests/entities/apertura-llc-request.entity';
 import { RenovacionLlcRequest } from 'src/panel/requests/entities/renovacion-llc-request.entity';
@@ -16,6 +17,7 @@ export class ZohoSyncService {
 
   constructor(
     private readonly zohoCrmService: ZohoCrmService,
+    private readonly zohoWorkDriveService: ZohoWorkDriveService,
     @InjectRepository(Request)
     private readonly requestRepository: Repository<Request>,
     @InjectRepository(AperturaLlcRequest)
@@ -1153,6 +1155,7 @@ export class ZohoSyncService {
         let contactFirstName: string = '';
         let contactLastName: string = '';
         let dealFound = false;
+        let dealStage: string | undefined = undefined;
 
         try {
           // Buscar Deal relacionado con este Account
@@ -1162,14 +1165,18 @@ export class ZohoSyncService {
 
           if (deals.length > 0) {
             const deal = deals[0];
+            // Guardar el Stage del Deal para usarlo después
+            dealStage = deal.Stage || '';
+            
             // Verificar que el Deal esté ganado o en proceso
-            const dealStage = deal.Stage || '';
-            const isWonOrInProcess = dealStage.includes('Activa') || 
-                                     dealStage.includes('Finalizada') || 
-                                     dealStage.includes('Renovado') ||
-                                     dealStage.includes('Abierta') ||
-                                     dealStage.includes('En Proceso') ||
-                                     !dealStage.includes('Perdida');
+            const isWonOrInProcess = dealStage && (
+              dealStage.includes('Activa') || 
+              dealStage.includes('Finalizada') || 
+              dealStage.includes('Renovado') ||
+              dealStage.includes('Abierta') ||
+              dealStage.includes('En Proceso') ||
+              !dealStage.includes('Perdida')
+            );
 
             if (isWonOrInProcess && deal.Contact_Name) {
               // Obtener información completa del Contact desde Zoho
@@ -1203,6 +1210,12 @@ export class ZohoSyncService {
         // Si no hay Deal válido, no migrar este Account
         if (!dealFound || !contactEmail) {
           throw new Error(`Account ${account.id} no tiene Deal relacionado válido (ganado o en proceso) con Contact_Name. Se omite la migración.`);
+        }
+        
+        // Guardar el Stage del Deal en la Request (para Apertura LLC y Cuenta Bancaria)
+        if ((requestType === 'apertura-llc' || requestType === 'cuenta-bancaria') && dealStage) {
+          request.stage = dealStage;
+          this.logger.log(`Stage del Deal guardado en Request: ${dealStage} para Account ${account.id}`);
         }
 
         let clientUser = await this.userRepo.findOne({
@@ -1256,7 +1269,38 @@ export class ZohoSyncService {
       // Asignar clientId al Request
       request.clientId = clientId;
 
-      // Guardar Request (ahora con clientId)
+      // Generar permalink si Account tiene workDriveId Y el Request no tiene workDriveUrlExternal
+      if (account.workDriveId && !request.workDriveUrlExternal) {
+        try {
+          this.logger.log(`Generando permalink para workDriveId: ${account.workDriveId} (Account ${account.id})`);
+          // No pasar org, dejar que el servicio busque cualquier configuración de WorkDrive disponible
+          const permalink = await this.zohoWorkDriveService.generateEmbedPermalink(
+            account.workDriveId,
+          );
+          // Guardar el permalink completo tal como viene de la API
+          request.workDriveUrlExternal = permalink;
+          this.logger.log(`Permalink completo guardado para Account ${account.id}: ${permalink}`);
+          this.logger.log(`Longitud de la URL guardada: ${permalink.length} caracteres`);
+        } catch (error: any) {
+          this.logger.warn(
+            `Error al generar permalink para workDriveId ${account.workDriveId} (Account ${account.id}):`,
+            error.message,
+          );
+          // Si falla, intentar usar workDriveUrlExternal directamente si existe
+          if (account.workDriveUrlExternal) {
+            request.workDriveUrlExternal = account.workDriveUrlExternal;
+            this.logger.log(`Usando workDriveUrlExternal directo desde Account ${account.id}: ${account.workDriveUrlExternal}`);
+          }
+        }
+      } else if (account.workDriveUrlExternal && !request.workDriveUrlExternal) {
+        // Si no hay workDriveId pero sí workDriveUrlExternal, y el Request no tiene uno, usarlo directamente
+        request.workDriveUrlExternal = account.workDriveUrlExternal;
+        this.logger.log(`WorkDrive URL externa guardada para Account ${account.id}: ${account.workDriveUrlExternal}`);
+      } else if (request.workDriveUrlExternal) {
+        this.logger.log(`Request ${request.id} ya tiene workDriveUrlExternal, no se regenerará: ${request.workDriveUrlExternal}`);
+      }
+
+      // Guardar Request (ahora con clientId y workDriveUrlExternal)
       request = await queryRunner.manager.save(Request, request);
 
       // Crear o actualizar Request específico según tipo (después de guardar para tener request.id)
@@ -1273,7 +1317,7 @@ export class ZohoSyncService {
 
       await queryRunner.commitTransaction();
 
-      // Obtener Deals relacionados y actualizar status
+      // Obtener Deals relacionados y actualizar status y stage
       await this.updateRequestStatusFromDeals(request, org);
 
       return {
@@ -1731,7 +1775,7 @@ export class ZohoSyncService {
   }
 
   /**
-   * Actualiza Request.status basado en Deals relacionados
+   * Actualiza Request.status, Request.stage y Request.workDriveUrlExternal basado en Deals y Account relacionados
    */
   private async updateRequestStatusFromDeals(
     request: Request,
@@ -1747,18 +1791,85 @@ export class ZohoSyncService {
       const dealsResponse = await this.zohoCrmService.queryWithCoql(coqlQuery, undefined, org);
       const deals = dealsResponse.data || [];
 
+      let needsUpdate = false;
+
       if (deals.length > 0) {
         const deal = deals[0];
-        const newStatus = this.mapDealStageToRequestStatus(deal.Stage, deal.Type);
+        const dealStage = deal.Stage || '';
+        const newStatus = this.mapDealStageToRequestStatus(dealStage, deal.Type);
         
+        // Actualizar status si cambió
         if (newStatus && newStatus !== request.status) {
           request.status = newStatus;
-          await this.requestRepository.save(request);
-          this.logger.log(`Request ${request.id} actualizado a status: ${newStatus} desde Deal Stage: ${deal.Stage}`);
+          needsUpdate = true;
+        }
+        
+        // Actualizar stage con el Stage del Deal (para Apertura LLC y Cuenta Bancaria)
+        if ((request.type === 'apertura-llc' || request.type === 'cuenta-bancaria') && dealStage && dealStage !== request.stage) {
+          request.stage = dealStage;
+          needsUpdate = true;
+          this.logger.log(`Request ${request.id} actualizado a stage: ${dealStage} desde Deal`);
         }
       }
+
+      // Actualizar workDriveUrlExternal desde Account
+      try {
+        const accountResponse = await this.zohoCrmService.getRecordById(
+          'Accounts',
+          request.zohoAccountId,
+          org,
+          undefined, // Obtener todos los campos
+        );
+        
+        if (accountResponse.data && accountResponse.data.length > 0) {
+          const account = accountResponse.data[0];
+          
+          // Si Account tiene workDriveId Y el Request no tiene workDriveUrlExternal, generar permalink
+          if (account.workDriveId && !request.workDriveUrlExternal) {
+            try {
+              this.logger.log(`Generando permalink para workDriveId: ${account.workDriveId} (Request ${request.id})`);
+              // No pasar org, dejar que el servicio busque cualquier configuración de WorkDrive disponible
+              const permalink = await this.zohoWorkDriveService.generateEmbedPermalink(
+                account.workDriveId,
+              );
+              
+              // Guardar el permalink completo tal como viene de la API
+              request.workDriveUrlExternal = permalink;
+              needsUpdate = true;
+              this.logger.log(`Request ${request.id} actualizado con permalink completo: ${permalink}`);
+            } catch (embedError: any) {
+              this.logger.warn(
+                `Error al generar permalink para workDriveId ${account.workDriveId} (Request ${request.id}):`,
+                embedError.message,
+              );
+              // Si falla, intentar usar workDriveUrlExternal directamente si existe
+              if (account.workDriveUrlExternal) {
+                request.workDriveUrlExternal = account.workDriveUrlExternal;
+                needsUpdate = true;
+                this.logger.log(`Request ${request.id} actualizado con workDriveUrlExternal directo: ${account.workDriveUrlExternal}`);
+              }
+            }
+          } else if (account.workDriveUrlExternal && !request.workDriveUrlExternal) {
+            // Si no hay workDriveId pero sí workDriveUrlExternal, y el Request no tiene uno, usarlo directamente
+            request.workDriveUrlExternal = account.workDriveUrlExternal;
+            needsUpdate = true;
+            this.logger.log(`Request ${request.id} actualizado con workDriveUrlExternal: ${account.workDriveUrlExternal}`);
+          } else if (request.workDriveUrlExternal) {
+            this.logger.log(`Request ${request.id} ya tiene workDriveUrlExternal, no se actualizará: ${request.workDriveUrlExternal}`);
+          }
+        }
+      } catch (accountError: any) {
+        this.logger.warn(`Error al obtener Account para actualizar workDriveUrlExternal (Request ${request.id}):`, accountError.message);
+        // No lanzar error, solo loguear
+      }
+      
+      if (needsUpdate) {
+        await this.requestRepository.save(request);
+        const dealStage = deals.length > 0 ? deals[0].Stage || '' : '';
+        this.logger.log(`Request ${request.id} actualizado - status: ${request.status}, stage: ${request.stage || 'N/A'}, workDriveUrlExternal: ${request.workDriveUrlExternal ? 'Sí' : 'No'}`);
+      }
     } catch (error: any) {
-      this.logger.error(`Error al actualizar status desde Deals para Request ${request.id}:`, error);
+      this.logger.error(`Error al actualizar status/stage/workDriveUrlExternal desde Deals/Account para Request ${request.id}:`, error);
       // No lanzar error, solo loguear
     }
   }
@@ -1774,6 +1885,14 @@ export class ZohoSyncService {
     if (type === 'Apertura') {
       if (stage === 'Apertura Activa') return 'completada';
       if (stage === 'Apertura Perdida') return 'rechazada';
+      // Todos los demás stages Open → en-proceso
+      return 'en-proceso';
+    }
+    
+    // Cuenta Bancaria
+    if (type === 'Cuenta Bancaria') {
+      if (stage === 'Cuenta Bancaria Finalizada') return 'completada';
+      if (stage === 'Cuenta Bancaria Perdida') return 'rechazada';
       // Todos los demás stages Open → en-proceso
       return 'en-proceso';
     }
@@ -1838,12 +1957,27 @@ export class ZohoSyncService {
           }
 
           // Mapear Stage → status
-          const newStatus = this.mapDealStageToRequestStatus(deal.Stage, deal.Type);
+          const dealStage = deal.Stage || '';
+          const newStatus = this.mapDealStageToRequestStatus(dealStage, deal.Type);
+          
+          let needsUpdate = false;
+          
+          // Actualizar status si cambió
           if (newStatus && newStatus !== request.status) {
             request.status = newStatus;
+            needsUpdate = true;
+          }
+          
+          // Actualizar stage con el Stage del Deal (para Apertura LLC y Cuenta Bancaria)
+          if ((request.type === 'apertura-llc' || request.type === 'cuenta-bancaria') && dealStage && dealStage !== request.stage) {
+            request.stage = dealStage;
+            needsUpdate = true;
+          }
+          
+          if (needsUpdate) {
             await this.requestRepository.save(request);
             results.updated++;
-            this.logger.log(`Request ${request.id} actualizado a status: ${newStatus} desde Deal Stage: ${deal.Stage}`);
+            this.logger.log(`Request ${request.id} actualizado a status: ${newStatus || request.status} y stage: ${dealStage || request.stage} desde Deal Stage: ${dealStage}`);
           }
         } catch (error: any) {
           results.errors.push({
@@ -1959,6 +2093,7 @@ export class ZohoSyncService {
     return password.split('').sort(() => Math.random() - 0.5).join('');
   }
 }
+
 
 
 

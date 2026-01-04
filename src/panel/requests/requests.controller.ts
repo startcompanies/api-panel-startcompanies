@@ -15,6 +15,8 @@ import {
 import { RequestsService } from './requests.service';
 import { CreateRequestDto } from './dtos/create-request.dto';
 import { UpdateRequestDto } from './dtos/update-request.dto';
+import { ApproveRequestDto } from './dtos/approve-request.dto';
+import { RejectRequestDto } from './dtos/reject-request.dto';
 import { AuthGuard } from '../../shared/auth/auth.guard';
 import { RolesGuard } from '../../shared/auth/roles.guard';
 import { Roles } from '../../shared/auth/roles.decorator';
@@ -50,14 +52,25 @@ export class RequestsController {
     @Query('type') type?: string,
     @Query('clientId') clientId?: string,
     @Query('partnerId') partnerId?: string,
+    @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
   ) {
     const filters: any = {};
     if (status) filters.status = status;
     if (type) filters.type = type;
     if (clientId) filters.clientId = parseInt(clientId, 10);
     if (partnerId) filters.partnerId = parseInt(partnerId, 10);
+    if (search) filters.search = search.trim();
 
-    return this.requestsService.findAll(filters);
+    const pageNumber = page ? parseInt(page, 10) : 1;
+    const limitNumber = limit ? parseInt(limit, 10) : 10;
+
+    // Validar que page y limit sean números positivos
+    const validPage = pageNumber > 0 ? pageNumber : 1;
+    const validLimit = limitNumber > 0 && limitNumber <= 100 ? limitNumber : 10; // Máximo 100 por página
+
+    return this.requestsService.findAll(filters, validPage, validLimit);
   }
 
   // Detalle de una solicitud
@@ -87,6 +100,28 @@ export class RequestsController {
       );
     }
     return this.requestsService.getRequiredDocuments(type, llcType);
+  }
+
+  // Aprobar solicitud (solo admin) - cambia de 'solicitud-recibida' a 'en-proceso' con etapa inicial
+  @Post(':id/approve')
+  @UseGuards(RolesGuard)
+  @Roles('admin')
+  approve(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() approveDto: ApproveRequestDto,
+  ) {
+    return this.requestsService.approveRequest(id, approveDto);
+  }
+
+  // Rechazar solicitud (solo admin) - cambia de 'solicitud-recibida' a 'rechazada'
+  @Post(':id/reject')
+  @UseGuards(RolesGuard)
+  @Roles('admin')
+  reject(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() rejectDto: RejectRequestDto,
+  ) {
+    return this.requestsService.rejectRequest(id, rejectDto);
   }
 
   // Eliminar solicitud (solo admin, o si está pendiente y es el dueño)

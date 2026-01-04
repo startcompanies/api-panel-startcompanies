@@ -14,8 +14,12 @@ import { CreateCuentaBancariaRequestDto } from './create-cuenta-bancaria-request
 
 export class UpdateRequestDto {
   @IsOptional()
-  @IsIn(['pendiente', 'en-proceso', 'completada', 'rechazada'])
-  status?: 'pendiente' | 'en-proceso' | 'completada' | 'rechazada';
+  @IsIn(['solicitud-recibida', 'pendiente', 'en-proceso', 'completada', 'rechazada'])
+  status?: 'solicitud-recibida' | 'pendiente' | 'en-proceso' | 'completada' | 'rechazada';
+
+  @IsOptional()
+  @IsString()
+  stage?: string; // Etapa actual del blueprint
 
   @IsOptional()
   @IsNumber()

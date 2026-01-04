@@ -5,6 +5,7 @@ import { ZohoConfigController } from './zoho-config.controller';
 import { ZohoConfigService } from './zoho-config.service';
 import { ZohoCrmService } from './zoho-crm.service';
 import { ZohoCrmController } from './zoho-crm.controller';
+import { ZohoWorkDriveService } from './zoho-workdrive.service';
 import { ZohoSyncService } from './zoho-sync.service';
 import { ZohoSyncController } from './zoho-sync.controller';
 import { ZohoConfig } from './zoho-config.entity';
@@ -29,10 +30,11 @@ import { User } from '../shared/user/entities/user.entity';
     HttpModule,
   ],
   controllers: [ZohoConfigController, ZohoCrmController, ZohoSyncController],
-  providers: [ZohoConfigService, ZohoCrmService, ZohoSyncService],
-  exports: [ZohoConfigService, ZohoCrmService, ZohoSyncService],
+  providers: [ZohoConfigService, ZohoCrmService, ZohoWorkDriveService, ZohoSyncService],
+  exports: [ZohoConfigService, ZohoCrmService, ZohoWorkDriveService, ZohoSyncService],
 })
 export class ZohoConfigModule {}
+
 
 
 

@@ -22,7 +22,10 @@ export class Request {
   type: 'apertura-llc' | 'renovacion-llc' | 'cuenta-bancaria';
 
   @Column({ type: 'varchar', length: 50 })
-  status: 'pendiente' | 'en-proceso' | 'completada' | 'rechazada';
+  status: 'solicitud-recibida' | 'pendiente' | 'en-proceso' | 'completada' | 'rechazada';
+
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  stage?: string; // Etapa actual del blueprint de Zoho CRM
 
   @ManyToOne(() => User)
   @JoinColumn({ name: 'client_id' })
@@ -52,6 +55,9 @@ export class Request {
 
   @Column({ name: 'zoho_account_id', nullable: true, length: 100 })
   zohoAccountId?: string;
+
+  @Column({ name: 'work_drive_url_external', nullable: true, type: 'text' })
+  workDriveUrlExternal?: string; // URL externa de Zoho WorkDrive desde Account
 
   @CreateDateColumn({
     type: 'timestamp with time zone',
