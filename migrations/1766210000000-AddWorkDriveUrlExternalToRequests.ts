@@ -21,3 +21,4 @@ export class AddWorkDriveUrlExternalToRequests1766210000000
     await queryRunner.dropColumn('requests', 'work_drive_url_external');
   }
 }
+

@@ -22,6 +22,7 @@ import { jwtConstants } from '../common/constants/jwtConstants';
       secret: jwtConstants.secret,
       signOptions: { expiresIn: '24h' },
     }),
-  ]
+  ],
+  exports: [UserService], // Exportar UserService para que pueda ser usado en otros módulos
 })
 export class UserModule {}

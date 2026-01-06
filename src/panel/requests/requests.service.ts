@@ -27,6 +27,10 @@ import { CreateOwnerDto } from './dtos/create-owner.dto';
 import { UpdateOwnerDto } from './dtos/update-owner.dto';
 import { CreateBankAccountValidatorDto } from './dtos/create-bank-account-validator.dto';
 import { UpdateBankAccountValidatorDto } from './dtos/update-bank-account-validator.dto';
+import { StripeService } from '../../shared/payments/stripe.service';
+import { UserService } from '../../shared/user/user.service';
+import { encodePassword } from '../../shared/common/utils/bcrypt';
+import { validateRequestData } from './validation/request-validation-rules';
 // ZohoCrmService ya no se usa en findOne - solo se consulta la BD local
 // import { ZohoCrmService } from '../../zoho-config/zoho-crm.service';
 export type { RequestType } from './types/request-type';
@@ -34,6 +38,131 @@ export type { RequestType } from './types/request-type';
 @Injectable()
 export class RequestsService {
   private readonly logger = new Logger(RequestsService.name);
+
+  /**
+   * Convierte una fecha string a Date de manera segura
+   * Retorna null si la fecha está vacía o es inválida
+   */
+  private parseDate(dateString: string | null | undefined): Date | null {
+    if (!dateString || dateString.trim() === '' || dateString === '0NaN-aN-aN') {
+      return null;
+    }
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) {
+      return null;
+    }
+    return date;
+  }
+
+  /**
+   * Extrae los datos del servicio según el tipo de request
+   */
+  private getServiceData(createRequestDto: CreateRequestDto): any {
+    if (createRequestDto.type === 'apertura-llc' && createRequestDto.aperturaLlcData) {
+      return {
+        ...createRequestDto.aperturaLlcData,
+        llcType: createRequestDto.aperturaLlcData.llcType,
+        members: createRequestDto.aperturaLlcData.members || [],
+      };
+    }
+    if (createRequestDto.type === 'renovacion-llc' && createRequestDto.renovacionLlcData) {
+      // El frontend envía 'members' en renovacionLlcData, pero los tratamos como 'owners' para validación
+      const renovacionData = createRequestDto.renovacionLlcData as any;
+      return {
+        ...renovacionData,
+        llcType: renovacionData.llcType,
+        owners: renovacionData.owners || renovacionData.members || [],
+      };
+    }
+    if (createRequestDto.type === 'cuenta-bancaria' && createRequestDto.cuentaBancariaData) {
+      // El frontend envía 'owners' en cuentaBancariaData
+      const cuentaData = createRequestDto.cuentaBancariaData as any;
+      return {
+        ...cuentaData,
+        owners: cuentaData.owners || [],
+      };
+    }
+    return {};
+  }
+
+  /**
+   * Obtiene los datos del servicio para validación, combinando datos existentes con nuevos
+   */
+  private async getServiceDataForValidation(updateRequestDto: UpdateRequestDto, existingRequest: Request): Promise<any> {
+    let existingData: any = {};
+    
+    // Obtener datos existentes según el tipo
+    if (existingRequest.type === 'apertura-llc') {
+      const aperturaRequest = await this.aperturaRepo.findOne({
+        where: { requestId: existingRequest.id },
+      });
+      if (aperturaRequest) {
+        existingData = { ...aperturaRequest };
+        // Obtener miembros existentes
+        const members = await this.memberRepo.find({
+          where: { requestId: existingRequest.id },
+        });
+        existingData.members = members.map(m => ({
+          firstName: m.firstName,
+          lastName: m.lastName,
+          passportNumber: m.passportNumber,
+          scannedPassportUrl: m.scannedPassportUrl,
+          nationality: m.nationality,
+          email: m.email,
+          phoneNumber: m.phoneNumber,
+          percentageOfParticipation: m.percentageOfParticipation,
+          memberAddress: m.memberAddress,
+          validatesBankAccount: m.validatesBankAccount,
+        }));
+      }
+    } else if (existingRequest.type === 'renovacion-llc') {
+      const renovacionRequest = await this.renovacionRepo.findOne({
+        where: { requestId: existingRequest.id },
+      });
+      if (renovacionRequest) {
+        existingData = { ...renovacionRequest };
+        // Los propietarios en renovación se manejan diferente, pero por ahora usamos los datos del DTO
+      }
+    } else if (existingRequest.type === 'cuenta-bancaria') {
+      const cuentaRequest = await this.cuentaRepo.findOne({
+        where: { requestId: existingRequest.id },
+      });
+      if (cuentaRequest) {
+        existingData = { ...cuentaRequest };
+      }
+    }
+    
+    // Combinar datos existentes con los nuevos (los nuevos tienen prioridad)
+    if (existingRequest.type === 'apertura-llc' && updateRequestDto.aperturaLlcData) {
+      return {
+        ...existingData,
+        ...updateRequestDto.aperturaLlcData,
+        llcType: updateRequestDto.aperturaLlcData.llcType || existingData.llcType,
+        members: updateRequestDto.aperturaLlcData.members || existingData.members || [],
+      };
+    }
+    if (existingRequest.type === 'renovacion-llc' && updateRequestDto.renovacionLlcData) {
+      // El frontend envía 'members' en renovacionLlcData, pero los tratamos como 'owners' para validación
+      const renovacionData = updateRequestDto.renovacionLlcData as any;
+      return {
+        ...existingData,
+        ...renovacionData,
+        llcType: renovacionData.llcType || existingData.llcType,
+        owners: renovacionData.owners || renovacionData.members || existingData.owners || [],
+      };
+    }
+    if (existingRequest.type === 'cuenta-bancaria' && updateRequestDto.cuentaBancariaData) {
+      // El frontend envía 'owners' en cuentaBancariaData
+      const cuentaData = updateRequestDto.cuentaBancariaData as any;
+      return {
+        ...existingData,
+        ...cuentaData,
+        owners: cuentaData.owners || existingData.owners || [],
+      };
+    }
+    
+    return existingData;
+  }
 
   constructor(
     @InjectRepository(Request)
@@ -56,13 +185,115 @@ export class RequestsService {
     private readonly userRepo: Repository<User>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    private readonly stripeService: StripeService,
+    private readonly userService: UserService,
     // ZohoCrmService ya no se usa - solo consultamos BD local
     // private readonly zohoCrmService: ZohoCrmService,
   ) {}
 
-  findAllByUser(userId: number, role: 'client' | 'partner') {
+  async findAllByUser(userId: number, role: 'client' | 'partner') {
     const where = role === 'client' ? { clientId: userId } : { partnerId: userId };
-    return this.requestRepository.find({ where, order: { createdAt: 'DESC' } });
+    const requests = await this.requestRepository.find({ 
+      where, 
+      order: { createdAt: 'DESC' },
+      relations: [
+        'client',
+        'partner',
+        'aperturaLlcRequest',
+        'renovacionLlcRequest',
+        'cuentaBancariaRequest',
+      ],
+    });
+
+    // Cargar Members para cada solicitud de Apertura LLC
+    for (const request of requests) {
+      if (request.aperturaLlcRequest) {
+        const members = await this.memberRepo.find({
+          where: { requestId: request.id },
+          order: { id: 'ASC' },
+        });
+        (request as any).members = members;
+      }
+    }
+
+    return requests;
+  }
+
+  /**
+   * Obtiene todas las aperturas LLC de un cliente para renovación
+   * Puede buscar por clientId o por email del cliente
+   */
+  async getClientAperturas(clientId?: number, clientEmail?: string) {
+    let whereCondition: any = {
+      type: 'apertura-llc',
+      status: 'completada', // Solo aperturas completadas pueden renovarse
+    };
+
+    if (clientId) {
+      whereCondition.clientId = clientId;
+    } else if (clientEmail) {
+      // Buscar el cliente por email primero
+      const client = await this.userRepo.findOne({
+        where: { email: clientEmail, type: 'client' },
+      });
+      if (!client) {
+        return []; // No hay cliente con ese email, retornar array vacío
+      }
+      whereCondition.clientId = client.id;
+    } else {
+      throw new BadRequestException('Se requiere clientId o clientEmail');
+    }
+
+    const aperturas = await this.requestRepository.find({
+      where: whereCondition,
+      relations: ['aperturaLlcRequest'],
+      order: { createdAt: 'DESC' },
+    });
+
+    // Formatear la respuesta con información relevante para la selección
+    return aperturas.map((request) => ({
+      id: request.id,
+      llcName: request.aperturaLlcRequest?.llcName || 'Sin nombre',
+      incorporationState: request.aperturaLlcRequest?.incorporationState || '',
+      llcType: request.aperturaLlcRequest?.llcType || 'single',
+      einNumber: request.aperturaLlcRequest?.einNumber || '',
+      createdAt: request.createdAt,
+      // Incluir todos los datos de apertura para precargar
+      aperturaData: request.aperturaLlcRequest,
+    }));
+  }
+
+  async findOneByUuid(uuid: string) {
+    const request = await this.requestRepository.findOne({
+      where: { uuid },
+      relations: [
+        'client',
+        'partner',
+        'aperturaLlcRequest',
+        'renovacionLlcRequest',
+        'cuentaBancariaRequest',
+      ],
+    });
+    if (!request) {
+      throw new NotFoundException(`Request with UUID ${uuid} not found`);
+    }
+
+    // Cargar Members relacionados si es una solicitud de Apertura LLC
+    if (request.aperturaLlcRequest) {
+      const members = await this.memberRepo.find({
+        where: { requestId: request.id },
+        order: { id: 'ASC' },
+      });
+      // Agregar members al objeto de respuesta
+      (request as any).members = members;
+    }
+
+    // No consultamos Zoho - usamos solo datos de la BD local
+    // Los datos ya están sincronizados en aperturaLlcRequest/renovacionLlcRequest/cuentaBancariaRequest
+    // y en las relaciones con Members, Owners, Validators, etc.
+    // El zohoAccountId se mantiene solo como referencia
+    
+    return request;
   }
 
   async findOne(id: number) {
@@ -104,14 +335,52 @@ export class RequestsService {
     await queryRunner.startTransaction();
 
     try {
-      // Validar que el cliente existe
-      const client = await this.userRepo.findOne({
-        where: { id: createRequestDto.clientId },
-      });
-      if (!client) {
-        throw new NotFoundException(
-          `Cliente con ID ${createRequestDto.clientId} no encontrado`,
-        );
+      let clientId = createRequestDto.clientId;
+      let client: User | null = null;
+
+      // Si clientId es 0 y hay clientData, crear o obtener el cliente
+      if (clientId === 0 && createRequestDto.clientData) {
+        const { email, firstName, lastName, phone } = createRequestDto.clientData;
+        
+        // Buscar si el cliente ya existe por email
+        client = await this.userRepo.findOne({
+          where: { email, type: 'client' },
+        });
+
+        if (!client) {
+          // Generar una contraseña temporal
+          const tempPassword = Math.random().toString(36).slice(-12) + 'A1!';
+          
+          // Crear nuevo cliente
+          const newClient = this.userRepo.create({
+            email,
+            first_name: firstName,
+            last_name: lastName,
+            phone: phone || '',
+            type: 'client',
+            status: true,
+            // Generar un username basado en el email
+            username: email.split('@')[0] + Math.floor(Math.random() * 1000),
+            // Generar una contraseña temporal (el usuario deberá cambiarla)
+            password: encodePassword(tempPassword),
+          });
+          client = await queryRunner.manager.save(User, newClient);
+          this.logger.log(`Cliente creado: ${client.id} - ${client.email}`);
+          // TODO: Enviar email con la contraseña temporal (comentado por ahora)
+          // await this.userService.sendWelcomeEmail(client.email, tempPassword);
+        }
+        
+        clientId = client.id;
+      } else {
+        // Validar que el cliente existe
+        client = await this.userRepo.findOne({
+          where: { id: clientId },
+        });
+        if (!client) {
+          throw new NotFoundException(
+            `Cliente con ID ${clientId} no encontrado`,
+          );
+        }
       }
 
       // Validar que el partner existe si se proporciona
@@ -141,13 +410,79 @@ export class RequestsService {
         );
       }
 
-      // Crear la solicitud base - estado inicial: solicitud-recibida (pendiente de aprobación)
+      // Determinar el status: si hay pago, será 'solicitud-recibida', sino 'pendiente'
+      // Durante el flujo del wizard, siempre es 'pendiente' hasta que se procesa el pago
+      const willProcessPayment = !!(createRequestDto.stripeToken && createRequestDto.paymentAmount);
+      const requestStatus = willProcessPayment 
+        ? (createRequestDto.status || 'solicitud-recibida')
+        : 'pendiente'; // Siempre pendiente durante el flujo del wizard
+
+      // Validación dinámica según tipo de servicio y sección
+      // Si se va a procesar el pago, validar todo estrictamente
+      // Si es borrador (pendiente), validar solo campos de la sección actual
+      const serviceData = this.getServiceData(createRequestDto);
+      
+      try {
+        validateRequestData(
+          serviceData,
+          createRequestDto.type,
+          createRequestDto.currentStepNumber,
+          requestStatus, // 'pendiente' durante wizard, 'solicitud-recibida' al procesar pago
+        );
+      } catch (error) {
+        if (error instanceof BadRequestException) {
+          throw error;
+        }
+        throw new BadRequestException(`Error de validación: ${error.message}`);
+      }
+
+      // Procesar pago con Stripe si se proporciona un token
+      let paymentResult: any = null;
+      if (createRequestDto.stripeToken && createRequestDto.paymentAmount) {
+        try {
+          this.logger.log(
+            `Procesando pago con Stripe: ${createRequestDto.paymentAmount} USD`,
+          );
+          
+          const charge = await this.stripeService.createCharge(
+            createRequestDto.stripeToken,
+            createRequestDto.paymentAmount,
+            'usd',
+            `Pago de solicitud - ${createRequestDto.type}`,
+          );
+
+          paymentResult = {
+            chargeId: charge.id,
+            amount: charge.amount / 100, // Convertir de centavos a dólares
+            currency: charge.currency,
+            status: charge.status,
+            paid: charge.paid,
+            receiptUrl: charge.receipt_url,
+          };
+
+          this.logger.log(`Pago procesado exitosamente: ${charge.id}`);
+        } catch (error: any) {
+          this.logger.error(`Error al procesar pago: ${error.message}`);
+          await queryRunner.rollbackTransaction();
+          throw error; // Re-lanzar el error para que el cliente lo vea
+        }
+      }
+
+      // Crear la solicitud base
+      // Si se procesó el pago, status es 'solicitud-recibida', sino 'pendiente' (borrador)
       const request = this.requestRepository.create({
         type: createRequestDto.type,
-        status: 'solicitud-recibida',
-        clientId: createRequestDto.clientId,
+        status: requestStatus, // Ya determinado arriba: 'pendiente' o 'solicitud-recibida'
+        currentStep: createRequestDto.currentStep, // Paso principal del wizard
+        clientId: clientId,
         partnerId: createRequestDto.partnerId,
         notes: createRequestDto.notes,
+        // Información de pago
+        paymentMethod: createRequestDto.paymentMethod,
+        paymentAmount: createRequestDto.paymentAmount,
+        stripeChargeId: paymentResult?.chargeId,
+        paymentStatus: paymentResult?.status || (createRequestDto.paymentMethod === 'transferencia' ? 'pending' : null),
+        paymentProofUrl: createRequestDto.paymentProofUrl,
       });
       const savedRequest = await queryRunner.manager.save(Request, request);
 
@@ -186,24 +521,34 @@ export class RequestsService {
         });
         await queryRunner.manager.save(AperturaLlcRequest, aperturaData);
 
-        // Crear miembros si se proporcionan
-        if (members && members.length > 0) {
-          // Validar que solo un miembro valide la cuenta bancaria
-          const validators = members.filter((m) => m.validatesBankAccount);
-          if (validators.length > 1) {
-            throw new BadRequestException(
-              'Solo un miembro puede validar la cuenta bancaria',
-            );
-          }
+        // Crear miembros solo si estamos en la sección 2 o superior (donde se capturan los miembros)
+        // Filtrar miembros vacíos (sin datos básicos)
+        if (createRequestDto.currentStepNumber >= 2 && members && members.length > 0) {
+          // Filtrar miembros que tengan al menos algún dato (no completamente vacíos)
+          const validMembers = members.filter((m: any) => 
+            m.firstName || m.lastName || m.email || m.passportNumber
+          );
+          
+          if (validMembers.length > 0) {
+            // Validar que solo un miembro valide la cuenta bancaria
+            const validators = validMembers.filter((m: any) => m.validatesBankAccount);
+            if (validators.length > 1) {
+              throw new BadRequestException(
+                'Solo un miembro puede validar la cuenta bancaria',
+              );
+            }
 
-          const membersToSave = members.map((memberDto) => {
-            return this.memberRepo.create({
-              requestId: savedRequest.id,
-              ...memberDto,
-              dateOfBirth: new Date(memberDto.dateOfBirth),
-            });
-          });
-          await queryRunner.manager.save(Member, membersToSave);
+            const membersToSave = validMembers.map((memberDto: any) => {
+              const { dateOfBirth, ...memberDataWithoutDate } = memberDto;
+              const parsedDate = this.parseDate(dateOfBirth);
+              return this.memberRepo.create({
+                requestId: savedRequest.id,
+                ...memberDataWithoutDate,
+                ...(parsedDate ? { dateOfBirth: parsedDate } : {}),
+              });
+            }) as unknown as Member[];
+            await queryRunner.manager.save(Member, membersToSave);
+          }
         }
       } else if (createRequestDto.type === 'renovacion-llc') {
         if (!createRequestDto.renovacionLlcData) {
@@ -239,16 +584,26 @@ export class RequestsService {
         });
         await queryRunner.manager.save(RenovacionLlcRequest, renovacionData);
 
-        // Crear miembros si se proporcionan
-        if (members && members.length > 0) {
-          const membersToSave = members.map((memberDto) => {
-            return this.memberRepo.create({
-              requestId: savedRequest.id,
-              ...memberDto,
-              dateOfBirth: new Date(memberDto.dateOfBirth),
-            });
-          });
-          await queryRunner.manager.save(Member, membersToSave);
+        // Crear miembros solo si estamos en la sección 2 o superior (donde se capturan los miembros)
+        // Filtrar miembros vacíos (sin datos básicos)
+        if (createRequestDto.currentStepNumber >= 2 && members && members.length > 0) {
+          // Filtrar miembros que tengan al menos algún dato (no completamente vacíos)
+          const validMembers = members.filter((m: any) => 
+            m.firstName || m.lastName || m.email || m.passportNumber || m.name || m.lastName
+          );
+          
+          if (validMembers.length > 0) {
+            const membersToSave = validMembers.map((memberDto: any) => {
+              const { dateOfBirth, ...memberDataWithoutDate } = memberDto;
+              const parsedDate = this.parseDate(dateOfBirth);
+              return this.memberRepo.create({
+                requestId: savedRequest.id,
+                ...memberDataWithoutDate,
+                ...(parsedDate ? { dateOfBirth: parsedDate } : {}),
+              });
+            }) as unknown as Member[];
+            await queryRunner.manager.save(Member, membersToSave);
+          }
         }
       } else if (createRequestDto.type === 'cuenta-bancaria') {
         if (!createRequestDto.cuentaBancariaData) {
@@ -272,7 +627,24 @@ export class RequestsService {
       await queryRunner.commitTransaction();
 
       // Retornar la solicitud completa con relaciones
-      return this.findOne(savedRequest.id);
+      const result = await this.findOne(savedRequest.id);
+      
+      // Agregar información del pago a la respuesta si existe
+      if (paymentResult) {
+        return {
+          ...result,
+          payment: {
+            chargeId: paymentResult.chargeId,
+            amount: paymentResult.amount,
+            currency: paymentResult.currency,
+            status: paymentResult.status,
+            paid: paymentResult.paid,
+            receiptUrl: paymentResult.receiptUrl,
+          },
+        };
+      }
+      
+      return result;
     } catch (error) {
       await queryRunner.rollbackTransaction();
       if (
@@ -310,14 +682,182 @@ export class RequestsService {
         throw new NotFoundException(`Solicitud con ID ${id} no encontrada`);
       }
 
-      // Actualizar campos básicos de la solicitud
-      if (updateRequestDto.status !== undefined) {
-        request.status = updateRequestDto.status;
+      // Validación dinámica según tipo de servicio y sección (si se proporcionan datos)
+      if (updateRequestDto.currentStepNumber !== undefined) {
+        // Combinar datos existentes con los nuevos para validación completa
+        const serviceData = await this.getServiceDataForValidation(updateRequestDto, request);
+        
+        // Determinar el status: si se está procesando un pago (Stripe o transferencia), será 'solicitud-recibida', sino mantener 'pendiente'
+        // Durante el flujo del wizard, siempre es 'pendiente' hasta que se procesa el pago
+        const hasStripePayment = !!(updateRequestDto.stripeToken && updateRequestDto.paymentAmount);
+        const hasTransferPayment = !!(updateRequestDto.paymentMethod === 'transferencia' && updateRequestDto.paymentAmount);
+        const willProcessPayment = hasStripePayment || hasTransferPayment;
+        const requestStatus = willProcessPayment 
+          ? (updateRequestDto.status || 'solicitud-recibida')
+          : (updateRequestDto.status || request.status || 'pendiente'); // Mantener pendiente durante wizard
+        
+        try {
+          validateRequestData(
+            serviceData,
+            request.type,
+            updateRequestDto.currentStepNumber,
+            requestStatus, // 'pendiente' durante wizard, 'solicitud-recibida' al procesar pago
+          );
+        } catch (error) {
+          if (error instanceof BadRequestException) {
+            throw error;
+          }
+          throw new BadRequestException(`Error de validación: ${error.message}`);
+        }
       }
+
+      // Log de datos recibidos para debugging
+      this.logger.log(`[Update Request ${id}] Datos recibidos:`, {
+        paymentMethod: updateRequestDto.paymentMethod,
+        paymentAmount: updateRequestDto.paymentAmount,
+        stripeToken: updateRequestDto.stripeToken ? 'presente' : 'ausente',
+        paymentProofUrl: updateRequestDto.paymentProofUrl,
+        status: updateRequestDto.status,
+      });
+
+      // Procesar pago con Stripe si se proporciona un token (solo cuando se hace clic en "Procesar Pago")
+      let paymentResult: any = null;
+      
+      // Verificar si el pago ya fue procesado previamente
+      const paymentAlreadyProcessed = !!(request.stripeChargeId && request.paymentMethod === 'stripe');
+      
+      if (updateRequestDto.stripeToken && updateRequestDto.paymentAmount) {
+        // Si ya hay un chargeId, no procesar de nuevo (evitar duplicados)
+        if (paymentAlreadyProcessed) {
+          this.logger.log(
+            `[Update Request ${id}] Pago ya procesado previamente (chargeId: ${request.stripeChargeId}). No se procesará de nuevo.`,
+          );
+          // Usar los datos del pago existente
+          paymentResult = {
+            chargeId: request.stripeChargeId,
+            amount: request.paymentAmount,
+            status: request.paymentStatus || 'succeeded',
+          };
+        } else {
+          // Procesar el pago con Stripe
+          try {
+            this.logger.log(
+              `[Update Request ${id}] Procesando pago con Stripe: ${updateRequestDto.paymentAmount} USD`,
+            );
+            
+            const charge = await this.stripeService.createCharge(
+              updateRequestDto.stripeToken,
+              updateRequestDto.paymentAmount,
+              'usd',
+              `Pago de solicitud - ${request.type}`,
+            );
+
+            paymentResult = {
+              chargeId: charge.id,
+              amount: charge.amount / 100, // Convertir de centavos a dólares
+              currency: charge.currency,
+              status: charge.status,
+              paid: charge.paid,
+              receiptUrl: charge.receipt_url,
+            };
+
+            this.logger.log(`[Update Request ${id}] Pago procesado exitosamente: ${charge.id}`);
+          } catch (error: any) {
+            this.logger.error(`[Update Request ${id}] Error al procesar pago: ${error.message}`);
+            await queryRunner.rollbackTransaction();
+            throw error; // Re-lanzar el error para que el cliente lo vea
+          }
+        }
+      } else if (updateRequestDto.paymentMethod === 'stripe' && paymentAlreadyProcessed) {
+        // Si no hay token pero el pago ya fue procesado, usar los datos existentes
+        this.logger.log(
+          `[Update Request ${id}] Pago Stripe ya procesado. Solo actualizando status a 'solicitud-recibida'.`,
+        );
+        paymentResult = {
+          chargeId: request.stripeChargeId,
+          amount: request.paymentAmount,
+          status: request.paymentStatus || 'succeeded',
+        };
+      }
+
+      // Actualizar campos básicos de la solicitud
+      // Si se procesó el pago (Stripe o transferencia), cambiar status a 'solicitud-recibida' y guardar datos de pago
+      const hasPayment = !!(updateRequestDto.paymentMethod && updateRequestDto.paymentAmount);
+      
+      this.logger.log(`[Update Request ${id}] hasPayment: ${hasPayment}, paymentResult: ${!!paymentResult}, paymentMethod: ${updateRequestDto.paymentMethod}`);
+      
+      if (paymentResult) {
+        // Pago con Stripe procesado exitosamente
+        // IMPORTANTE: NO cambiar el status aquí, solo guardar los datos del pago
+        // El status se cambiará a 'solicitud-recibida' cuando se haga clic en "Crear Solicitud"
+        this.logger.log(`[Update Request ${id}] Guardando datos de pago Stripe (sin cambiar status)`);
+        // Mantener el status actual (pendiente) hasta que se finalice la solicitud
+        request.status = updateRequestDto.status || request.status || 'pendiente';
+        request.paymentMethod = updateRequestDto.paymentMethod;
+        request.paymentAmount = updateRequestDto.paymentAmount;
+        request.stripeChargeId = paymentResult.chargeId;
+        request.paymentStatus = paymentResult.status;
+        request.paymentProofUrl = updateRequestDto.paymentProofUrl;
+      } else if (hasPayment) {
+        // Hay datos de pago (transferencia o cuenta gratuita)
+        this.logger.log(`[Update Request ${id}] Guardando datos de pago (transferencia o cuenta gratuita)`);
+        request.status = updateRequestDto.status || 'solicitud-recibida';
+        request.paymentMethod = updateRequestDto.paymentMethod;
+        request.paymentAmount = updateRequestDto.paymentAmount;
+        if (updateRequestDto.paymentMethod === 'transferencia') {
+          request.paymentStatus = 'pending';
+        }
+        if (updateRequestDto.paymentProofUrl !== undefined) {
+          request.paymentProofUrl = updateRequestDto.paymentProofUrl;
+        }
+      } else if (updateRequestDto.status !== undefined) {
+        request.status = updateRequestDto.status;
+        // Si se proporcionan datos de pago aunque no se procese, guardarlos
+        if (updateRequestDto.paymentMethod) {
+          request.paymentMethod = updateRequestDto.paymentMethod;
+        }
+        if (updateRequestDto.paymentAmount !== undefined) {
+          request.paymentAmount = updateRequestDto.paymentAmount;
+        }
+        if (updateRequestDto.paymentProofUrl !== undefined) {
+          request.paymentProofUrl = updateRequestDto.paymentProofUrl;
+        }
+      } else {
+        // Si no hay pago y no se especifica status, mantener 'pendiente' (borrador)
+        request.status = request.status || 'pendiente';
+      }
+
+      this.logger.log(`[Update Request ${id}] Datos de pago a guardar:`, {
+        paymentMethod: request.paymentMethod,
+        paymentAmount: request.paymentAmount,
+        paymentStatus: request.paymentStatus,
+        stripeChargeId: request.stripeChargeId,
+        paymentProofUrl: request.paymentProofUrl,
+        status: request.status,
+      });
+
+      // Actualizar currentStep si se proporciona
+      if (updateRequestDto.currentStep !== undefined) {
+        request.currentStep = updateRequestDto.currentStep;
+      }
+      
       if (updateRequestDto.notes !== undefined) {
         request.notes = updateRequestDto.notes;
       }
+      
+      this.logger.log(`[Update Request ${id}] Guardando request con datos:`, {
+        status: request.status,
+        paymentMethod: request.paymentMethod,
+        paymentAmount: request.paymentAmount,
+        paymentStatus: request.paymentStatus,
+        stripeChargeId: request.stripeChargeId,
+        paymentProofUrl: request.paymentProofUrl,
+        currentStep: request.currentStep,
+      });
+      
       await queryRunner.manager.save(Request, request);
+      
+      this.logger.log(`[Update Request ${id}] Request guardada exitosamente`);
 
       // Actualizar la solicitud específica según el tipo
       if (request.type === 'apertura-llc') {
@@ -476,10 +1016,12 @@ export class RequestsService {
       }
 
       // Crear el miembro
+      const { dateOfBirth, ...memberDataWithoutDate } = createMemberDto;
+      const parsedDate = this.parseDate(dateOfBirth);
       const member = this.memberRepo.create({
         requestId,
-        ...createMemberDto,
-        dateOfBirth: new Date(createMemberDto.dateOfBirth),
+        ...memberDataWithoutDate,
+        ...(parsedDate ? { dateOfBirth: parsedDate } : {}),
       });
 
       const savedMember = await queryRunner.manager.save(Member, member);
@@ -554,9 +1096,12 @@ export class RequestsService {
 
       // Actualizar campos
       if (updateMemberDto.dateOfBirth) {
-        updateMemberDto.dateOfBirth = new Date(
-          updateMemberDto.dateOfBirth as any,
-        ) as any;
+        const parsedDate = this.parseDate(updateMemberDto.dateOfBirth as string);
+        if (parsedDate) {
+          updateMemberDto.dateOfBirth = parsedDate as any;
+        } else {
+          delete updateMemberDto.dateOfBirth;
+        }
       }
       Object.assign(member, updateMemberDto);
 
@@ -683,10 +1228,12 @@ export class RequestsService {
       }
 
       // Crear el propietario
+      const { dateOfBirth, ...ownerDataWithoutDate } = createOwnerDto;
+      const parsedDate = this.parseDate(dateOfBirth);
       const owner = this.ownerRepo.create({
         requestId,
-        ...createOwnerDto,
-        dateOfBirth: new Date(createOwnerDto.dateOfBirth),
+        ...ownerDataWithoutDate,
+        ...(parsedDate ? { dateOfBirth: parsedDate } : {}),
       });
 
       const savedOwner = await queryRunner.manager.save(
@@ -745,9 +1292,12 @@ export class RequestsService {
 
       // Actualizar campos
       if (updateOwnerDto.dateOfBirth) {
-        updateOwnerDto.dateOfBirth = new Date(
-          updateOwnerDto.dateOfBirth as any,
-        ) as any;
+        const parsedDate = this.parseDate(updateOwnerDto.dateOfBirth as string);
+        if (parsedDate) {
+          updateOwnerDto.dateOfBirth = parsedDate as any;
+        } else {
+          delete updateOwnerDto.dateOfBirth;
+        }
       }
       Object.assign(owner, updateOwnerDto);
 
@@ -852,11 +1402,13 @@ export class RequestsService {
         where: { requestId },
       });
 
+      const { dateOfBirth, ...validatorDataWithoutDate } = createValidatorDto;
+      const parsedDate = this.parseDate(dateOfBirth);
       if (validator) {
         // Actualizar existente
         Object.assign(validator, {
-          ...createValidatorDto,
-          dateOfBirth: new Date(createValidatorDto.dateOfBirth),
+          ...validatorDataWithoutDate,
+          ...(parsedDate ? { dateOfBirth: parsedDate } : {}),
         });
         validator = await queryRunner.manager.save(
           BankAccountValidator,
@@ -866,8 +1418,8 @@ export class RequestsService {
         // Crear nuevo
         validator = this.validatorRepo.create({
           requestId,
-          ...createValidatorDto,
-          dateOfBirth: new Date(createValidatorDto.dateOfBirth),
+          ...validatorDataWithoutDate,
+          ...(parsedDate ? { dateOfBirth: parsedDate } : {}),
         });
         validator = await queryRunner.manager.save(
           BankAccountValidator,
@@ -925,9 +1477,12 @@ export class RequestsService {
 
       // Actualizar campos
       if (updateValidatorDto.dateOfBirth) {
-        updateValidatorDto.dateOfBirth = new Date(
-          updateValidatorDto.dateOfBirth as any,
-        ) as any;
+        const parsedDate = this.parseDate(updateValidatorDto.dateOfBirth as string);
+        if (parsedDate) {
+          updateValidatorDto.dateOfBirth = parsedDate as any;
+        } else {
+          delete updateValidatorDto.dateOfBirth;
+        }
       }
       Object.assign(validator, updateValidatorDto);
 

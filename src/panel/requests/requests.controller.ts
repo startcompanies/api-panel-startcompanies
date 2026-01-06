@@ -11,6 +11,7 @@ import {
   Req,
   UseGuards,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { RequestsService } from './requests.service';
 import { CreateRequestDto } from './dtos/create-request.dto';
@@ -26,11 +27,17 @@ import { ApiTags } from '@nestjs/swagger';
 @Controller('panel/requests')
 @UseGuards(AuthGuard)
 export class RequestsController {
+  private readonly logger = new Logger(RequestsController.name);
+  
   constructor(private readonly requestsService: RequestsService) {}
 
   // Crear nueva solicitud
   @Post()
-  create(@Body() createRequestDto: CreateRequestDto) {
+  create(@Body() createRequestDto: CreateRequestDto, @Req() req: any) {
+    // Si el usuario es partner, asignar automáticamente su ID como partnerId
+    if (req.user?.type === 'partner' && !createRequestDto.partnerId) {
+      createRequestDto.partnerId = req.user.id;
+    }
     return this.requestsService.create(createRequestDto);
   }
 
@@ -73,7 +80,13 @@ export class RequestsController {
     return this.requestsService.findAll(filters, validPage, validLimit);
   }
 
-  // Detalle de una solicitud
+  // Detalle de una solicitud por UUID
+  @Get('uuid/:uuid')
+  findOneByUuid(@Param('uuid') uuid: string) {
+    return this.requestsService.findOneByUuid(uuid);
+  }
+
+  // Detalle de una solicitud por ID
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.requestsService.findOne(id);
@@ -85,6 +98,16 @@ export class RequestsController {
     @Param('id', ParseIntPipe) id: number,
     @Body() updateRequestDto: UpdateRequestDto,
   ) {
+    this.logger.log(`[Controller] PATCH /panel/requests/${id} recibido`);
+    this.logger.log(`[Controller] Datos recibidos:`, {
+      paymentMethod: updateRequestDto.paymentMethod,
+      paymentAmount: updateRequestDto.paymentAmount,
+      stripeToken: updateRequestDto.stripeToken ? 'presente' : 'ausente',
+      paymentProofUrl: updateRequestDto.paymentProofUrl,
+      status: updateRequestDto.status,
+      currentStep: updateRequestDto.currentStep,
+      currentStepNumber: updateRequestDto.currentStepNumber,
+    });
     return this.requestsService.update(id, updateRequestDto);
   }
 
@@ -100,6 +123,18 @@ export class RequestsController {
       );
     }
     return this.requestsService.getRequiredDocuments(type, llcType);
+  }
+
+  // Obtener aperturas de un cliente para renovación
+  @Get('client/:clientId/aperturas')
+  getClientAperturasById(@Param('clientId', ParseIntPipe) clientId: number) {
+    return this.requestsService.getClientAperturas(clientId);
+  }
+
+  // Obtener aperturas de un cliente por email para renovación
+  @Get('client/email/:email/aperturas')
+  getClientAperturasByEmail(@Param('email') email: string) {
+    return this.requestsService.getClientAperturas(undefined, email);
   }
 
   // Aprobar solicitud (solo admin) - cambia de 'solicitud-recibida' a 'en-proceso' con etapa inicial

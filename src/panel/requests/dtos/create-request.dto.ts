@@ -30,6 +30,17 @@ export class CreateRequestDto {
   @Max(7)
   currentStepNumber: number;
 
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(4)
+  currentStep?: number; // Paso principal del wizard (1, 2, 3, 4)
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['solicitud-recibida', 'pendiente', 'en-proceso', 'completada', 'rechazada'])
+  status?: 'solicitud-recibida' | 'pendiente' | 'en-proceso' | 'completada' | 'rechazada';
+
   // Datos específicos según el tipo de solicitud
   @IsOptional()
   @ValidateNested()
@@ -49,5 +60,32 @@ export class CreateRequestDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  // Información de pago
+  @IsOptional()
+  @IsString()
+  stripeToken?: string; // Token de Stripe generado en el frontend
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  paymentAmount?: number; // Monto del pago en USD (puede ser 0 para cuenta gratuita)
+
+  @IsOptional()
+  @IsString()
+  paymentMethod?: 'transferencia' | 'stripe'; // Método de pago seleccionado
+
+  @IsOptional()
+  @IsString()
+  paymentProofUrl?: string; // URL del comprobante de transferencia
+
+  // Datos del cliente (para crear/obtener el cliente si no existe)
+  @IsOptional()
+  clientData?: {
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone?: string;
+  };
 }
 

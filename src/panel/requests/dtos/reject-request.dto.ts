@@ -5,3 +5,4 @@ export class RejectRequestDto {
   @IsString()
   notes?: string; // Razón del rechazo
 }
+

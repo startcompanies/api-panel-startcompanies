@@ -31,12 +31,12 @@ export class AddStageAndSolicitudRecibidaStatus1766200000000
     // Modificar el tipo de la columna status
     await queryRunner.query(`
       ALTER TABLE requests 
-      DROP CONSTRAINT IF EXISTS requests_status_check;
+      DROP CONSTRAINT IF EXISTS check_requests_status;
     `);
 
     await queryRunner.query(`
       ALTER TABLE requests 
-      ADD CONSTRAINT requests_status_check 
+      ADD CONSTRAINT check_requests_status 
       CHECK (status IN ('solicitud-recibida', 'pendiente', 'en-proceso', 'completada', 'rechazada'));
     `);
   }
@@ -49,12 +49,12 @@ export class AddStageAndSolicitudRecibidaStatus1766200000000
 
     await queryRunner.query(`
       ALTER TABLE requests 
-      DROP CONSTRAINT IF EXISTS requests_status_check;
+      DROP CONSTRAINT IF EXISTS check_requests_status;
     `);
 
     await queryRunner.query(`
       ALTER TABLE requests 
-      ADD CONSTRAINT requests_status_check 
+      ADD CONSTRAINT check_requests_status 
       CHECK (status IN ('pendiente', 'en-proceso', 'completada', 'rechazada'));
     `);
 
@@ -62,3 +62,4 @@ export class AddStageAndSolicitudRecibidaStatus1766200000000
     await queryRunner.dropColumn('requests', 'stage');
   }
 }
+

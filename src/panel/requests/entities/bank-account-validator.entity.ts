@@ -27,8 +27,8 @@ export class BankAccountValidator {
   @Column({ name: 'last_name', length: 255 })
   lastName: string;
 
-  @Column({ name: 'date_of_birth', type: 'date' })
-  dateOfBirth: Date;
+  @Column({ name: 'date_of_birth', type: 'date', nullable: true })
+  dateOfBirth: Date | null;
 
   @Column({ name: 'nationality', length: 100 })
   nationality: string;

@@ -27,6 +27,12 @@ export class UpdateRequestDto {
   @Max(7)
   currentStepNumber?: number;
 
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(4)
+  currentStep?: number; // Paso principal del wizard (1, 2, 3, 4)
+
   // Datos específicos según el tipo de solicitud (parciales)
   @IsOptional()
   @ValidateNested()
@@ -46,5 +52,23 @@ export class UpdateRequestDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  // Información de pago (para procesar pago al actualizar)
+  @IsOptional()
+  @IsString()
+  stripeToken?: string; // Token de Stripe generado en el frontend
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  paymentAmount?: number; // Monto del pago en USD (puede ser 0 para cuenta gratuita)
+
+  @IsOptional()
+  @IsString()
+  paymentMethod?: 'transferencia' | 'stripe'; // Método de pago seleccionado
+
+  @IsOptional()
+  @IsString()
+  paymentProofUrl?: string; // URL del comprobante de transferencia
 }
 

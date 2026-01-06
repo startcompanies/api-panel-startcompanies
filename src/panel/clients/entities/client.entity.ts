@@ -8,7 +8,9 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   Index,
+  BeforeInsert,
 } from 'typeorm';
+import { v4 as uuidv4 } from 'uuid';
 import { User } from '../../../shared/user/entities/user.entity';
 // Request entity se importará cuando se actualice la relación
 // import { Request } from '../../requests/entities/request.entity';
@@ -17,9 +19,13 @@ import { User } from '../../../shared/user/entities/user.entity';
 @Index(['partnerId'])
 @Index(['userId'])
 @Index(['email'])
+@Index(['uuid'])
 export class Client {
   @PrimaryGeneratedColumn()
   id: number;
+
+  @Column({ type: 'varchar', length: 36, unique: true })
+  uuid: string;
 
   // Relación con Partner (opcional - si el cliente pertenece a un partner)
   @ManyToOne(() => User, { nullable: true, onDelete: 'SET NULL' })
@@ -82,7 +88,15 @@ export class Client {
     default: () => 'CURRENT_TIMESTAMP',
   })
   updatedAt: Date;
+
+  @BeforeInsert()
+  generateUuid() {
+    if (!this.uuid) {
+      this.uuid = uuidv4();
+    }
+  }
 }
+
 
 
 

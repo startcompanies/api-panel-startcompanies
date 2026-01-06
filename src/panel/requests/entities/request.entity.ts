@@ -7,22 +7,32 @@ import {
   JoinColumn,
   CreateDateColumn,
   UpdateDateColumn,
+  Index,
+  BeforeInsert,
 } from 'typeorm';
+import { v4 as uuidv4 } from 'uuid';
 import { User } from '../../../shared/user/entities/user.entity';
 import { AperturaLlcRequest } from './apertura-llc-request.entity';
 import { RenovacionLlcRequest } from './renovacion-llc-request.entity';
 import { CuentaBancariaRequest } from './cuenta-bancaria-request.entity';
 
 @Entity('requests')
+@Index(['uuid'])
 export class Request {
   @PrimaryGeneratedColumn()
   id: number;
+
+  @Column({ type: 'varchar', length: 36, unique: true })
+  uuid: string;
 
   @Column({ type: 'varchar', length: 50 })
   type: 'apertura-llc' | 'renovacion-llc' | 'cuenta-bancaria';
 
   @Column({ type: 'varchar', length: 50 })
   status: 'solicitud-recibida' | 'pendiente' | 'en-proceso' | 'completada' | 'rechazada';
+
+  @Column({ name: 'current_step', type: 'int', nullable: true })
+  currentStep?: number; // Paso principal del wizard (1, 2, 3, 4)
 
   @Column({ type: 'varchar', length: 100, nullable: true })
   stage?: string; // Etapa actual del blueprint de Zoho CRM
@@ -59,6 +69,22 @@ export class Request {
   @Column({ name: 'work_drive_url_external', nullable: true, type: 'text' })
   workDriveUrlExternal?: string; // URL externa de Zoho WorkDrive desde Account
 
+  // Información de pago
+  @Column({ name: 'payment_method', nullable: true, type: 'varchar', length: 50 })
+  paymentMethod?: 'transferencia' | 'stripe';
+
+  @Column({ name: 'payment_amount', nullable: true, type: 'decimal', precision: 10, scale: 2 })
+  paymentAmount?: number;
+
+  @Column({ name: 'stripe_charge_id', nullable: true, type: 'varchar', length: 100 })
+  stripeChargeId?: string; // ID del cargo de Stripe
+
+  @Column({ name: 'payment_status', nullable: true, type: 'varchar', length: 50 })
+  paymentStatus?: string; // Estado del pago (succeeded, pending, failed, etc.)
+
+  @Column({ name: 'payment_proof_url', nullable: true, type: 'text' })
+  paymentProofUrl?: string; // URL del comprobante de transferencia
+
   @CreateDateColumn({
     type: 'timestamp with time zone',
     default: () => 'CURRENT_TIMESTAMP',
@@ -70,5 +96,12 @@ export class Request {
     default: () => 'CURRENT_TIMESTAMP',
   })
   updatedAt: Date;
+
+  @BeforeInsert()
+  generateUuid() {
+    if (!this.uuid) {
+      this.uuid = uuidv4();
+    }
+  }
 }
 

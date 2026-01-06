@@ -147,6 +147,35 @@ export class ClientsService {
   }
 
   /**
+   * Obtener un cliente por UUID
+   */
+  async getClientByUuid(uuid: string, partnerId?: number): Promise<Client> {
+    try {
+      const where: any = { uuid };
+      if (partnerId) {
+        where.partnerId = partnerId; // Partners solo pueden ver sus propios clientes
+      }
+
+      const client = await this.clientRepository.findOne({
+        where,
+        relations: ['partner', 'user'],
+      });
+
+      if (!client) {
+        throw new NotFoundException('Cliente no encontrado');
+      }
+
+      return client;
+    } catch (e) {
+      if (e instanceof NotFoundException) {
+        throw e;
+      }
+      console.error('Error al obtener cliente por UUID:', e);
+      throw new InternalServerErrorException('Error al obtener el cliente');
+    }
+  }
+
+  /**
    * Crear un nuevo cliente
    */
   async createClient(
@@ -372,7 +401,9 @@ export class ClientsService {
       );
     }
   }
+
 }
+
 
 
 

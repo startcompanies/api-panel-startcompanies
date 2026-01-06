@@ -36,8 +36,8 @@ export class Member {
   @Column({ name: 'scanned_passport_url', nullable: true, type: 'text' })
   scannedPassportUrl?: string;
 
-  @Column({ name: 'date_of_birth', type: 'date' })
-  dateOfBirth: Date;
+  @Column({ name: 'date_of_birth', type: 'date', nullable: true })
+  dateOfBirth: Date | null;
 
   @Column({ name: 'email', length: 255 })
   email: string;
