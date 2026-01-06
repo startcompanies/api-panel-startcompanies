@@ -11,6 +11,7 @@ import { PaginationDto } from 'src/common/dtos/pagination.dto';
 import { GetPostsFilterDto } from './dtos/get-posts-filter.dto';
 
 export class PostsService {
+
   constructor(
     @InjectRepository(Post)
     private postsRepository: Repository<Post>,
@@ -125,6 +126,39 @@ export class PostsService {
         .leftJoinAndSelect('post.tags', 'tag')
         .where('category.slug = :slug', { slug: categorySlug })
         .andWhere('post.is_published = :isPublished', { isPublished: true })
+        .select([
+          'post.title',
+          'post.slug',
+          'post.excerpt',
+          'post.image_url',
+          'post.published_at',
+          'user.id',
+          'user.first_name',
+          'user.last_name',
+          'category.name',
+          'category.slug',
+          'tag.name',
+          'tag.slug',
+        ])
+        .orderBy('post.published_at', 'DESC')
+        .getMany();
+
+      return posts;
+    } catch (error) {
+      this.exceptionsService.handleDBExceptions(error);
+    }
+  }
+
+  // Obtener todos los posts correspondientes a una categoria en modo de revisión
+  async findAllSandboxPostsByCategorySlug(categorySlug: string) {
+    try {
+      const posts = await this.postsRepository
+        .createQueryBuilder('post')
+        .leftJoinAndSelect('post.user', 'user')
+        .leftJoinAndSelect('post.categories', 'category')
+        .leftJoinAndSelect('post.tags', 'tag')
+        .where('category.slug = :slug', { slug: categorySlug })
+        .andWhere('post.sandbox = :sandbox', { sandbox: true })
         .select([
           'post.title',
           'post.slug',

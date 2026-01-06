@@ -25,6 +25,7 @@ export class CategoriesController {
     return this.categoriesService.findAllWithPublishedPostsCount();
   }
 
+  // Obtener todas las categorías con el número de posts en sandbox
   @Get('whith-sandbox-posts-count')
   @ApiOperation({
     summary: 'Obtener todas las categorías con el número de posts en sandbox',

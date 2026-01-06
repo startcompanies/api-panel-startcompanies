@@ -122,6 +122,7 @@ export class CategoriesService {
     }
   }
 
+  // Obtener todas las categorías con el número de posts en sandbox
   async findAllWithSandboxPostsCount(): Promise<any[] | undefined> {
     try {
       const result = await this.categoriesRepository
