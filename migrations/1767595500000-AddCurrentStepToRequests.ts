@@ -18,3 +18,4 @@ export class AddCurrentStepToRequests1767595500000
     await queryRunner.dropColumn('requests', 'current_step');
   }
 }
+

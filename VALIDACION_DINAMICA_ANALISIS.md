@@ -244,3 +244,4 @@ Este documento mapea los campos obligatorios para cada servicio y sección, perm
 
 5. **Archivos**: Los campos que terminan en `Url` representan archivos subidos. Deben ser URLs válidas y no vacías cuando son obligatorios.
 
+

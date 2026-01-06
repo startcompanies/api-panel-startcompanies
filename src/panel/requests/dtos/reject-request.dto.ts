@@ -6,3 +6,4 @@ export class RejectRequestDto {
   notes?: string; // Razón del rechazo
 }
 
+
