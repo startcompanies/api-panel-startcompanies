@@ -9,6 +9,7 @@ import { BankAccountValidator } from './entities/bank-account-validator.entity';
 import { BankAccountOwner } from './entities/bank-account-owner.entity';
 import { RequestRequiredDocument } from './entities/request-required-document.entity';
 import { User } from '../../shared/user/entities/user.entity';
+import { Client } from '../clients/entities/client.entity';
 import { RequestsService } from './requests.service';
 import { RequestsController } from './requests.controller';
 import { MembersController } from './members.controller';
@@ -31,6 +32,7 @@ import { UserModule } from '../../shared/user/user.module';
       BankAccountOwner,
       RequestRequiredDocument,
       User,
+      Client,
     ]),
     ZohoConfigModule,
     PaymentsModule,

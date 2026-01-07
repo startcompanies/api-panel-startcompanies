@@ -9,6 +9,7 @@ import { RenovacionLlcRequest } from 'src/panel/requests/entities/renovacion-llc
 import { CuentaBancariaRequest } from 'src/panel/requests/entities/cuenta-bancaria-request.entity';
 import { Member } from 'src/panel/requests/entities/member.entity';
 import { User } from 'src/shared/user/entities/user.entity';
+import { Client } from 'src/panel/clients/entities/client.entity';
 import { encodePassword } from 'src/shared/common/utils/bcrypt';
 
 @Injectable()
@@ -139,7 +140,7 @@ export class ZohoSyncService {
       // Determinar el contacto principal
       // Si hay partner, el partner es el contacto principal
       // Si no hay partner, el primer miembro o el cliente es el contacto principal
-      let primaryContact: User | Member | null = null;
+      let primaryContact: User | Member | Client | null = null;
       let primaryContactEmail: string | null = null;
       let primaryContactPhone: string | null = null;
 
@@ -288,8 +289,16 @@ export class ZohoSyncService {
       // }
 
       // 5. Crear usuario si no existe (basado en contacto principal)
-      if (primaryContactEmail && !request.partner) {
-        await this.createUserFromPrimaryContact(primaryContactEmail, primaryContact as any);
+      if (primaryContactEmail && !request.partner && primaryContact) {
+        // Si es un Client, verificar si tiene User asociado
+        if ('full_name' in primaryContact && !('username' in primaryContact) && !('phoneNumber' in primaryContact)) {
+          const client = primaryContact as Client;
+          if (!client.userId) {
+            await this.createUserFromClient(client);
+          }
+        } else {
+          await this.createUserFromPrimaryContact(primaryContactEmail, primaryContact as User | Member);
+        }
       }
 
       return {
@@ -425,16 +434,29 @@ export class ZohoSyncService {
   }
 
   /**
-   * Mapea un User o Member a Contact (para contacto principal)
+   * Mapea un User, Member o Client a Contact (para contacto principal)
    */
   private mapToContact(
-    contact: User | Member,
+    contact: User | Member | Client,
     accountId: string,
     isPrimary: boolean = false,
   ): Record<string, any> {
     if ('firstName' in contact) {
       // Es un Member
       return this.mapMemberToContact(contact as Member, accountId, isPrimary);
+    } else if ('full_name' in contact) {
+      // Es un Client
+      const client = contact as Client;
+      const nameParts = client.full_name.split(' ');
+      return {
+        First_Name: nameParts[0] || '',
+        Last_Name: nameParts.slice(1).join(' ') || '',
+        Email: client.email,
+        Mobile: this.normalizePhoneNumber(client.phone),
+        Account_Name: {
+          id: accountId,
+        },
+      };
     } else {
       // Es un User
       const user = contact as User;
@@ -663,6 +685,83 @@ export class ZohoSyncService {
         Es_ciudadano_de_EE_UU: member.isUSCitizen === 'Sí' ? 'Sí' : 'No',
       }),
     };
+  }
+
+  /**
+   * Crea un usuario desde un Client
+   */
+  private async createUserFromClient(client: Client): Promise<User | null> {
+    try {
+      // Verificar si el usuario ya existe
+      if (client.userId) {
+        const existingUser = await this.userRepo.findOne({
+          where: { id: client.userId },
+        });
+        if (existingUser) {
+          return existingUser;
+        }
+      }
+
+      const existingUser = await this.userRepo.findOne({
+        where: { email: client.email },
+      });
+
+      if (existingUser) {
+        // Actualizar el Client para asociarlo con el User existente
+        await this.dataSource
+          .createQueryBuilder()
+          .update('clients')
+          .set({ userId: existingUser.id })
+          .where('id = :id', { id: client.id })
+          .execute();
+        return existingUser;
+      }
+
+      // Crear nuevo usuario
+      const nameParts = client.full_name.split(' ');
+      let username = client.email.split('@')[0];
+      let existingUserByUsername = await this.userRepo.findOne({
+        where: { username },
+      });
+      let counter = 1;
+      while (existingUserByUsername) {
+        username = `${client.email.split('@')[0]}${counter}`;
+        existingUserByUsername = await this.userRepo.findOne({
+          where: { username },
+        });
+        counter++;
+      }
+
+      const defaultPassword = this.generateTemporaryPassword();
+      const hashedPassword = encodePassword(defaultPassword);
+
+      const newUser = this.userRepo.create({
+        username,
+        email: client.email,
+        password: hashedPassword,
+        first_name: nameParts[0] || '',
+        last_name: nameParts.slice(1).join(' ') || '',
+        phone: client.phone || '',
+        type: 'client',
+        status: client.status,
+      });
+
+      const savedUser = await this.userRepo.save(newUser);
+
+      // Actualizar el Client para asociarlo con el nuevo User
+      await this.dataSource
+        .createQueryBuilder()
+        .update('clients')
+        .set({ userId: savedUser.id })
+        .where('id = :id', { id: client.id })
+        .execute();
+
+      this.logger.log(`Usuario creado desde Client: ${savedUser.id} - ${savedUser.email}`);
+      return savedUser;
+    } catch (error: any) {
+      this.logger.error(`Error al crear usuario desde Client: ${error.message}`);
+      return null;
+    }
   }
 
   /**
@@ -2093,6 +2192,7 @@ export class ZohoSyncService {
     return password.split('').sort(() => Math.random() - 0.5).join('');
   }
 }
+
 
 
 

@@ -17,6 +17,7 @@ import { BankAccountOwner } from './entities/bank-account-owner.entity';
 import { BankAccountValidator } from './entities/bank-account-validator.entity';
 import { RequestRequiredDocument } from './entities/request-required-document.entity';
 import { User } from '../../shared/user/entities/user.entity';
+import { Client } from '../clients/entities/client.entity';
 import { CreateRequestDto } from './dtos/create-request.dto';
 import { UpdateRequestDto } from './dtos/update-request.dto';
 import { ApproveRequestDto } from './dtos/approve-request.dto';
@@ -183,6 +184,8 @@ export class RequestsService {
     private readonly requiredDocRepo: Repository<RequestRequiredDocument>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    @InjectRepository(Client)
+    private readonly clientRepo: Repository<Client>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly stripeService: StripeService,
@@ -336,50 +339,124 @@ export class RequestsService {
 
     try {
       let clientId = createRequestDto.clientId;
-      let client: User | null = null;
+      let client: Client | null = null;
 
       // Si clientId es 0 y hay clientData, crear o obtener el cliente
       if (clientId === 0 && createRequestDto.clientData) {
         const { email, firstName, lastName, phone } = createRequestDto.clientData;
         
-        // Buscar si el cliente ya existe por email
-        client = await this.userRepo.findOne({
-          where: { email, type: 'client' },
+        // Buscar si el cliente ya existe por email (en clients)
+        client = await this.clientRepo.findOne({
+          where: { email },
         });
 
         if (!client) {
-          // Generar una contraseña temporal
-          const tempPassword = Math.random().toString(36).slice(-12) + 'A1!';
-          
-          // Crear nuevo cliente
-          const newClient = this.userRepo.create({
-            email,
-            first_name: firstName,
-            last_name: lastName,
-            phone: phone || '',
-            type: 'client',
-            status: true,
-            // Generar un username basado en el email
-            username: email.split('@')[0] + Math.floor(Math.random() * 1000),
-            // Generar una contraseña temporal (el usuario deberá cambiarla)
-            password: encodePassword(tempPassword),
+          // Buscar en users si existe un usuario con ese email
+          const existingUser = await this.userRepo.findOne({
+            where: { email, type: 'client' },
           });
-          client = await queryRunner.manager.save(User, newClient);
-          this.logger.log(`Cliente creado: ${client.id} - ${client.email}`);
-          // TODO: Enviar email con la contraseña temporal (comentado por ahora)
-          // await this.userService.sendWelcomeEmail(client.email, tempPassword);
+
+          if (existingUser) {
+            // Si existe un User, crear un Client asociado
+            client = this.clientRepo.create({
+              email,
+              full_name: `${firstName} ${lastName}`.trim(),
+              phone: phone || '',
+              userId: existingUser.id,
+              partnerId: createRequestDto.partnerId,
+              status: true,
+            });
+            client = await queryRunner.manager.save(Client, client);
+            this.logger.log(`Cliente creado desde User existente: ${client.id} - ${client.email}`);
+          } else {
+            // Lógica según si hay partner o no
+            if (createRequestDto.partnerId) {
+              // Si hay partner: solo crear Client (sin User)
+              client = this.clientRepo.create({
+                email,
+                full_name: `${firstName} ${lastName}`.trim(),
+                phone: phone || '',
+                partnerId: createRequestDto.partnerId,
+                status: true,
+              });
+              client = await queryRunner.manager.save(Client, client);
+              this.logger.log(`Cliente creado (sin User, con partner): ${client.id} - ${client.email}`);
+            } else {
+              // Si NO hay partner: crear User y Client asociado
+              // Generar una contraseña temporal
+              const tempPassword = Math.random().toString(36).slice(-12) + 'A1!';
+              
+              // Crear nuevo usuario
+              const newUser = this.userRepo.create({
+                email,
+                first_name: firstName,
+                last_name: lastName,
+                phone: phone || '',
+                type: 'client',
+                status: true,
+                // Generar un username basado en el email
+                username: email.split('@')[0] + Math.floor(Math.random() * 1000),
+                // Generar una contraseña temporal (el usuario deberá cambiarla)
+                password: encodePassword(tempPassword),
+              });
+              const savedUser = await queryRunner.manager.save(User, newUser);
+              this.logger.log(`Usuario creado: ${savedUser.id} - ${savedUser.email}`);
+              
+              // Crear Client asociado al User
+              client = this.clientRepo.create({
+                email,
+                full_name: `${firstName} ${lastName}`.trim(),
+                phone: phone || '',
+                userId: savedUser.id,
+                // partnerId: undefined (sin partner, no se incluye)
+                status: true,
+              });
+              client = await queryRunner.manager.save(Client, client);
+              this.logger.log(`Cliente creado (con User, sin partner): ${client.id} - ${client.email}`);
+              // TODO: Enviar email con la contraseña temporal (comentado por ahora)
+              // await this.userService.sendWelcomeEmail(savedUser.email, tempPassword);
+            }
+          }
         }
         
         clientId = client.id;
       } else {
         // Validar que el cliente existe
-        client = await this.userRepo.findOne({
+        // Primero buscar en la tabla clients (PartnerClient)
+        client = await this.clientRepo.findOne({
           where: { id: clientId },
         });
+        
         if (!client) {
-          throw new NotFoundException(
-            `Cliente con ID ${clientId} no encontrado`,
-          );
+          // Si no se encuentra en clients, buscar en users
+          // Si existe un User con type='client', crear un Client asociado
+          const existingUser = await this.userRepo.findOne({
+            where: { id: clientId, type: 'client' },
+          });
+          
+          if (existingUser) {
+            // Crear un Client asociado al User existente
+            // Si hay partnerId, asociarlo; si no, no incluir partnerId (cliente independiente)
+            const clientData: Partial<Client> = {
+              email: existingUser.email,
+              full_name: `${existingUser.first_name || ''} ${existingUser.last_name || ''}`.trim() || existingUser.email,
+              phone: existingUser.phone || '',
+              userId: existingUser.id,
+              status: existingUser.status,
+            };
+            // Solo incluir partnerId si existe
+            if (createRequestDto.partnerId) {
+              clientData.partnerId = createRequestDto.partnerId;
+            }
+            const newClient = this.clientRepo.create(clientData);
+            client = await queryRunner.manager.save(Client, newClient);
+            this.logger.log(`Cliente creado desde User existente: ${client.id} - ${client.email}`);
+            clientId = client.id; // Actualizar clientId para usar el nuevo Client
+          } else {
+            throw new NotFoundException(
+              `Cliente con ID ${clientId} no encontrado`,
+            );
+          }
         }
       }
 

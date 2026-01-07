@@ -7,15 +7,43 @@ import {
   ValidateNested,
   Min,
   Max,
+  IsEmail,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import type { RequestType } from '../types/request-type';
-import { CreateAperturaLlcRequestDto } from './create-apertura-llc-request.dto';
-import { CreateRenovacionLlcRequestDto } from './create-renovacion-llc-request.dto';
-import { CreateCuentaBancariaRequestDto } from './create-cuenta-bancaria-request.dto';
+import type { RequestType } from '../../panel/requests/types/request-type';
+import { CreateAperturaLlcRequestDto } from '../../panel/requests/dtos/create-apertura-llc-request.dto';
+import { CreateRenovacionLlcRequestDto } from '../../panel/requests/dtos/create-renovacion-llc-request.dto';
+import { CreateCuentaBancariaRequestDto } from '../../panel/requests/dtos/create-cuenta-bancaria-request.dto';
 
-export class CreateRequestDto {
+export class WizardClientDataDto {
+  @ApiProperty({ example: 'Juan', description: 'Nombre del cliente' })
+  @IsString()
+  @IsNotEmpty()
+  firstName: string;
+
+  @ApiProperty({ example: 'Pérez', description: 'Apellido del cliente' })
+  @IsString()
+  @IsNotEmpty()
+  lastName: string;
+
+  @ApiProperty({ example: 'juan@example.com', description: 'Email del cliente' })
+  @IsEmail()
+  @IsNotEmpty()
+  email: string;
+
+  @ApiPropertyOptional({ example: '+1234567890', description: 'Teléfono del cliente' })
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @ApiProperty({ example: 'SecurePassword123!', description: 'Contraseña del usuario' })
+  @IsString()
+  @IsNotEmpty()
+  password: string;
+}
+
+export class CreateWizardRequestDto {
   @ApiProperty({
     enum: ['apertura-llc', 'renovacion-llc', 'cuenta-bancaria'],
     description: 'Tipo de solicitud',
@@ -25,23 +53,8 @@ export class CreateRequestDto {
   type: RequestType;
 
   @ApiProperty({
-    description: 'ID del cliente asociado a la solicitud',
-    example: 1,
-  })
-  @IsNumber()
-  clientId: number;
-
-  @ApiPropertyOptional({
-    description: 'ID del partner asociado (se asigna automáticamente si el usuario es partner)',
-    example: 2,
-  })
-  @IsOptional()
-  @IsNumber()
-  partnerId?: number;
-
-  @ApiProperty({
     description: 'Número del paso actual en el wizard (1-7)',
-    example: 4,
+    example: 1,
     minimum: 1,
     maximum: 7,
   })
@@ -52,7 +65,7 @@ export class CreateRequestDto {
 
   @ApiPropertyOptional({
     description: 'Paso principal del wizard (1, 2, 3, 4)',
-    example: 2,
+    example: 1,
     minimum: 1,
     maximum: 4,
   })
@@ -60,12 +73,12 @@ export class CreateRequestDto {
   @IsNumber()
   @Min(1)
   @Max(4)
-  currentStep?: number; // Paso principal del wizard (1, 2, 3, 4)
+  currentStep?: number;
 
   @ApiPropertyOptional({
     enum: ['solicitud-recibida', 'pendiente', 'en-proceso', 'completada', 'rechazada'],
     description: 'Estado de la solicitud',
-    example: 'solicitud-recibida',
+    example: 'pendiente',
   })
   @IsOptional()
   @IsString()
@@ -102,39 +115,38 @@ export class CreateRequestDto {
 
   @ApiPropertyOptional({
     description: 'Notas adicionales sobre la solicitud',
-    example: 'Cliente requiere atención prioritaria',
+    example: 'Solicitud desde wizard',
   })
   @IsOptional()
   @IsString()
   notes?: string;
 
-  // Información de pago
-  @ApiPropertyOptional({
+  // Información de pago (requerido en wizard)
+  @ApiProperty({
     description: 'Token de Stripe generado en el frontend para procesar el pago',
     example: 'tok_visa_4242',
   })
-  @IsOptional()
   @IsString()
-  stripeToken?: string; // Token de Stripe generado en el frontend
+  @IsNotEmpty()
+  stripeToken: string;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     description: 'Monto del pago en USD (puede ser 0 para cuenta gratuita)',
     example: 99.0,
     minimum: 0,
   })
-  @IsOptional()
   @IsNumber()
   @Min(0)
-  paymentAmount?: number; // Monto del pago en USD (puede ser 0 para cuenta gratuita)
+  paymentAmount: number;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     enum: ['transferencia', 'stripe'],
     description: 'Método de pago seleccionado',
     example: 'stripe',
   })
-  @IsOptional()
   @IsString()
-  paymentMethod?: 'transferencia' | 'stripe'; // Método de pago seleccionado
+  @IsIn(['transferencia', 'stripe'])
+  paymentMethod: 'transferencia' | 'stripe';
 
   @ApiPropertyOptional({
     description: 'URL del comprobante de transferencia bancaria',
@@ -142,24 +154,21 @@ export class CreateRequestDto {
   })
   @IsOptional()
   @IsString()
-  paymentProofUrl?: string; // URL del comprobante de transferencia
+  paymentProofUrl?: string;
 
-  // Datos del cliente (para crear/obtener el cliente si no existe)
-  @ApiPropertyOptional({
-    description: 'Datos del cliente para crear/obtener si no existe',
+  // Datos del cliente (requerido en wizard, debe incluir password)
+  @ApiProperty({
+    description: 'Datos del cliente para crear usuario y cliente',
     example: {
       firstName: 'Juan',
       lastName: 'Pérez',
       email: 'juan@example.com',
       phone: '+1234567890',
+      password: 'SecurePassword123!',
     },
   })
-  @IsOptional()
-  clientData?: {
-    firstName: string;
-    lastName: string;
-    email: string;
-    phone?: string;
-  };
+  @IsNotEmpty()
+  @ValidateNested()
+  @Type(() => WizardClientDataDto)
+  clientData: WizardClientDataDto;
 }
-

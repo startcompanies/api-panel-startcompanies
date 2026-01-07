@@ -1,5 +1,5 @@
 import { Body, Controller, Post, Get, Query, Res, UseGuards, HttpException, HttpStatus } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags, ApiQuery } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags, ApiQuery, ApiBody, ApiResponse } from '@nestjs/swagger';
 import { authService } from './auth.service';
 import { SignUpDto } from './dtos/signup.dto';
 import { SignInDto } from './dtos/signin.dto';
@@ -22,7 +22,13 @@ export class AuthController {
   }
 
   @Post('/signin')
-  @ApiOperation({ summary: 'Sign In'})
+  @ApiOperation({ 
+    summary: 'Iniciar sesión',
+    description: 'Autentica un usuario y retorna tokens de acceso y refresh.',
+  })
+  @ApiBody({ type: SignInDto })
+  @ApiResponse({ status: 200, description: 'Inicio de sesión exitoso' })
+  @ApiResponse({ status: 401, description: 'Credenciales inválidas' })
   signIn(@Body() signInDto: SignInDto) {
     return this.authService.signIn(signInDto);
   }
@@ -30,19 +36,38 @@ export class AuthController {
   @Post('/change-password')
   @UseGuards(AuthGuard)
   @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Change Password'})
+  @ApiOperation({ 
+    summary: 'Cambiar contraseña',
+    description: 'Permite a un usuario autenticado cambiar su contraseña.',
+  })
+  @ApiBody({ type: ChangePasswordDto })
+  @ApiResponse({ status: 200, description: 'Contraseña cambiada exitosamente' })
+  @ApiResponse({ status: 400, description: 'Contraseña actual incorrecta' })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
   changePassword(@Body() changePasswordDto: ChangePasswordDto) {
     return this.authService.changePassword(changePasswordDto);
   }
 
   @Post('/forgot-password')
-  @ApiOperation({ summary: 'Forgot Password - Request password reset' })
+  @ApiOperation({ 
+    summary: 'Solicitar restablecimiento de contraseña',
+    description: 'Envía un email con un token para restablecer la contraseña.',
+  })
+  @ApiBody({ type: ForgotPasswordDto })
+  @ApiResponse({ status: 200, description: 'Email de restablecimiento enviado' })
+  @ApiResponse({ status: 404, description: 'Usuario no encontrado' })
   forgotPassword(@Body() forgotPasswordDto: ForgotPasswordDto) {
     return this.authService.forgotPassword(forgotPasswordDto);
   }
 
   @Post('/reset-password')
-  @ApiOperation({ summary: 'Reset Password - Reset password with token' })
+  @ApiOperation({ 
+    summary: 'Restablecer contraseña',
+    description: 'Restablece la contraseña usando el token recibido por email.',
+  })
+  @ApiBody({ type: ResetPasswordDto })
+  @ApiResponse({ status: 200, description: 'Contraseña restablecida exitosamente' })
+  @ApiResponse({ status: 400, description: 'Token inválido o expirado' })
   resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
     return this.authService.resetPassword(resetPasswordDto);
   }
@@ -95,7 +120,13 @@ export class AuthController {
   }
 
   @Post('refresh-sso')
-  @ApiOperation({ summary: 'Refresh token SSO - Para autenticación SSO/iframe' })
+  @ApiOperation({ 
+    summary: 'Refrescar token SSO',
+    description: 'Refresca el token de acceso para autenticación SSO/iframe.',
+  })
+  @ApiBody({ type: RefreshSsoDto })
+  @ApiResponse({ status: 200, description: 'Token refrescado exitosamente' })
+  @ApiResponse({ status: 401, description: 'Token de refresh inválido' })
   async refreshSso(@Body() refreshSsoDto: RefreshSsoDto) {
     const tokens = await this.authService.refresh(refreshSsoDto.refreshToken);
     return { accessToken: tokens.accessToken };

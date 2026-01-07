@@ -2,15 +2,15 @@ import { ApiProperty } from "@nestjs/swagger";
 import { IsString } from "class-validator";
 
 export class ChangePasswordDto {
+    @ApiProperty({ example: 'john@example.com', description: 'Email del usuario' })
     @IsString()
-    @ApiProperty()
     email: string;
 
+    @ApiProperty({ example: 'OldPassword123!', description: 'Contraseña actual' })
     @IsString()
-    @ApiProperty()
     oldPassword: string;
 
+    @ApiProperty({ example: 'NewPassword123!', description: 'Nueva contraseña' })
     @IsString()
-    @ApiProperty()
     newPassword: string;
 }

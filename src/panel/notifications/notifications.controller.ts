@@ -14,9 +14,18 @@ import {
 import { NotificationsService } from './notifications.service';
 import { CreateNotificationDto } from './dtos/create-notification.dto';
 import { AuthGuard } from '../../shared/auth/auth.guard';
-import { ApiTags } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBearerAuth,
+  ApiBody,
+  ApiParam,
+  ApiQuery,
+} from '@nestjs/swagger';
 
 @ApiTags('Panel - Notifications')
+@ApiBearerAuth('JWT-auth')
 @Controller('panel/notifications')
 @UseGuards(AuthGuard)
 export class NotificationsController {
@@ -35,6 +44,11 @@ export class NotificationsController {
 
   // Contar notificaciones no leídas del usuario actual
   @Get('me/unread-count')
+  @ApiOperation({
+    summary: 'Contar notificaciones no leídas',
+    description: 'Obtiene el número de notificaciones no leídas del usuario autenticado.',
+  })
+  @ApiResponse({ status: 200, description: 'Número de notificaciones no leídas' })
   getUnreadCount(@Req() req: any) {
     const userId = req.user.id;
     return this.notificationsService.findUnreadCount(userId);
@@ -48,6 +62,12 @@ export class NotificationsController {
 
   // Marcar notificación como leída
   @Patch(':id/read')
+  @ApiOperation({
+    summary: 'Marcar notificación como leída',
+    description: 'Marca una notificación específica como leída para el usuario autenticado.',
+  })
+  @ApiParam({ name: 'id', type: Number, description: 'ID de la notificación' })
+  @ApiResponse({ status: 200, description: 'Notificación marcada como leída' })
   markAsRead(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
     const userId = req.user.id;
     return this.notificationsService.markAsRead(id, userId);
@@ -62,6 +82,12 @@ export class NotificationsController {
 
   // Eliminar notificación
   @Delete(':id')
+  @ApiOperation({
+    summary: 'Eliminar una notificación',
+    description: 'Elimina una notificación del usuario autenticado.',
+  })
+  @ApiParam({ name: 'id', type: Number, description: 'ID de la notificación' })
+  @ApiResponse({ status: 200, description: 'Notificación eliminada exitosamente' })
   delete(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
     const userId = req.user.id;
     return this.notificationsService.delete(id, userId);

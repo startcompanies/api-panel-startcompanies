@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 import { PostsService } from './posts.service';
 import { AuthGuard } from 'src/shared/auth/auth.guard';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags, ApiBody, ApiResponse, ApiParam } from '@nestjs/swagger';
 import { PostDto } from './dtos/post.dto';
 import { UpdatePublicationStatusDto } from './dtos/update-publication-status.dto';
 import { PaginationDto } from 'src/shared/common/dtos/pagination.dto';
@@ -75,7 +75,12 @@ export class PostsController {
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
     summary: 'Crear un nuevo post',
+    description: 'Crea un nuevo post en el blog. Requiere autenticación.',
   })
+  @ApiBody({ type: PostDto })
+  @ApiResponse({ status: 201, description: 'Post creado exitosamente' })
+  @ApiResponse({ status: 400, description: 'Datos inválidos' })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
   async create(@Body() postDto: PostDto, @Req() req: Request) {
     const userId = req['user'].id; // Asume que el ID del usuario está en el token JWT
     return this.postsService.create(postDto, userId);
@@ -96,7 +101,12 @@ export class PostsController {
   @Patch('publish/:id')
   @ApiOperation({
     summary: 'Publicar un post por su ID',
+    description: 'Actualiza el estado de publicación de un post.',
   })
+  @ApiParam({ name: 'id', description: 'ID del post' })
+  @ApiBody({ type: UpdatePublicationStatusDto })
+  @ApiResponse({ status: 200, description: 'Estado de publicación actualizado' })
+  @ApiResponse({ status: 404, description: 'Post no encontrado' })
   async publishPost(
     @Param('id') id: string,
     @Body() updatePublicationStatusDto: UpdatePublicationStatusDto,
@@ -122,7 +132,12 @@ export class PostsController {
   @Put(':id')
   @ApiOperation({
     summary: 'Actualizar un post por su ID',
+    description: 'Actualiza completamente un post existente.',
   })
+  @ApiParam({ name: 'id', description: 'ID del post' })
+  @ApiBody({ type: PostDto })
+  @ApiResponse({ status: 200, description: 'Post actualizado exitosamente' })
+  @ApiResponse({ status: 404, description: 'Post no encontrado' })
   async updatePost(@Param('id') id: string, @Body() postDto: PostDto) {
     return this.postsService.updatePost(id, postDto);
   }

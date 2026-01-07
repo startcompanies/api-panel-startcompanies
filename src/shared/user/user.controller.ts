@@ -12,7 +12,7 @@ import {
 import { UserService } from './user.service';
 import { UserDto } from './dtos/user.dto';
 import { CreateUserDto } from './dtos/create-user.dto';
-import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags, ApiBody, ApiResponse, ApiParam } from '@nestjs/swagger';
 import { AuthGuard } from 'src/shared/auth/auth.guard';
 import { RolesGuard } from 'src/shared/auth/roles.guard';
 import { Roles } from 'src/shared/auth/roles.decorator';
@@ -32,6 +32,10 @@ export class UserController {
     summary: 'Crear un nuevo usuario (solo admin)',
     description: 'Permite a un administrador crear usuarios con cualquier tipo y campos adicionales',
   })
+  @ApiBody({ type: CreateUserDto })
+  @ApiResponse({ status: 201, description: 'Usuario creado exitosamente' })
+  @ApiResponse({ status: 400, description: 'Datos inválidos' })
+  @ApiResponse({ status: 403, description: 'Acceso denegado (solo admin)' })
   createUser(@Body() createUserDto: CreateUserDto) {
     return this.userService.createUserByAdmin(createUserDto);
   }
@@ -134,7 +138,12 @@ export class UserController {
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
     summary: 'Actualizar la información de un usuario',
+    description: 'Actualiza la información de un usuario específico por su ID.',
   })
+  @ApiParam({ name: 'id', description: 'ID del usuario' })
+  @ApiBody({ type: UpdateUserDto })
+  @ApiResponse({ status: 200, description: 'Usuario actualizado exitosamente' })
+  @ApiResponse({ status: 404, description: 'Usuario no encontrado' })
   updateUserInfo(
     @Param('id') id: string,
     @Body() updateUserDto: UpdateUserDto,

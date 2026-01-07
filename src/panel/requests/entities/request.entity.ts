@@ -12,6 +12,7 @@ import {
 } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
 import { User } from '../../../shared/user/entities/user.entity';
+import { Client } from '../../clients/entities/client.entity';
 import { AperturaLlcRequest } from './apertura-llc-request.entity';
 import { RenovacionLlcRequest } from './renovacion-llc-request.entity';
 import { CuentaBancariaRequest } from './cuenta-bancaria-request.entity';
@@ -37,9 +38,9 @@ export class Request {
   @Column({ type: 'varchar', length: 100, nullable: true })
   stage?: string; // Etapa actual del blueprint de Zoho CRM
 
-  @ManyToOne(() => User)
+  @ManyToOne(() => Client)
   @JoinColumn({ name: 'client_id' })
-  client: User;
+  client: Client;
 
   @Column({ name: 'client_id', type: 'int' })
   clientId: number;
