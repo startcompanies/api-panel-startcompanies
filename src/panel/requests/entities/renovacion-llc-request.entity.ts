@@ -25,44 +25,8 @@ export class RenovacionLlcRequest {
   @Column({ name: 'llc_name', nullable: true, length: 255 })
   llcName?: string;
 
-  @Column({ name: 'society_type', nullable: true, length: 255 })
-  societyType?: string;
-
-  @Column({ name: 'registration_number', nullable: true, length: 100 })
-  registrationNumber?: string;
-
   @Column({ name: 'state', nullable: true, length: 100 })
   state?: string;
-
-  @Column({ name: 'has_data_or_directors_changes', nullable: true, type: 'boolean' })
-  hasDataOrDirectorsChanges?: boolean;
-
-  @Column({ name: 'physical_address', nullable: true, length: 500 })
-  physicalAddress?: string;
-
-  @Column({ name: 'correspondence_address', nullable: true, length: 500 })
-  correspondenceAddress?: string;
-
-  @Column({ name: 'country', nullable: true, length: 100 })
-  country?: string;
-
-  @Column({ name: 'city', nullable: true, length: 100 })
-  city?: string;
-
-  @Column({ name: 'postal_code', nullable: true, length: 20 })
-  postalCode?: string;
-
-  @Column({ name: 'main_activity_description', nullable: true, type: 'text' })
-  mainActivityDescription?: string;
-
-  @Column({ name: 'contact_phone', nullable: true, length: 50 })
-  contactPhone?: string;
-
-  @Column({ name: 'contact_email', nullable: true, length: 255 })
-  contactEmail?: string;
-
-  @Column({ name: 'has_ein', nullable: true, type: 'boolean' })
-  hasEin?: boolean;
 
   @Column({ name: 'ein_number', nullable: true, length: 50 })
   einNumber?: string;
@@ -70,91 +34,99 @@ export class RenovacionLlcRequest {
   @Column({ name: 'main_activity', nullable: true, type: 'text' })
   mainActivity?: string;
 
-  @Column({ name: 'responsible_person', nullable: true, type: 'jsonb' })
-  responsiblePerson?: {
-    name: string;
-    lastName: string;
-    country: string;
-    address: string;
-    email: string;
-    phone: string;
-  };
-
-  @Column({ name: 'wants_registered_agent', nullable: true, type: 'boolean' })
-  wantsRegisteredAgent?: boolean;
-
-  @Column({ name: 'registered_agent_info', nullable: true, type: 'jsonb' })
-  registeredAgentInfo?: {
-    name: string;
-    address: string;
-    country: string;
-    city: string;
-    postalCode: string;
-    phone: string;
-    email: string;
-  };
-
-  @Column({ name: 'identity_document_url', nullable: true, type: 'text' })
-  identityDocumentUrl?: string;
-
-  @Column({ name: 'proof_of_address_url', nullable: true, type: 'text' })
-  proofOfAddressUrl?: string;
-
-  @Column({ name: 'llc_contract_or_operating_agreement_url', nullable: true, type: 'text' })
-  llcContractOrOperatingAgreementUrl?: string;
-
-  @Column({ name: 'articles_of_incorporation_url', nullable: true, type: 'text' })
-  articlesOfIncorporationUrl?: string;
-
-  // Paso 3: Domicilio Registrado
-  @Column({ name: 'registered_address', nullable: true, length: 500 })
-  registeredAddress?: string;
-
-  @Column({ name: 'registered_country', nullable: true, length: 100 })
-  registeredCountry?: string;
-
-  @Column({ name: 'registered_state', nullable: true, length: 100 })
-  registeredState?: string;
-
-  @Column({ name: 'registered_city', nullable: true, length: 100 })
-  registeredCity?: string;
-
-  @Column({ name: 'registered_postal_code', nullable: true, length: 20 })
-  registeredPostalCode?: string;
-
-  // Paso 4: Documentación Anexa
-  @Column({ name: 'capital_contributions_url', nullable: true, type: 'text' })
-  capitalContributionsUrl?: string;
-
-  @Column({ name: 'state_registration_url', nullable: true, type: 'text' })
-  stateRegistrationUrl?: string;
-
-  @Column({ name: 'certificate_of_good_standing_url', nullable: true, type: 'text' })
-  certificateOfGoodStandingUrl?: string;
-
-  // Paso 5: Confirmación de Datos
-  @Column({ name: 'data_is_correct', nullable: true, type: 'boolean' })
-  dataIsCorrect?: boolean;
-
-  @Column({ name: 'observations', nullable: true, type: 'text' })
-  observations?: string;
-
-  // Paso 6: Pago y Envío
-  @Column({ name: 'payment_method', nullable: true, length: 100 })
-  paymentMethod?: string;
-
-  @Column({ name: 'amount_to_pay', nullable: true, type: 'decimal', precision: 10, scale: 2 })
-  amountToPay?: number;
-
-  @Column({ name: 'wants_invoice', nullable: true, type: 'boolean' })
-  wantsInvoice?: boolean;
-
-  @Column({ name: 'payment_proof_url', nullable: true, type: 'text' })
-  paymentProofUrl?: string;
-
   // Tipo de LLC
   @Column({ name: 'llc_type', nullable: true, length: 20 })
   llcType?: 'single' | 'multi';
+
+  // Paso 3: Información Contable de la LLC
+  @Column({ name: 'llc_opening_cost', nullable: true, type: 'decimal', precision: 12, scale: 2 })
+  llcOpeningCost?: number;
+
+  @Column({ name: 'paid_to_family_members', nullable: true, type: 'decimal', precision: 12, scale: 2 })
+  paidToFamilyMembers?: number;
+
+  @Column({ name: 'paid_to_local_companies', nullable: true, type: 'decimal', precision: 12, scale: 2 })
+  paidToLocalCompanies?: number;
+
+  @Column({ name: 'paid_for_llc_formation', nullable: true, type: 'decimal', precision: 12, scale: 2 })
+  paidForLLCFormation?: number;
+
+  @Column({ name: 'paid_for_llc_dissolution', nullable: true, type: 'decimal', precision: 12, scale: 2 })
+  paidForLLCDissolution?: number;
+
+  @Column({ name: 'bank_account_balance_end_of_year', nullable: true, type: 'decimal', precision: 12, scale: 2 })
+  bankAccountBalanceEndOfYear?: number;
+
+  @Column({ name: 'total_revenue', nullable: true, type: 'decimal', precision: 12, scale: 2 })
+  totalRevenue?: number;
+
+  @Column({ name: 'has_financial_investments_in_usa', nullable: true, length: 50 })
+  hasFinancialInvestmentsInUSA?: string;
+
+  @Column({ name: 'has_filed_taxes_before', nullable: true, length: 50 })
+  hasFiledTaxesBefore?: string;
+
+  @Column({ name: 'was_constituted_with_start_companies', nullable: true, length: 50 })
+  wasConstitutedWithStartCompanies?: string;
+
+  // URLs de documentos adicionales
+  @Column({ name: 'partners_passports_file_url', nullable: true, type: 'text' })
+  partnersPassportsFileUrl?: string;
+
+  @Column({ name: 'operating_agreement_additional_file_url', nullable: true, type: 'text' })
+  operatingAgreementAdditionalFileUrl?: string;
+
+  @Column({ name: 'form_147_or_575_file_url', nullable: true, type: 'text' })
+  form147Or575FileUrl?: string;
+
+  @Column({ name: 'articles_of_organization_additional_file_url', nullable: true, type: 'text' })
+  articlesOfOrganizationAdditionalFileUrl?: string;
+
+  @Column({ name: 'boi_report_file_url', nullable: true, type: 'text' })
+  boiReportFileUrl?: string;
+
+  @Column({ name: 'bank_statements_file_url', nullable: true, type: 'text' })
+  bankStatementsFileUrl?: string;
+
+  // Campos adicionales de declaraciones
+  @Column({ name: 'declaracion_inicial', nullable: true, type: 'boolean' })
+  declaracionInicial?: boolean;
+
+  @Column({ name: 'declaracion_ano_corriente', nullable: true, type: 'boolean' })
+  declaracionAnoCorriente?: boolean;
+
+  @Column({ name: 'cambio_direccion_ra', nullable: true, type: 'boolean' })
+  cambioDireccionRA?: boolean;
+
+  @Column({ name: 'cambio_nombre', nullable: true, type: 'boolean' })
+  cambioNombre?: boolean;
+
+  @Column({ name: 'declaracion_anos_anteriores', nullable: true, type: 'boolean' })
+  declaracionAnosAnteriores?: boolean;
+
+  @Column({ name: 'agregar_cambiar_socio', nullable: true, type: 'boolean' })
+  agregarCambiarSocio?: boolean;
+
+  @Column({ name: 'declaracion_cierre', nullable: true, type: 'boolean' })
+  declaracionCierre?: boolean;
+
+  @Column({ name: 'countries_where_llc_does_business', nullable: true, type: 'jsonb' })
+  countriesWhereLLCDoesBusiness?: string[];
+
+  @Column({ name: 'llc_creation_date', nullable: true, type: 'date' })
+  llcCreationDate?: Date;
+
+  @Column({ name: 'has_property_in_usa', nullable: true, length: 50 })
+  hasPropertyInUSA?: string;
+
+  @Column({ name: 'almacena_productos_deposito_usa', nullable: true, length: 50 })
+  almacenaProductosDepositoUSA?: string;
+
+  @Column({ name: 'contrata_servicios_usa', nullable: true, length: 50 })
+  contrataServiciosUSA?: string;
+
+  @Column({ name: 'tiene_cuentas_bancarias', nullable: true, length: 50 })
+  tieneCuentasBancarias?: string;
 
   @CreateDateColumn({
     name: 'created_at',

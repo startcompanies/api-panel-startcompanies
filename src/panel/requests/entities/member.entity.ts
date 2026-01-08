@@ -74,17 +74,17 @@ export class Member {
   @Column({ name: 'tax_filing_country', nullable: true, length: 100 })
   taxFilingCountry?: string;
 
-  @Column({ name: 'owner_contributions_2024', nullable: true, type: 'decimal', precision: 12, scale: 2 })
-  ownerContributions2024?: number;
+  @Column({ name: 'owner_contributions', nullable: true, type: 'decimal', precision: 12, scale: 2 })
+  ownerContributions?: number;
 
-  @Column({ name: 'owner_loans_to_llc_2024', nullable: true, type: 'decimal', precision: 12, scale: 2 })
-  ownerLoansToLLC2024?: number;
+  @Column({ name: 'owner_loans_to_llc', nullable: true, type: 'decimal', precision: 12, scale: 2 })
+  ownerLoansToLLC?: number;
 
-  @Column({ name: 'loans_reimbursed_by_llc_2024', nullable: true, type: 'decimal', precision: 12, scale: 2 })
-  loansReimbursedByLLC2024?: number;
+  @Column({ name: 'loans_reimbursed_by_llc', nullable: true, type: 'decimal', precision: 12, scale: 2 })
+  loansReimbursedByLLC?: number;
 
-  @Column({ name: 'profit_distributions_2024', nullable: true, type: 'decimal', precision: 12, scale: 2 })
-  profitDistributions2024?: number;
+  @Column({ name: 'profit_distributions', nullable: true, type: 'decimal', precision: 12, scale: 2 })
+  profitDistributions?: number;
 
   @Column({ name: 'spent_more_than_31_days_in_us', nullable: true, length: 50 })
   spentMoreThan31DaysInUS?: string;

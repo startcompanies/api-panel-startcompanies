@@ -163,14 +163,19 @@ export const OWNER_CUENTA_BANCARIA_VALIDATION_RULES: ValidationRule[] = [
 /**
  * Valida un valor según una regla
  */
-function validateValue(value: any, rule: ValidationRule): string | null {
+function validateValue(value: any, rule: ValidationRule, isDraft: boolean = false): string | null {
   // Si no es requerido y está vacío/null/undefined, es válido
   if (!rule.required && (value === null || value === undefined || value === '')) {
     return null;
   }
 
-  // Si es requerido y está vacío
-  if (rule.required && (value === null || value === undefined || value === '')) {
+  // Si es requerido y está vacío, pero es un borrador, no validar
+  if (rule.required && isDraft && (value === null || value === undefined || value === '')) {
+    return null; // Permitir campos vacíos en borradores
+  }
+
+  // Si es requerido y está vacío (y no es borrador)
+  if (rule.required && !isDraft && (value === null || value === undefined || value === '')) {
     return `El campo ${rule.field} es requerido`;
   }
 

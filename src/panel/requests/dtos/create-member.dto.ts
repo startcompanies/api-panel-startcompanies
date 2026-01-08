@@ -125,25 +125,25 @@ export class CreateMemberDto {
   @IsString()
   taxFilingCountry?: string;
 
-  @ApiPropertyOptional({ example: 10000, description: 'Contribuciones del propietario en 2024 (solo para renovación)' })
+  @ApiPropertyOptional({ example: 10000, description: 'Contribuciones del propietario (solo para renovación)' })
   @IsOptional()
   @IsNumber()
-  ownerContributions2024?: number;
+  ownerContributions?: number;
 
-  @ApiPropertyOptional({ example: 5000, description: 'Préstamos del propietario a la LLC en 2024 (solo para renovación)' })
+  @ApiPropertyOptional({ example: 5000, description: 'Préstamos del propietario a la LLC (solo para renovación)' })
   @IsOptional()
   @IsNumber()
-  ownerLoansToLLC2024?: number;
+  ownerLoansToLLC?: number;
 
-  @ApiPropertyOptional({ example: 2000, description: 'Préstamos reembolsados por la LLC en 2024 (solo para renovación)' })
+  @ApiPropertyOptional({ example: 2000, description: 'Préstamos reembolsados por la LLC (solo para renovación)' })
   @IsOptional()
   @IsNumber()
-  loansReimbursedByLLC2024?: number;
+  loansReimbursedByLLC?: number;
 
-  @ApiPropertyOptional({ example: 3000, description: 'Distribuciones de ganancias en 2024 (solo para renovación)' })
+  @ApiPropertyOptional({ example: 3000, description: 'Distribuciones de ganancias (solo para renovación)' })
   @IsOptional()
   @IsNumber()
-  profitDistributions2024?: number;
+  profitDistributions?: number;
 
   @ApiPropertyOptional({ example: 'No', description: '¿Pasó más de 31 días en USA? (solo para renovación)' })
   @IsOptional()

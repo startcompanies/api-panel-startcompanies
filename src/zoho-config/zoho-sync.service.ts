@@ -373,20 +373,15 @@ export class ZohoSyncService {
         Account_Name: renovacion.llcName || '',
         Estado_de_Registro: renovacion.state || '',
         N_mero_de_EIN: renovacion.einNumber || '',
-        Actividad_Principal_de_la_LLC: renovacion.mainActivityDescription || '',
-        Correo_electr_nico: renovacion.contactEmail || '',
-        Phone: this.normalizePhoneNumber(renovacion.contactPhone),
+        Actividad_Principal_de_la_LLC: renovacion.mainActivity || '',
+        Correo_electr_nico: '', // contactEmail no existe en RenovacionLlcRequest
+        Phone: '', // contactPhone no existe en RenovacionLlcRequest
         Estructura_Societaria:
           renovacion.llcType === 'single'
             ? 'LLC de un solo miembro (Single Member LLC)'
             : 'LLC multi-miembro (Multi-Member LLC)',
         // Campos adicionales
-        ...(renovacion.registrationNumber && {
-          Account_Number: renovacion.registrationNumber,
-        }),
-        ...(renovacion.societyType && {
-          Account_Type: renovacion.societyType,
-        }),
+        // registrationNumber y societyType no existen en RenovacionLlcRequest
       };
     } else if (request.type === 'cuenta-bancaria' && request.cuentaBancariaRequest) {
       const cuenta = request.cuentaBancariaRequest;
@@ -488,7 +483,7 @@ export class ZohoSyncService {
       description = request.aperturaLlcRequest.businessDescription || '';
     } else if (request.type === 'renovacion-llc' && request.renovacionLlcRequest) {
       dealName = `Renovación - ${request.renovacionLlcRequest.llcName || 'LLC'}`;
-      description = request.renovacionLlcRequest.mainActivityDescription || '';
+      description = request.renovacionLlcRequest.mainActivity || '';
     } else if (request.type === 'cuenta-bancaria' && request.cuentaBancariaRequest) {
       dealName = `Cuenta Bancaria - ${request.cuentaBancariaRequest.legalBusinessIdentifier || 'Nueva Cuenta'}`;
       description = request.cuentaBancariaRequest.economicActivity || '';
@@ -618,17 +613,17 @@ export class ZohoSyncService {
       ...(member.ssnOrItin && { N_mero_de_SSN_ITIN: member.ssnOrItin }),
       ...(member.nationalTaxId && { ID_Fiscal_Nacional_CUIT: member.nationalTaxId }),
       ...(member.taxFilingCountry && { Pa_s_donde_paga_impuestos: member.taxFilingCountry }),
-      ...(member.ownerContributions2024 && {
-        Contribuciones_de_capital_realizadas_en_2024_USD: member.ownerContributions2024,
+      ...(member.ownerContributions && {
+        Contribuciones_de_capital_realizadas_en_2024_USD: member.ownerContributions,
       }),
-      ...(member.ownerLoansToLLC2024 && {
-        Pr_stamos_realizados_a_la_LLC_en_2024: member.ownerLoansToLLC2024,
+      ...(member.ownerLoansToLLC && {
+        Pr_stamos_realizados_a_la_LLC_en_2024: member.ownerLoansToLLC,
       }),
-      ...(member.loansReimbursedByLLC2024 && {
-        Pr_stamos_repagados_por_la_LLC_a_Propietario_2024: member.loansReimbursedByLLC2024,
+      ...(member.loansReimbursedByLLC && {
+        Pr_stamos_repagados_por_la_LLC_a_Propietario_2024: member.loansReimbursedByLLC,
       }),
-      ...(member.profitDistributions2024 && {
-        Retiros_de_capital_realizados_en_2024_USD: member.profitDistributions2024,
+      ...(member.profitDistributions && {
+        Retiros_de_capital_realizados_en_2024_USD: member.profitDistributions,
       }),
       ...(member.spentMoreThan31DaysInUS && {
         Estuvo_en_EE_UU_m_s_de_31_d_as_en_2024: member.spentMoreThan31DaysInUS === 'Sí' ? 'Sí' : 'No',
@@ -663,17 +658,17 @@ export class ZohoSyncService {
       ...(member.ssnOrItin && { N_mero_de_SSN_ITIN: member.ssnOrItin }),
       ...(member.nationalTaxId && { ID_Fiscal_Nacional_CUIT: member.nationalTaxId }),
       ...(member.taxFilingCountry && { Pa_s_donde_paga_impuestos: member.taxFilingCountry }),
-      ...(member.ownerContributions2024 && {
-        Contribuciones_de_capital_realizadas_en_2024: member.ownerContributions2024,
+      ...(member.ownerContributions && {
+        Contribuciones_de_capital_realizadas_en_2024: member.ownerContributions,
       }),
-      ...(member.ownerLoansToLLC2024 && {
-        Pr_stamos_realizados_a_la_LLC_en_2024: member.ownerLoansToLLC2024,
+      ...(member.ownerLoansToLLC && {
+        Pr_stamos_realizados_a_la_LLC_en_2024: member.ownerLoansToLLC,
       }),
-      ...(member.loansReimbursedByLLC2024 && {
-        Pr_stamos_repagados_por_la_LLC_a_Propietario_2024: member.loansReimbursedByLLC2024,
+      ...(member.loansReimbursedByLLC && {
+        Pr_stamos_repagados_por_la_LLC_a_Propietario_2024: member.loansReimbursedByLLC,
       }),
-      ...(member.profitDistributions2024 && {
-        Retiros_de_Capital_2024: member.profitDistributions2024,
+      ...(member.profitDistributions && {
+        Retiros_de_Capital_2024: member.profitDistributions,
       }),
       ...(member.spentMoreThan31DaysInUS && {
         Estuvo_en_EE_UU_m_s_de_31_d_as_en_2024: member.spentMoreThan31DaysInUS === 'Sí' ? 'Sí' : 'No',
@@ -1555,11 +1550,10 @@ export class ZohoSyncService {
       // Campos según mapeo proporcionado
       llcName: account.Account_Name || '',
       state: account.Estado_de_Registro || '',
-      mainActivityDescription: account.Actividad_Principal_de_la_LLC || '',
+      mainActivity: account.Actividad_Principal_de_la_LLC || '',
       einNumber: account.N_mero_de_EIN || '',
       llcType: this.mapEstructuraToLLCType(account.Estructura_Societaria),
-      contactEmail: contactEmail,
-      contactPhone: this.normalizePhoneNumber(contactPhone) || undefined,
+      // contactEmail y contactPhone no existen en RenovacionLlcRequest
       // Nota: Los siguientes campos del mapeo no están en la entidad RenovacionLlcRequest actual:
       // - Tu_empresa_posee_o_renta_una_propiedad_en_EE_UU (boolean)
       // - Almacena_productos_en_un_dep_sito_en_EE_UU (boolean)
@@ -1751,16 +1745,16 @@ export class ZohoSyncService {
         ssnOrItin: propietario.N_mero_de_SSN_ITIN || null,
         nationalTaxId: propietario.ID_Fiscal_Nacional_CUIT || null,
         taxFilingCountry: propietario.Pa_s_donde_paga_impuestos || null,
-        ownerContributions2024: propietario.Contribuciones_de_capital_realizadas_en_2024_USD
+        ownerContributions: propietario.Contribuciones_de_capital_realizadas_en_2024_USD
           ? parseFloat(propietario.Contribuciones_de_capital_realizadas_en_2024_USD)
           : null,
-        ownerLoansToLLC2024: propietario.Pr_stamos_realizados_a_la_LLC_en_2024
+        ownerLoansToLLC: propietario.Pr_stamos_realizados_a_la_LLC_en_2024
           ? parseFloat(propietario.Pr_stamos_realizados_a_la_LLC_en_2024)
           : null,
-        loansReimbursedByLLC2024: propietario.Pr_stamos_repagados_por_la_LLC_a_Propietario_2024
+        loansReimbursedByLLC: propietario.Pr_stamos_repagados_por_la_LLC_a_Propietario_2024
           ? parseFloat(propietario.Pr_stamos_repagados_por_la_LLC_a_Propietario_2024)
           : null,
-        profitDistributions2024: propietario.Retiros_de_capital_realizados_en_2024_USD
+        profitDistributions: propietario.Retiros_de_capital_realizados_en_2024_USD
           ? parseFloat(propietario.Retiros_de_capital_realizados_en_2024_USD)
           : null,
         spentMoreThan31DaysInUS: propietario.Estuvo_en_EE_UU_m_s_de_31_d_as_en_2024 || null,
@@ -1831,16 +1825,16 @@ export class ZohoSyncService {
           ssnOrItin: socio.N_mero_de_SSN_ITIN || null,
           nationalTaxId: socio.ID_Fiscal_Nacional_CUIT || null,
           taxFilingCountry: socio.Pa_s_donde_paga_impuestos || null,
-          ownerContributions2024: socio.Contribuciones_de_capital_realizadas_en_2024
+          ownerContributions: socio.Contribuciones_de_capital_realizadas_en_2024
             ? parseFloat(socio.Contribuciones_de_capital_realizadas_en_2024)
             : null,
-          ownerLoansToLLC2024: socio.Pr_stamos_realizados_a_la_LLC_en_2024
+          ownerLoansToLLC: socio.Pr_stamos_realizados_a_la_LLC_en_2024
             ? parseFloat(socio.Pr_stamos_realizados_a_la_LLC_en_2024)
             : null,
-          loansReimbursedByLLC2024: socio.Pr_stamos_repagados_por_la_LLC_a_Propietario_2024
+          loansReimbursedByLLC: socio.Pr_stamos_repagados_por_la_LLC_a_Propietario_2024
             ? parseFloat(socio.Pr_stamos_repagados_por_la_LLC_a_Propietario_2024)
             : null,
-          profitDistributions2024: socio.Retiros_de_Capital_2024
+          profitDistributions: socio.Retiros_de_Capital_2024
             ? parseFloat(socio.Retiros_de_Capital_2024)
             : null,
           spentMoreThan31DaysInUS: socio.Estuvo_en_EE_UU_m_s_de_31_d_as_en_2024 || null,
