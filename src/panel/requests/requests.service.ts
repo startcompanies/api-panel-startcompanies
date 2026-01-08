@@ -213,14 +213,49 @@ export class RequestsService {
       ],
     });
 
-    // Cargar Members para cada solicitud de Apertura LLC
+    // Cargar Members para cada solicitud de Apertura LLC o Renovación LLC
     for (const request of requests) {
-      if (request.aperturaLlcRequest) {
+      if (request.aperturaLlcRequest || request.renovacionLlcRequest) {
         const members = await this.memberRepo.find({
           where: { requestId: request.id },
           order: { id: 'ASC' },
         });
         (request as any).members = members;
+        
+        // Para renovación-llc, también agregar members como owners dentro de renovacionLlcRequest
+        if (request.renovacionLlcRequest && members.length > 0) {
+          const owners = members.map((member: any) => ({
+            name: member.firstName || '',
+            lastName: member.lastName || '',
+            dateOfBirth: member.dateOfBirth || '',
+            email: member.email || '',
+            phone: member.phoneNumber || '',
+            fullAddress: member.memberAddress?.street || '',
+            unit: member.memberAddress?.unit || '',
+            city: member.memberAddress?.city || '',
+            stateRegion: member.memberAddress?.stateRegion || '',
+            postalCode: member.memberAddress?.postalCode || '',
+            country: member.memberAddress?.country || '',
+            nationality: member.nationality || '',
+            passportNumber: member.passportNumber || '',
+            ssnItin: member.ssnOrItin || '',
+            cuit: member.nationalTaxId || '',
+            capitalContributions2025: member.ownerContributions2024 || 0,
+            loansToLLC2025: member.ownerLoansToLLC2024 || 0,
+            loansRepaid2025: member.loansReimbursedByLLC2024 || 0,
+            capitalWithdrawals2025: member.profitDistributions2024 || 0,
+            hasInvestmentsInUSA: member.hasUSFinancialInvestments || '',
+            isUSCitizen: member.isUSCitizen || '',
+            taxCountry: member.taxFilingCountry 
+              ? (typeof member.taxFilingCountry === 'string' && member.taxFilingCountry.includes(',') 
+                  ? member.taxFilingCountry.split(',').map((c: string) => c.trim())
+                  : [member.taxFilingCountry])
+              : [],
+            wasInUSA31Days: member.spentMoreThan31DaysInUS || '',
+            participationPercentage: member.percentageOfParticipation || 0,
+          }));
+          (request.renovacionLlcRequest as any).owners = owners;
+        }
       }
     }
 
@@ -286,14 +321,56 @@ export class RequestsService {
       throw new NotFoundException(`Request with UUID ${uuid} not found`);
     }
 
-    // Cargar Members relacionados si es una solicitud de Apertura LLC
-    if (request.aperturaLlcRequest) {
+    // Cargar Members relacionados si es una solicitud de Apertura LLC o Renovación LLC
+    if (request.aperturaLlcRequest || request.renovacionLlcRequest) {
       const members = await this.memberRepo.find({
         where: { requestId: request.id },
         order: { id: 'ASC' },
       });
       // Agregar members al objeto de respuesta
       (request as any).members = members;
+      
+      // Para renovación-llc, también agregar members como owners dentro de renovacionLlcRequest
+      // para que el frontend pueda cargarlos correctamente
+      if (request.renovacionLlcRequest && members.length > 0) {
+        // Mapear members a formato owners que espera el frontend
+        const owners = members.map((member: any) => ({
+          name: member.firstName || '',
+          lastName: member.lastName || '',
+          dateOfBirth: member.dateOfBirth || '',
+          email: member.email || '',
+          phone: member.phoneNumber || '',
+          fullAddress: member.memberAddress?.street || '',
+          unit: member.memberAddress?.unit || '',
+          city: member.memberAddress?.city || '',
+          stateRegion: member.memberAddress?.stateRegion || '',
+          postalCode: member.memberAddress?.postalCode || '',
+          country: member.memberAddress?.country || '',
+          nationality: member.nationality || '',
+          passportNumber: member.passportNumber || '',
+          ssnItin: member.ssnOrItin || '',
+          cuit: member.nationalTaxId || '',
+          capitalContributions: member.ownerContributions || 0,
+          loansToLLC: member.ownerLoansToLLC || 0,
+          loansRepaid: member.loansReimbursedByLLC || 0,
+          capitalWithdrawals: member.profitDistributions || 0,
+          hasInvestmentsInUSA: member.hasUSFinancialInvestments || '',
+          isUSCitizen: member.isUSCitizen || '',
+          taxCountry: member.taxFilingCountry 
+            ? (typeof member.taxFilingCountry === 'string' && member.taxFilingCountry.includes(',') 
+                ? member.taxFilingCountry.split(',').map((c: string) => c.trim()).filter((c: string) => c.length > 0)
+                : [member.taxFilingCountry])
+            : [],
+          wasInUSA31Days: member.spentMoreThan31DaysInUS || '',
+          participationPercentage: member.percentageOfParticipation || 0,
+        }));
+        (request.renovacionLlcRequest as any).owners = owners;
+      }
+      
+      // Mapear totalRevenue a totalRevenue2025 para compatibilidad con el frontend
+      if (request.renovacionLlcRequest && request.renovacionLlcRequest.totalRevenue !== undefined) {
+        (request.renovacionLlcRequest as any).totalRevenue2025 = request.renovacionLlcRequest.totalRevenue;
+      }
     }
 
     // No consultamos Zoho - usamos solo datos de la BD local
@@ -319,14 +396,56 @@ export class RequestsService {
       throw new NotFoundException(`Request ${id} not found`);
     }
 
-    // Cargar Members relacionados si es una solicitud de Apertura LLC
-    if (request.aperturaLlcRequest) {
+    // Cargar Members relacionados si es una solicitud de Apertura LLC o Renovación LLC
+    if (request.aperturaLlcRequest || request.renovacionLlcRequest) {
       const members = await this.memberRepo.find({
         where: { requestId: id },
         order: { id: 'ASC' },
       });
       // Agregar members al objeto de respuesta
       (request as any).members = members;
+      
+      // Para renovación-llc, también agregar members como owners dentro de renovacionLlcRequest
+      // para que el frontend pueda cargarlos correctamente
+      if (request.renovacionLlcRequest && members.length > 0) {
+        // Mapear members a formato owners que espera el frontend
+        const owners = members.map((member: any) => ({
+          name: member.firstName || '',
+          lastName: member.lastName || '',
+          dateOfBirth: member.dateOfBirth || '',
+          email: member.email || '',
+          phone: member.phoneNumber || '',
+          fullAddress: member.memberAddress?.street || '',
+          unit: member.memberAddress?.unit || '',
+          city: member.memberAddress?.city || '',
+          stateRegion: member.memberAddress?.stateRegion || '',
+          postalCode: member.memberAddress?.postalCode || '',
+          country: member.memberAddress?.country || '',
+          nationality: member.nationality || '',
+          passportNumber: member.passportNumber || '',
+          ssnItin: member.ssnOrItin || '',
+          cuit: member.nationalTaxId || '',
+          capitalContributions: member.ownerContributions || 0,
+          loansToLLC: member.ownerLoansToLLC || 0,
+          loansRepaid: member.loansReimbursedByLLC || 0,
+          capitalWithdrawals: member.profitDistributions || 0,
+          hasInvestmentsInUSA: member.hasUSFinancialInvestments || '',
+          isUSCitizen: member.isUSCitizen || '',
+          taxCountry: member.taxFilingCountry 
+            ? (typeof member.taxFilingCountry === 'string' && member.taxFilingCountry.includes(',') 
+                ? member.taxFilingCountry.split(',').map((c: string) => c.trim()).filter((c: string) => c.length > 0)
+                : [member.taxFilingCountry])
+            : [],
+          wasInUSA31Days: member.spentMoreThan31DaysInUS || '',
+          participationPercentage: member.percentageOfParticipation || 0,
+        }));
+        (request.renovacionLlcRequest as any).owners = owners;
+      }
+      
+      // Mapear totalRevenue a totalRevenue2025 para compatibilidad con el frontend
+      if (request.renovacionLlcRequest && request.renovacionLlcRequest.totalRevenue !== undefined) {
+        (request.renovacionLlcRequest as any).totalRevenue2025 = request.renovacionLlcRequest.totalRevenue;
+      }
     }
 
     // No consultamos Zoho - usamos solo datos de la BD local
@@ -979,13 +1098,128 @@ export class RequestsService {
         }
 
         if (updateRequestDto.renovacionLlcData) {
-          Object.assign(renovacionRequest, updateRequestDto.renovacionLlcData);
+          const { owners, members, ...renovacionDataFields } = updateRequestDto.renovacionLlcData as any;
+          
+          // Actualizar campos de renovación (sin owners/members)
+          // Asignar explícitamente todos los campos para asegurar que TypeORM los detecte
+          // Mapear totalRevenue2025 del frontend a totalRevenue en la entidad
+          const mappedData = { ...renovacionDataFields };
+          if (mappedData.totalRevenue2025 !== undefined) {
+            mappedData.totalRevenue = mappedData.totalRevenue2025;
+            delete mappedData.totalRevenue2025;
+          }
+          
+          // Lista de campos numéricos que deben convertirse de string vacío a null
+          const numericFields = [
+            'llcOpeningCost',
+            'paidToFamilyMembers',
+            'paidToLocalCompanies',
+            'paidForLLCFormation',
+            'paidForLLCDissolution',
+            'bankAccountBalanceEndOfYear',
+            'totalRevenue',
+          ];
+          
+          Object.keys(mappedData).forEach(key => {
+            if (key !== 'owners' && key !== 'members' && key !== 'currentStepNumber' && key !== 'requestId' && key !== 'totalRevenue2025') {
+              let value = mappedData[key];
+              
+              // Convertir strings vacíos a null para campos numéricos
+              if (numericFields.includes(key) && value === '') {
+                value = null;
+              }
+              
+              // Convertir strings vacíos a null para fechas
+              if (key === 'llcCreationDate' && value === '') {
+                value = null;
+              }
+              
+              (renovacionRequest as any)[key] = value;
+            }
+          });
         }
 
         await queryRunner.manager.save(
           RenovacionLlcRequest,
           renovacionRequest,
         );
+
+        // Procesar owners/members si se proporcionan
+        if (updateRequestDto.renovacionLlcData) {
+          const renovacionData = updateRequestDto.renovacionLlcData as any;
+          // El frontend puede enviar 'owners' o 'members', ambos se tratan igual
+          const ownersOrMembers = renovacionData.owners || renovacionData.members || [];
+          
+          // Solo procesar si estamos en el paso 2 o superior y hay datos
+          if (updateRequestDto.currentStepNumber !== undefined && updateRequestDto.currentStepNumber >= 2 && ownersOrMembers.length > 0) {
+            // Eliminar miembros existentes para reemplazarlos con los nuevos
+            const existingMembers = await this.memberRepo.find({
+              where: { requestId: id },
+            });
+            if (existingMembers.length > 0) {
+              await queryRunner.manager.remove(Member, existingMembers);
+            }
+
+            // Filtrar miembros que tengan al menos algún dato válido
+            const validMembers = ownersOrMembers.filter((m: any) => 
+              m.firstName || m.name || m.lastName || m.email || m.passportNumber
+            );
+            
+            if (validMembers.length > 0) {
+              const membersToSave = validMembers.map((memberDto: any) => {
+                const { dateOfBirth, name, phone, fullAddress, unit, city, stateRegion, postalCode, country, participationPercentage, ...rest } = memberDto;
+                
+                // Mapear campos del frontend a la estructura de Member
+                const memberData: any = {
+                  requestId: id,
+                  firstName: name || memberDto.firstName || '',
+                  lastName: memberDto.lastName || '',
+                  phoneNumber: phone || memberDto.phoneNumber || '',
+                  email: memberDto.email || '',
+                  passportNumber: memberDto.passportNumber || '',
+                  nationality: memberDto.nationality || '',
+                  percentageOfParticipation: participationPercentage !== undefined ? participationPercentage : (memberDto.percentageOfParticipation || 0),
+                  // Construir memberAddress desde los campos individuales o usar el objeto completo
+                  memberAddress: fullAddress ? {
+                    street: fullAddress,
+                    unit: unit || '',
+                    city: city || '',
+                    stateRegion: stateRegion || '',
+                    postalCode: postalCode || '',
+                    country: country || '',
+                  } : (memberDto.memberAddress || {}),
+                  // Campos adicionales para renovación
+                  ssnOrItin: memberDto.ssnItin || memberDto.ssnOrItin || null,
+                  nationalTaxId: memberDto.cuit || memberDto.nationalTaxId || null,
+                  // Convertir array de taxCountry a string separado por comas para guardar en BD
+                  taxFilingCountry: Array.isArray(memberDto.taxCountry) 
+                    ? (memberDto.taxCountry.length > 0 ? memberDto.taxCountry.join(', ') : null)
+                    : (memberDto.taxCountry || memberDto.taxFilingCountry || null),
+                  ownerContributions: memberDto.capitalContributions !== undefined ? memberDto.capitalContributions : (memberDto.ownerContributions || null),
+                  ownerLoansToLLC: memberDto.loansToLLC !== undefined ? memberDto.loansToLLC : (memberDto.ownerLoansToLLC || null),
+                  loansReimbursedByLLC: memberDto.loansRepaid !== undefined ? memberDto.loansRepaid : (memberDto.loansReimbursedByLLC || null),
+                  profitDistributions: memberDto.capitalWithdrawals !== undefined ? memberDto.capitalWithdrawals : (memberDto.profitDistributions || null),
+                  spentMoreThan31DaysInUS: memberDto.wasInUSA31Days || memberDto.spentMoreThan31DaysInUS || null,
+                  hasUSFinancialInvestments: memberDto.hasInvestmentsInUSA || memberDto.hasUSFinancialInvestments || null,
+                  isUSCitizen: memberDto.isUSCitizen || null,
+                  scannedPassportUrl: memberDto.scannedPassportUrl || null,
+                  additionalBankDocsUrl: memberDto.additionalBankDocsUrl || null,
+                  validatesBankAccount: memberDto.validatesBankAccount || false,
+                };
+                
+                // Parsear fecha de nacimiento si existe
+                const parsedDate = this.parseDate(dateOfBirth);
+                if (parsedDate) {
+                  memberData.dateOfBirth = parsedDate;
+                }
+                
+                return this.memberRepo.create(memberData);
+              }) as unknown as Member[];
+              
+              await queryRunner.manager.save(Member, membersToSave);
+            }
+          }
+        }
       } else if (request.type === 'cuenta-bancaria') {
         const cuentaRequest = await this.cuentaRepo.findOne({
           where: { requestId: id },
