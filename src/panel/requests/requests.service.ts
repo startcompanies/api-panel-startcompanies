@@ -195,7 +195,12 @@ export class RequestsService {
   ) {}
 
   async findAllByUser(userId: number, role: 'client' | 'partner') {
-    const where = role === 'client' ? { clientId: userId } : { partnerId: userId };
+    const client = await this.clientRepo.findOne({
+      where: { userId },
+    });
+    
+    const where = role === 'client' ? { clientId: client?.id } : { partnerId: userId };
+
     const requests = await this.requestRepository.find({ 
       where, 
       order: { createdAt: 'DESC' },

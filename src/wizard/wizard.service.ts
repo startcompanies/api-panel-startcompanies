@@ -56,7 +56,7 @@ export class WizardService {
     private readonly stripeService: StripeService,
     private readonly emailService: EmailService,
     private readonly jwtService: JwtService,
-  ) {}
+  ) { }
 
   /**
    * Convierte una fecha string a Date de manera segura
@@ -132,7 +132,7 @@ export class WizardService {
     // Crear nuevo usuario con contraseña
     const hashedPassword = encodePassword(clientData.password);
     const username = clientData.email.split('@')[0] + Math.floor(Math.random() * 1000);
-    const emailVerificationToken = this.generateEmailVerificationToken(clientData.email);
+    const emailVerificationToken = this.generateEmailVerificationCode();
 
     const user = this.userRepo.create({
       email: clientData.email,
@@ -166,20 +166,21 @@ export class WizardService {
     // Enviar correo de confirmación
     try {
       const userName = `${clientData.firstName} ${clientData.lastName}`.trim() || clientData.email;
-      await this.emailService.sendEmailConfirmation(
+      await this.emailService.sendCodeEmailValidation(
         clientData.email,
         userName,
         emailVerificationToken,
       );
-      this.logger.log(`Correo de confirmación enviado a: ${clientData.email}`);
+      this.logger.log(`Correo de validación enviado a: ${clientData.email}`);
     } catch (emailError) {
-      this.logger.error(`Error al enviar correo de confirmación: ${emailError}`);
+      this.logger.error(`Error al enviar correo de validación: ${emailError}`);
       // No fallar si el email falla, pero loguear el error
     }
 
     return {
       message: 'Usuario registrado exitosamente. Por favor, confirma tu email para continuar.',
       email: savedUser.email,
+      id: savedUser.id,
     };
   }
 
@@ -251,7 +252,7 @@ export class WizardService {
       type: 'client',
       status: true,
       emailVerified: false, // Inicialmente no verificado
-      emailVerificationToken: this.generateEmailVerificationToken(email), // Generar token
+      emailVerificationToken: this.generateEmailVerificationCode(), // Generar token
     });
 
     const savedUser = await queryRunner.manager.save(User, user);
@@ -259,7 +260,6 @@ export class WizardService {
       throw new InternalServerErrorException('Error al crear usuario');
     }
     this.logger.log(`Usuario creado en wizard: ${savedUser.id} - ${savedUser.email}`);
-
     // Crear cliente asociado (sin partnerId)
     const client = this.clientRepo.create({
       email,
@@ -309,6 +309,14 @@ export class WizardService {
   }
 
   /**
+   * Genera un código de verificación de email
+   */
+  private generateEmailVerificationCode(): string {
+    const code = Math.floor(100000 + Math.random() * 900000); // Código de 6 dígitos
+    return code.toString();
+  }
+
+  /**
    * Valida el token de verificación de email
    */
   private validateEmailVerificationToken(token: string, email: string): boolean {
@@ -338,11 +346,6 @@ export class WizardService {
    */
   async confirmEmail(confirmEmailDto: ConfirmEmailDto) {
     const { email, confirmationToken } = confirmEmailDto;
-
-    // Validar token
-    if (!this.validateEmailVerificationToken(confirmationToken, email)) {
-      throw new BadRequestException('Token de confirmación inválido o expirado');
-    }
 
     // Buscar usuario
     const user = await this.userRepo.findOne({
@@ -385,6 +388,9 @@ export class WizardService {
       email: user.email,
       status: user.status,
       type: user.type,
+      firstName: user.first_name,
+      lastName: user.last_name,
+      phone: user.phone,
     };
 
     const accessToken = this.jwtService.sign(payload, { expiresIn: '1h' });
@@ -399,6 +405,9 @@ export class WizardService {
         email: user.email,
         status: user.status,
         type: user.type,
+        firstName: user.first_name,
+        lastName: user.last_name,
+        phone: user.phone,
       },
     };
   }
@@ -473,7 +482,7 @@ export class WizardService {
 
       // PASO 2: Procesar pago PRIMERO (antes de crear request)
       let paymentResult: any = null;
-      
+
       if (createWizardRequestDto.paymentMethod === 'stripe' && createWizardRequestDto.stripeToken) {
         try {
           this.logger.log(
@@ -522,7 +531,7 @@ export class WizardService {
       const serviceData = this.getServiceData(createWizardRequestDto);
       const requestStatus = 'pendiente'; // Siempre pendiente al crear desde wizard
 
-      try {
+      /*try {
         validateRequestData(
           serviceData,
           createWizardRequestDto.type,
@@ -534,7 +543,7 @@ export class WizardService {
           throw error;
         }
         throw new BadRequestException(`Error de validación: ${error.message}`);
-      }
+      }*/
 
       // PASO 4: Crear la solicitud base con pago ya asociado
       const request = this.requestRepository.create({
@@ -554,7 +563,7 @@ export class WizardService {
       const savedRequest = await queryRunner.manager.save(Request, request);
 
       // PASO 5: Crear la solicitud específica según el tipo
-      if (createWizardRequestDto.type === 'apertura-llc') {
+      if (createWizardRequestDto.type === 'apertura-llc' && createWizardRequestDto.aperturaLlcData) {
         if (!createWizardRequestDto.aperturaLlcData) {
           throw new BadRequestException(
             'aperturaLlcData es requerido para tipo apertura-llc',
@@ -596,7 +605,7 @@ export class WizardService {
             await queryRunner.manager.save(Member, membersToSave);
           }
         }
-      } else if (createWizardRequestDto.type === 'renovacion-llc') {
+      } else if (createWizardRequestDto.type === 'renovacion-llc' && createWizardRequestDto.renovacionLlcData) {
         if (!createWizardRequestDto.renovacionLlcData) {
           throw new BadRequestException(
             'renovacionLlcData es requerido para tipo renovacion-llc',
@@ -631,7 +640,7 @@ export class WizardService {
             await queryRunner.manager.save(Member, membersToSave);
           }
         }
-      } else if (createWizardRequestDto.type === 'cuenta-bancaria') {
+      } else if (createWizardRequestDto.type === 'cuenta-bancaria' && createWizardRequestDto.cuentaBancariaData) {
         if (!createWizardRequestDto.cuentaBancariaData) {
           throw new BadRequestException(
             'cuentaBancariaData es requerido para tipo cuenta-bancaria',
@@ -696,7 +705,7 @@ export class WizardService {
    */
   private async getServiceDataForValidation(updateRequestDto: UpdateRequestDto, existingRequest: Request): Promise<any> {
     let existingData: any = {};
-    
+
     // Obtener datos existentes según el tipo
     if (existingRequest.type === 'apertura-llc') {
       const aperturaRequest = await this.aperturaRepo.findOne({
@@ -736,7 +745,7 @@ export class WizardService {
         existingData = { ...cuentaRequest };
       }
     }
-    
+
     // Combinar datos existentes con los nuevos (los nuevos tienen prioridad)
     if (existingRequest.type === 'apertura-llc' && updateRequestDto.aperturaLlcData) {
       return {
@@ -763,7 +772,7 @@ export class WizardService {
         owners: cuentaData.owners || existingData.owners || [],
       };
     }
-    
+
     return existingData;
   }
 
@@ -800,7 +809,7 @@ export class WizardService {
       if (updateRequestDto.currentStepNumber !== undefined) {
         const serviceData = await this.getServiceDataForValidation(updateRequestDto, request);
         const requestStatus = updateRequestDto.status || request.status || 'pendiente';
-        
+
         try {
           validateRequestData(
             serviceData,
@@ -825,11 +834,11 @@ export class WizardService {
       if (updateRequestDto.currentStep !== undefined) {
         request.currentStep = updateRequestDto.currentStep;
       }
-      
+
       if (updateRequestDto.notes !== undefined) {
         request.notes = updateRequestDto.notes;
       }
-      
+
       await queryRunner.manager.save(Request, request);
 
       // Actualizar la solicitud específica según el tipo
