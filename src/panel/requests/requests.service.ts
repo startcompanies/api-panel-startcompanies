@@ -924,11 +924,43 @@ export class RequestsService {
           }
         }
 
-        const aperturaData = this.aperturaRepo.create({
+        // Determinar qué secciones se deben procesar según currentStepNumber
+        const currentStep = createRequestDto.currentStepNumber || 1;
+        const aperturaDataToCreate: any = {
           requestId: savedRequest.id,
           currentStepNumber: createRequestDto.currentStepNumber,
           ...aperturaDataFields,
-        });
+        };
+        
+        // Eliminar campos de secciones que aún no se han completado
+        // Sección 1 - solo procesar si currentStepNumber >= 1
+        if (currentStep < 1) {
+          delete aperturaDataToCreate.llcName;
+          delete aperturaDataToCreate.llcNameOption2;
+          delete aperturaDataToCreate.llcNameOption3;
+          delete aperturaDataToCreate.incorporationState;
+          delete aperturaDataToCreate.businessDescription;
+          delete aperturaDataToCreate.llcType;
+          delete aperturaDataToCreate.linkedin;
+        }
+        
+        // Sección 3 - solo procesar si currentStepNumber >= 3
+        if (currentStep < 3) {
+          delete aperturaDataToCreate.serviceBillUrl;
+          delete aperturaDataToCreate.bankStatementUrl;
+          delete aperturaDataToCreate.periodicIncome10k;
+          delete aperturaDataToCreate.bankAccountLinkedEmail;
+          delete aperturaDataToCreate.bankAccountLinkedPhone;
+          delete aperturaDataToCreate.actividadFinancieraEsperada;
+          delete aperturaDataToCreate.projectOrCompanyUrl;
+        }
+        
+        // Solo incluir llcType si tiene un valor válido ('single' o 'multi')
+        if (aperturaDataToCreate.llcType !== 'single' && aperturaDataToCreate.llcType !== 'multi') {
+          delete aperturaDataToCreate.llcType;
+        }
+        
+        const aperturaData = this.aperturaRepo.create(aperturaDataToCreate);
         await queryRunner.manager.save(AperturaLlcRequest, aperturaData);
 
         // Crear miembros solo si estamos en la sección 2 o superior (donde se capturan los miembros)
@@ -1280,13 +1312,13 @@ export class RequestsService {
             }
             // Guardar isUSResident - puede venir como 'yes'/'no' o boolean
             // Priorizar validatorData, pero si no está definido, verificar en cuentaDataRaw
-            const isUSResidentValue = validatorData.isUSResident !== undefined 
+            const isUSResidentValue = validatorData.isUSResident !== undefined && validatorData.isUSResident !== ''
               ? validatorData.isUSResident 
-              : cuentaDataRaw.isUSResident !== undefined
+              : cuentaDataRaw.isUSResident !== undefined && cuentaDataRaw.isUSResident !== ''
                 ? cuentaDataRaw.isUSResident
                 : undefined;
             
-            if (isUSResidentValue !== undefined) {
+            if (isUSResidentValue !== undefined && isUSResidentValue !== '') {
               cuentaDataRaw.validatorIsUSResident = isUSResidentValue === 'yes' || isUSResidentValue === true;
             }
             
@@ -1325,8 +1357,10 @@ export class RequestsService {
         const cuentaData = this.cuentaRepo.create(cuentaDataToCreate);
         await queryRunner.manager.save(CuentaBancariaRequest, cuentaData);
         
-        // Procesar owners (ahora como Members) si estamos en el paso 6 o superior y hay datos
-        if (createRequestDto.currentStepNumber !== undefined && createRequestDto.currentStepNumber >= 6 && owners.length > 0) {
+        // Procesar owners (ahora como Members) si hay datos en el payload
+        // Si hay owners en el payload, significa que el usuario está en la sección 6 y quiere guardarlos
+        // Independientemente del currentStepNumber (puede ser que se haya reseteado después de avanzar al paso de pago)
+        if (owners.length > 0) {
           // Filtrar owners que tengan al menos algún dato válido
           const validOwners = owners.filter((o: any) => 
             o.firstName || o.lastName || o.passportNumber
@@ -1350,8 +1384,17 @@ export class RequestsService {
                 passportNumber: passportNumber || ownerDto.passportNumber || '',
                 passportOrNationalId: passportNumber || ownerDto.passportOrNationalId || ownerDto.passportNumber || '',
                 // Mapear passportFileUrl a identityDocumentUrl y scannedPassportUrl
-                identityDocumentUrl: passportFileUrl || ownerDto.identityDocumentUrl || '',
-                scannedPassportUrl: passportFileUrl || ownerDto.scannedPassportUrl || '',
+                // Solo asignar si hay un valor válido (no cadena vacía)
+                identityDocumentUrl: (passportFileUrl && passportFileUrl !== '') 
+                  ? passportFileUrl 
+                  : (ownerDto.identityDocumentUrl && ownerDto.identityDocumentUrl !== '') 
+                    ? ownerDto.identityDocumentUrl 
+                    : '',
+                scannedPassportUrl: (passportFileUrl && passportFileUrl !== '') 
+                  ? passportFileUrl 
+                  : (ownerDto.scannedPassportUrl && ownerDto.scannedPassportUrl !== '') 
+                    ? ownerDto.scannedPassportUrl 
+                    : '',
                 facialPhotographUrl: ownerDto.facialPhotographUrl || '',
                 nationality: ownerDto.nationality || '',
                 // Campos opcionales que pueden venir del frontend
@@ -1653,11 +1696,70 @@ export class RequestsService {
           aperturaRequest.currentStepNumber = updateRequestDto.currentStepNumber;
         }
 
+        // Determinar qué secciones se deben procesar según currentStepNumber
+        const currentStep = updateRequestDto.currentStepNumber || aperturaRequest.currentStepNumber || 1;
+
         if (updateRequestDto.aperturaLlcData) {
           const { members, ...aperturaDataFields } = updateRequestDto.aperturaLlcData as any;
+          const aperturaData: any = { ...aperturaDataFields };
           
-          // Actualizar campos de apertura (sin members)
-          Object.assign(aperturaRequest, aperturaDataFields);
+          // Eliminar campos de secciones que aún no se han completado
+          // Sección 1: llcName, llcNameOption2, llcNameOption3, incorporationState, businessDescription, llcType, linkedin
+          // Sección 2: members (se procesa por separado)
+          // Sección 3: serviceBillUrl, bankStatementUrl, periodicIncome10k, bankAccountLinkedEmail, bankAccountLinkedPhone, actividadFinancieraEsperada, projectOrCompanyUrl
+          
+          // Sección 1 - solo procesar si currentStepNumber >= 1
+          if (currentStep < 1) {
+            delete aperturaData.llcName;
+            delete aperturaData.llcNameOption2;
+            delete aperturaData.llcNameOption3;
+            delete aperturaData.incorporationState;
+            delete aperturaData.businessDescription;
+            delete aperturaData.llcType;
+            delete aperturaData.linkedin;
+          }
+          
+          // Sección 3 - solo procesar si currentStepNumber >= 3
+          if (currentStep < 3) {
+            delete aperturaData.serviceBillUrl;
+            delete aperturaData.bankStatementUrl;
+            delete aperturaData.periodicIncome10k;
+            delete aperturaData.bankAccountLinkedEmail;
+            delete aperturaData.bankAccountLinkedPhone;
+            delete aperturaData.actividadFinancieraEsperada;
+            delete aperturaData.projectOrCompanyUrl;
+          }
+          
+          // Sección 2 (members) - se procesa por separado, no debe estar en aperturaData
+          // (ya se eliminó en la desestructuración)
+          
+          // Solo asignar llcType si tiene un valor válido ('single' o 'multi')
+          const dataToAssign = { ...aperturaData };
+          if (dataToAssign.llcType !== 'single' && dataToAssign.llcType !== 'multi') {
+            delete dataToAssign.llcType;
+          }
+          
+          // Asegurarse de que los campos de secciones no completadas no estén en dataToAssign
+          if (currentStep < 1) {
+            delete dataToAssign.llcName;
+            delete dataToAssign.llcNameOption2;
+            delete dataToAssign.llcNameOption3;
+            delete dataToAssign.incorporationState;
+            delete dataToAssign.businessDescription;
+            delete dataToAssign.linkedin;
+          }
+          
+          if (currentStep < 3) {
+            delete dataToAssign.serviceBillUrl;
+            delete dataToAssign.bankStatementUrl;
+            delete dataToAssign.periodicIncome10k;
+            delete dataToAssign.bankAccountLinkedEmail;
+            delete dataToAssign.bankAccountLinkedPhone;
+            delete dataToAssign.actividadFinancieraEsperada;
+            delete dataToAssign.projectOrCompanyUrl;
+          }
+          
+          Object.assign(aperturaRequest, dataToAssign);
         }
 
         await queryRunner.manager.save(AperturaLlcRequest, aperturaRequest);
@@ -2102,13 +2204,33 @@ export class RequestsService {
               validatorData = validators[0]; // Solo hay un validador
             } else {
               // Si no hay validators[], verificar si los campos vienen directamente en cuentaData
+              // Verificar también si isUSResident tiene un valor válido ('yes' o 'no')
+              const hasIsUSResident = cuentaDataUpdate.isUSResident !== undefined && 
+                                      cuentaDataUpdate.isUSResident !== '' && 
+                                      cuentaDataUpdate.isUSResident !== null;
+              const hasValidatorIsUSResident = cuentaDataUpdate.validatorIsUSResident !== undefined;
+              const hasValidatorPassportUrl = cuentaDataUpdate.validatorPassportUrl !== undefined && 
+                                             cuentaDataUpdate.validatorPassportUrl !== '';
+              const hasValidatorScannedPassportUrl = cuentaDataUpdate.validatorScannedPassportUrl !== undefined && 
+                                                    cuentaDataUpdate.validatorScannedPassportUrl !== '';
+              
               if (cuentaDataUpdate.validatorFirstName || cuentaDataUpdate.validatorLastName || 
                   cuentaDataUpdate.validatorDateOfBirth || cuentaDataUpdate.validatorPassportNumber ||
-                  cuentaDataUpdate.validatorPassportUrl || cuentaDataUpdate.validatorScannedPassportUrl ||
-                  cuentaDataUpdate.isUSResident || cuentaDataUpdate.validatorIsUSResident) {
+                  hasValidatorPassportUrl || hasValidatorScannedPassportUrl ||
+                  hasIsUSResident || hasValidatorIsUSResident) {
                 validatorData = cuentaDataUpdate;
               }
             }
+            
+            // Log para debugging
+            this.logger.log(`[Update Request ${id}] Procesando validador (currentStep: ${currentStep}):`, {
+              hasValidators: !!(validators && validators.length > 0),
+              hasValidatorData: !!validatorData,
+              validatorPassportUrl: cuentaDataUpdate.validatorPassportUrl,
+              validatorScannedPassportUrl: cuentaDataUpdate.validatorScannedPassportUrl,
+              isUSResident: cuentaDataUpdate.isUSResident,
+              validatorIsUSResident: cuentaDataUpdate.validatorIsUSResident
+            });
             
             if (validatorData) {
               // Mapear campos del frontend a campos del validador en cuentaRequest
@@ -2176,13 +2298,13 @@ export class RequestsService {
               }
               // Guardar isUSResident - puede venir como 'yes'/'no' o boolean
               // Priorizar validatorData, pero si no está definido, verificar en cuentaDataUpdate
-              const isUSResidentValue = validatorData.isUSResident !== undefined 
+              const isUSResidentValue = validatorData.isUSResident !== undefined && validatorData.isUSResident !== ''
                 ? validatorData.isUSResident 
-                : cuentaDataUpdate.isUSResident !== undefined
+                : cuentaDataUpdate.isUSResident !== undefined && cuentaDataUpdate.isUSResident !== ''
                   ? cuentaDataUpdate.isUSResident
                   : undefined;
               
-              if (isUSResidentValue !== undefined) {
+              if (isUSResidentValue !== undefined && isUSResidentValue !== '') {
                 cuentaRequest.validatorIsUSResident = isUSResidentValue === 'yes' || isUSResidentValue === true;
               }
               
@@ -2202,7 +2324,9 @@ export class RequestsService {
               }
             } else {
               // Si no hay validatorData pero hay campos directamente en cuentaDataUpdate, guardarlos
+              // Esto asegura que los campos se guarden incluso si no se detecta validatorData
               if (currentStep >= 3) {
+                // Procesar validatorPassportUrl / validatorScannedPassportUrl
                 const passportUrlDirect = (cuentaDataUpdate.validatorPassportUrl && cuentaDataUpdate.validatorPassportUrl !== '') 
                   ? cuentaDataUpdate.validatorPassportUrl
                   : (cuentaDataUpdate.validatorScannedPassportUrl && cuentaDataUpdate.validatorScannedPassportUrl !== '')
@@ -2213,12 +2337,17 @@ export class RequestsService {
                   cuentaRequest.validatorScannedPassportUrl = passportUrlDirect;
                 }
                 
-                const isUSResidentDirect = cuentaDataUpdate.isUSResident !== undefined
-                  ? cuentaDataUpdate.isUSResident
-                  : undefined;
+                // Procesar isUSResident / validatorIsUSResident
+                // Verificar ambos campos: isUSResident y validatorIsUSResident
+                const isUSResidentFromIsUSResident = cuentaDataUpdate.isUSResident !== undefined && 
+                                                      cuentaDataUpdate.isUSResident !== '' && 
+                                                      cuentaDataUpdate.isUSResident !== null;
+                const isUSResidentFromValidator = cuentaDataUpdate.validatorIsUSResident !== undefined;
                 
-                if (isUSResidentDirect !== undefined) {
-                  cuentaRequest.validatorIsUSResident = isUSResidentDirect === 'yes' || isUSResidentDirect === true;
+                if (isUSResidentFromIsUSResident) {
+                  cuentaRequest.validatorIsUSResident = cuentaDataUpdate.isUSResident === 'yes' || cuentaDataUpdate.isUSResident === true;
+                } else if (isUSResidentFromValidator) {
+                  cuentaRequest.validatorIsUSResident = cuentaDataUpdate.validatorIsUSResident === true || cuentaDataUpdate.validatorIsUSResident === 'yes';
                 }
               }
             }
@@ -2236,8 +2365,10 @@ export class RequestsService {
           const cuentaDataUpdate = updateRequestDto.cuentaBancariaData as any;
           const owners = cuentaDataUpdate.owners || [];
           
-          // Procesar owners (ahora como Members) si estamos en el paso 6 o superior y hay datos
-          if (updateRequestDto.currentStepNumber !== undefined && updateRequestDto.currentStepNumber >= 6 && owners.length > 0) {
+          // Procesar owners (ahora como Members) si hay datos en el payload
+          // Si hay owners en el payload, significa que el usuario está en la sección 6 y quiere guardarlos
+          // Independientemente del currentStepNumber (puede ser que se haya reseteado después de avanzar al paso de pago)
+          if (owners.length > 0) {
             // Eliminar members existentes para reemplazarlos con los nuevos
             const existingMembers = await this.memberRepo.find({
               where: { requestId: id },
@@ -2268,8 +2399,17 @@ export class RequestsService {
                   passportNumber: passportNumber || ownerDto.passportNumber || '',
                   passportOrNationalId: passportNumber || ownerDto.passportOrNationalId || ownerDto.passportNumber || '',
                   // Mapear passportFileUrl a identityDocumentUrl y scannedPassportUrl
-                  identityDocumentUrl: passportFileUrl || ownerDto.identityDocumentUrl || '',
-                  scannedPassportUrl: passportFileUrl || ownerDto.scannedPassportUrl || '',
+                  // Solo asignar si hay un valor válido (no cadena vacía)
+                  identityDocumentUrl: (passportFileUrl && passportFileUrl !== '') 
+                    ? passportFileUrl 
+                    : (ownerDto.identityDocumentUrl && ownerDto.identityDocumentUrl !== '') 
+                      ? ownerDto.identityDocumentUrl 
+                      : '',
+                  scannedPassportUrl: (passportFileUrl && passportFileUrl !== '') 
+                    ? passportFileUrl 
+                    : (ownerDto.scannedPassportUrl && ownerDto.scannedPassportUrl !== '') 
+                      ? ownerDto.scannedPassportUrl 
+                      : '',
                   facialPhotographUrl: ownerDto.facialPhotographUrl || '',
                   nationality: ownerDto.nationality || '',
                   // Campos opcionales que pueden venir del frontend
