@@ -95,6 +95,22 @@ export class Member {
   @Column({ name: 'is_us_citizen', nullable: true, length: 50 })
   isUSCitizen?: string;
 
+  // Campos adicionales para Cuenta Bancaria (desde BankAccountOwner)
+  @Column({ name: 'paternal_last_name', nullable: true, length: 255 })
+  paternalLastName?: string;
+
+  @Column({ name: 'maternal_last_name', nullable: true, length: 255 })
+  maternalLastName?: string;
+
+  @Column({ name: 'passport_or_national_id', nullable: true, length: 100 })
+  passportOrNationalId?: string;
+
+  @Column({ name: 'identity_document_url', nullable: true, type: 'text' })
+  identityDocumentUrl?: string;
+
+  @Column({ name: 'facial_photograph_url', nullable: true, type: 'text' })
+  facialPhotographUrl?: string;
+
   @CreateDateColumn({
     name: 'created_at',
     type: 'timestamp with time zone',

@@ -49,11 +49,20 @@ export class CuentaBancariaRequest {
   @Column({ name: 'industry', nullable: true, length: 255 })
   industry?: string;
 
+  @Column({ name: 'number_of_employees', nullable: true, length: 50 })
+  numberOfEmployees?: string;
+
+  @Column({ name: 'website_or_social_media', nullable: true, length: 255 })
+  websiteOrSocialMedia?: string;
+
   @Column({ name: 'economic_activity', nullable: true, type: 'text' })
   economicActivity?: string;
 
   @Column({ name: 'ein', nullable: true, length: 50 })
   ein?: string;
+
+  @Column({ name: 'ein_letter_url', nullable: true, type: 'text' })
+  einLetterUrl?: string;
 
   @Column({ name: 'certificate_of_constitution_or_articles_url', nullable: true, type: 'text' })
   certificateOfConstitutionOrArticlesUrl?: string;
@@ -80,6 +89,18 @@ export class CuentaBancariaRequest {
 
   @Column({ name: 'registered_agent_address', nullable: true, type: 'text' })
   registeredAgentAddress?: string;
+
+  @Column({ name: 'registered_agent_state', nullable: true, length: 255 })
+  registeredAgentState?: string;
+
+  @Column({ name: 'incorporation_state', nullable: true, length: 255 })
+  incorporationState?: string;
+
+  @Column({ name: 'incorporation_month_year', nullable: true, length: 50 })
+  incorporationMonthYear?: string;
+
+  @Column({ name: 'countries_where_business', nullable: true, type: 'text' })
+  countriesWhereBusiness?: string;
 
   // Paso 3: Información de la cuenta bancaria
   @Column({ name: 'bank_name', nullable: true, length: 255 })
@@ -123,6 +144,52 @@ export class CuentaBancariaRequest {
   // Paso 5: Tipo de LLC
   @Column({ name: 'llc_type', nullable: true, length: 20 })
   llcType?: 'single' | 'multi';
+
+  // Paso 3: Información del Validador (movido desde BankAccountValidator)
+  @Column({ name: 'validator_first_name', nullable: true, length: 255 })
+  validatorFirstName?: string;
+
+  @Column({ name: 'validator_last_name', nullable: true, length: 255 })
+  validatorLastName?: string;
+
+  @Column({ name: 'validator_date_of_birth', nullable: true, type: 'date' })
+  validatorDateOfBirth?: Date | null;
+
+  @Column({ name: 'validator_nationality', nullable: true, length: 100 })
+  validatorNationality?: string;
+
+  @Column({ name: 'validator_citizenship', nullable: true, length: 100 })
+  validatorCitizenship?: string;
+
+  @Column({ name: 'validator_passport_number', nullable: true, length: 100 })
+  validatorPassportNumber?: string;
+
+  @Column({ name: 'validator_scanned_passport_url', nullable: true, type: 'text' })
+  validatorScannedPassportUrl?: string;
+
+  @Column({ name: 'validator_work_email', nullable: true, length: 255 })
+  validatorWorkEmail?: string;
+
+  @Column({ name: 'validator_use_email_for_relay_login', default: false, type: 'boolean' })
+  validatorUseEmailForRelayLogin?: boolean;
+
+  @Column({ name: 'validator_phone', nullable: true, length: 50 })
+  validatorPhone?: string;
+
+  @Column({ name: 'validator_can_receive_sms', default: false, type: 'boolean' })
+  validatorCanReceiveSMS?: boolean;
+
+  @Column({ name: 'validator_is_us_resident', nullable: true, type: 'boolean' })
+  validatorIsUSResident?: boolean;
+
+  @Column({ name: 'validator_title', nullable: true, length: 255 })
+  validatorTitle?: string;
+
+  @Column({ name: 'validator_income_source', nullable: true, length: 255 })
+  validatorIncomeSource?: string;
+
+  @Column({ name: 'validator_annual_income', nullable: true, type: 'numeric', precision: 15, scale: 2 })
+  validatorAnnualIncome?: number;
 
   // Paso 7: Confirmación y Firma Electrónica
   @Column({ name: 'document_certification', nullable: true, type: 'text' })

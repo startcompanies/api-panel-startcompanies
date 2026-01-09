@@ -5,8 +5,7 @@ import { AperturaLlcRequest } from '../panel/requests/entities/apertura-llc-requ
 import { RenovacionLlcRequest } from '../panel/requests/entities/renovacion-llc-request.entity';
 import { CuentaBancariaRequest } from '../panel/requests/entities/cuenta-bancaria-request.entity';
 import { Member } from '../panel/requests/entities/member.entity';
-import { BankAccountOwner } from '../panel/requests/entities/bank-account-owner.entity';
-import { BankAccountValidator } from '../panel/requests/entities/bank-account-validator.entity';
+// BankAccountOwner y BankAccountValidator ya no se usan - consolidados en Member y CuentaBancariaRequest
 import { User } from '../shared/user/entities/user.entity';
 import { Client } from '../panel/clients/entities/client.entity';
 import { WizardService } from './wizard.service';
@@ -23,8 +22,7 @@ import { AuthModule } from '../shared/auth/auth.module';
       RenovacionLlcRequest,
       CuentaBancariaRequest,
       Member,
-      BankAccountOwner,
-      BankAccountValidator,
+      // BankAccountOwner y BankAccountValidator ya no se usan - consolidados en Member y CuentaBancariaRequest
       User,
       Client,
     ]),

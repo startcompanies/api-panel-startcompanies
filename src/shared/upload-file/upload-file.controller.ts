@@ -3,6 +3,8 @@ import {
   Post,
   UseInterceptors,
   UploadedFile,
+  Body,
+  BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UploadFileService } from './upload-file.service';
@@ -22,22 +24,59 @@ export class UploadFileController {
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiBody({
-    description: 'Upload a file',
+    description: 'Upload a file. Opcionalmente, proporciona servicio y requestUuid para guardar en estructura request/{servicio}/{requestUuid}/',
     type: UploadFileDto,
   })
   @ApiOperation({
     summary: 'Subir un archivo',
+    description: 'Sube un archivo al bucket S3. Si se proporcionan servicio y requestUuid, el archivo se guardará en request/{servicio}/{requestUuid}/. Si no, se guardará en la raíz del bucket.',
   })
-  async uploadFile(@UploadedFile() file: Express.Multer.File) {
+  async uploadFile(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: any,
+  ) {
     if (!file) {
       this.exceptionService.handleBadRequestFileException();
     } else {
-      const result = await this.uploadFileService.uploadFile(file);
+      // Extraer servicio y requestUuid del body (vienen como strings en multipart/form-data)
+      const servicio = body.servicio && typeof body.servicio === 'string' ? body.servicio.trim() : undefined;
+      const requestUuid = body.requestUuid && typeof body.requestUuid === 'string' ? body.requestUuid.trim() : undefined;
+      
+      const result = await this.uploadFileService.uploadFile(
+        file,
+        servicio,
+        requestUuid,
+      );
       return {
         url: result?.url,
         key: result?.key,
         message: 'Archivo subido exitosamente',
       };
     }
+  }
+
+  @Post('move-to-request')
+  @ApiOperation({
+    summary: 'Mover archivos a carpeta del request',
+    description: 'Mueve archivos de request/{servicio}/ a request/{servicio}/{uuid}/ cuando se crea un request',
+  })
+  async moveFilesToRequestFolder(
+    @Body() body: { servicio: string; requestUuid: string },
+  ) {
+    const { servicio, requestUuid } = body;
+    if (!servicio || !requestUuid) {
+      throw new BadRequestException('servicio y requestUuid son requeridos');
+    }
+    
+    const result = await this.uploadFileService.moveFilesToRequestFolder(
+      servicio,
+      requestUuid,
+    );
+    
+    return {
+      message: `Archivos movidos: ${result.moved} exitosos, ${result.errors} errores`,
+      moved: result.moved,
+      errors: result.errors,
+    };
   }
 }

@@ -133,10 +133,30 @@ export class CreateCuentaBancariaRequestDto {
   @IsString()
   ein?: string;
 
+  @ApiPropertyOptional({ example: 'https://example.com/ein-letter.pdf', description: 'URL del documento EIN Letter' })
+  @IsOptional()
+  @IsString()
+  einLetterUrl?: string;
+
   @ApiPropertyOptional({ example: 'https://example.com/certificate.pdf', description: 'URL del certificado de constitución o artículos' })
   @IsOptional()
   @IsString()
   certificateOfConstitutionOrArticlesUrl?: string;
+
+  @ApiPropertyOptional({ example: 'https://example.com/articles.pdf', description: 'URL de Articles de Organización o Certificate of Formation (alias para certificateOfConstitutionOrArticlesUrl)' })
+  @IsOptional()
+  @IsString()
+  articlesOrCertificateUrl?: string;
+
+  @ApiPropertyOptional({ example: 'https://example.com/service-bill.pdf', description: 'URL de la factura de servicio (alias para proofOfAddressUrl)' })
+  @IsOptional()
+  @IsString()
+  serviceBillUrl?: string;
+
+  @ApiPropertyOptional({ example: 'https://example.com/validator-passport.pdf', description: 'URL del pasaporte del validador (se guarda en BankAccountValidator)' })
+  @IsOptional()
+  @IsString()
+  validatorPassportUrl?: string;
 
   @ApiPropertyOptional({ example: 'https://example.com/agreement.pdf', description: 'URL del Operating Agreement' })
   @IsOptional()
@@ -225,6 +245,11 @@ export class CreateCuentaBancariaRequestDto {
   @IsOptional()
   @IsIn(['single', 'multi'])
   llcType?: 'single' | 'multi';
+
+  @ApiPropertyOptional({ enum: ['yes', 'no'], example: 'yes', description: 'Indica si la LLC es Multi-Member (yes/no). Se mapea a llcType en el backend.' })
+  @IsOptional()
+  @IsIn(['yes', 'no'])
+  isMultiMember?: 'yes' | 'no';
 
   // Paso 7: Confirmación y Firma Electrónica
   @ApiPropertyOptional({ example: 'Certified', description: 'Certificación del documento' })

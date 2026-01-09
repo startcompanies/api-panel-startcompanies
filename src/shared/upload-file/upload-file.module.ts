@@ -5,6 +5,7 @@ import { HandleExceptionsService } from 'src/shared/common/common.service';
 
 @Module({
   controllers: [UploadFileController],
-  providers: [UploadFileService, HandleExceptionsService]
+  providers: [UploadFileService, HandleExceptionsService],
+  exports: [UploadFileService],
 })
 export class UploadFileModule {}

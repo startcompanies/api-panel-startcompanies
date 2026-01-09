@@ -205,6 +205,32 @@ export class CreateAperturaLlcRequestDto {
   @IsString()
   bankStatementUrl?: string;
 
+  // Campos adicionales para apertura bancaria (Sección 3)
+  @ApiPropertyOptional({ example: 'https://example.com/service-bill.pdf', description: 'URL de la factura de servicio (prueba de dirección)' })
+  @IsOptional()
+  @IsString()
+  serviceBillUrl?: string;
+
+  @ApiPropertyOptional({ enum: ['si', 'no'], example: 'si', description: '¿Tendrá ingresos periódicos que suman USD 10,000 o más?' })
+  @IsOptional()
+  @IsIn(['si', 'no'])
+  periodicIncome10k?: string;
+
+  @ApiPropertyOptional({ example: 'bank@example.com', description: 'Correo electrónico vinculado a la cuenta bancaria' })
+  @IsOptional()
+  @IsEmail()
+  bankAccountLinkedEmail?: string;
+
+  @ApiPropertyOptional({ example: '+1234567890', description: 'Número de teléfono vinculado a la cuenta bancaria' })
+  @IsOptional()
+  @IsString()
+  bankAccountLinkedPhone?: string;
+
+  @ApiPropertyOptional({ example: 'https://example.com', description: 'URL del proyecto o empresa' })
+  @IsOptional()
+  @IsString()
+  projectOrCompanyUrl?: string;
+
   // Paso 4: Dirección Personal del Propietario
   @ApiPropertyOptional({ example: 'Mexicana', description: 'Nacionalidad del propietario' })
   @IsOptional()

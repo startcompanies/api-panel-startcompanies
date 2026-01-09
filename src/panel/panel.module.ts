@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { RequestsModule } from './requests/requests.module';
-import { ProcessStepsModule } from './process-steps/process-steps.module';
-import { DocumentsModule } from './documents/documents.module';
+// ProcessStepsModule eliminado - no se usa
+// DocumentsModule eliminado - tabla documents no se usa (URLs se guardan directamente en campos de request)
 import { NotificationsModule } from './notifications/notifications.module';
 import { SettingsModule } from './settings/settings.module';
 import { ReportsModule } from './reports/reports.module';
@@ -14,8 +14,8 @@ import { ClientsModule } from './clients/clients.module';
 @Module({
   imports: [
     RequestsModule,
-    ProcessStepsModule,
-    DocumentsModule,
+    // ProcessStepsModule eliminado - no se usa
+    // DocumentsModule eliminado - no se usa
     NotificationsModule,
     SettingsModule,
     ReportsModule,
@@ -23,8 +23,8 @@ import { ClientsModule } from './clients/clients.module';
   ],
   exports: [
     RequestsModule,
-    ProcessStepsModule,
-    DocumentsModule,
+    // ProcessStepsModule eliminado - no se usa
+    // DocumentsModule eliminado - no se usa
     NotificationsModule,
     SettingsModule,
     ReportsModule,

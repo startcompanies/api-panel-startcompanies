@@ -172,27 +172,7 @@ export class RequestsController {
     return this.requestsService.update(id, updateRequestDto);
   }
 
-  // Obtener lista de documentos requeridos por tipo de solicitud
-  @Get('required-documents')
-  @ApiOperation({
-    summary: 'Obtener documentos requeridos',
-    description: 'Obtiene la lista de documentos requeridos según el tipo de solicitud y tipo de LLC (si aplica).',
-  })
-  @ApiQuery({ name: 'type', required: true, enum: ['apertura-llc', 'renovacion-llc', 'cuenta-bancaria'], description: 'Tipo de solicitud' })
-  @ApiQuery({ name: 'llcType', required: false, enum: ['single', 'multi'], description: 'Tipo de LLC (solo para apertura-llc)' })
-  @ApiResponse({ status: 200, description: 'Lista de documentos requeridos' })
-  @ApiResponse({ status: 400, description: 'Parámetro type es requerido' })
-  getRequiredDocuments(
-    @Query('type') type: 'apertura-llc' | 'renovacion-llc' | 'cuenta-bancaria',
-    @Query('llcType') llcType?: 'single' | 'multi',
-  ) {
-    if (!type) {
-      throw new BadRequestException(
-        'El parámetro type es requerido (apertura-llc, renovacion-llc, cuenta-bancaria)',
-      );
-    }
-    return this.requestsService.getRequiredDocuments(type, llcType);
-  }
+  // getRequiredDocuments eliminado - RequestRequiredDocument ya no se usa
 
   // Obtener aperturas de un cliente para renovación
   @Get('client/:clientId/aperturas')

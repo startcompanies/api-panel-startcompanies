@@ -110,8 +110,8 @@ export const VALIDATION_RULES: ServiceValidationRules = {
       { field: 'isMultiMember', type: 'string', required: true, enum: ['yes', 'no'] },
     ],
     6: [
-      // Solo si isMultiMember === 'yes'
-      { field: 'owners', type: 'array', required: true },
+      // La validación de owners se hace de forma condicional en validateRequestData
+      // Solo se valida si isMultiMember === 'yes'
     ],
   },
 };
@@ -288,6 +288,9 @@ export function validateRequestData(
   }
 
   const errors: string[] = [];
+  
+  // Determinar si es un borrador (status 'pendiente')
+  const isDraft = status === 'pendiente';
 
   // Validar solo la sección actual (las anteriores ya fueron validadas)
   for (const rule of sectionRules) {
@@ -300,7 +303,7 @@ export function validateRequestData(
     }
 
     const value = getNestedValue(data, rule.field);
-    const error = validateValue(value, rule);
+    const error = validateValue(value, rule, isDraft);
 
     if (error) {
       errors.push(error);
@@ -325,10 +328,11 @@ export function validateRequestData(
       }
 
       // Validar cada miembro
+      const isDraft = status === 'pendiente';
       members.forEach((member: any, index: number) => {
         MEMBER_VALIDATION_RULES.forEach((rule) => {
           const value = getNestedValue(member, rule.field);
-          const error = validateValue(value, rule);
+          const error = validateValue(value, rule, isDraft);
           if (error) {
             errors.push(`Miembro ${index + 1}: ${error}`);
           }
@@ -398,10 +402,11 @@ export function validateRequestData(
         errors.push('Debe haber al menos un propietario para LLC Multi-Member');
       } else {
         // Validar cada propietario
+        const isDraft = status === 'pendiente';
         owners.forEach((owner: any, index: number) => {
           OWNER_CUENTA_BANCARIA_VALIDATION_RULES.forEach((rule) => {
             const value = getNestedValue(owner, rule.field);
-            const error = validateValue(value, rule);
+            const error = validateValue(value, rule, isDraft);
             if (error) {
               errors.push(`Propietario ${index + 1}: ${error}`);
             }

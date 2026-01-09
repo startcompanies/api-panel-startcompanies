@@ -14,8 +14,7 @@ import { AperturaLlcRequest } from '../panel/requests/entities/apertura-llc-requ
 import { RenovacionLlcRequest } from '../panel/requests/entities/renovacion-llc-request.entity';
 import { CuentaBancariaRequest } from '../panel/requests/entities/cuenta-bancaria-request.entity';
 import { Member } from '../panel/requests/entities/member.entity';
-import { BankAccountOwner } from '../panel/requests/entities/bank-account-owner.entity';
-import { BankAccountValidator } from '../panel/requests/entities/bank-account-validator.entity';
+// BankAccountOwner y BankAccountValidator ya no se usan - consolidados en Member y CuentaBancariaRequest
 import { User } from '../shared/user/entities/user.entity';
 import { Client } from '../panel/clients/entities/client.entity';
 import { CreateWizardRequestDto } from './dtos/create-wizard-request.dto';
@@ -43,10 +42,7 @@ export class WizardService {
     private readonly cuentaRepo: Repository<CuentaBancariaRequest>,
     @InjectRepository(Member)
     private readonly memberRepo: Repository<Member>,
-    @InjectRepository(BankAccountOwner)
-    private readonly ownerRepo: Repository<BankAccountOwner>,
-    @InjectRepository(BankAccountValidator)
-    private readonly validatorRepo: Repository<BankAccountValidator>,
+    // BankAccountOwner y BankAccountValidator ya no se usan - consolidados en Member y CuentaBancariaRequest
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     @InjectRepository(Client)

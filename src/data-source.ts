@@ -17,11 +17,10 @@ import { AperturaLlcRequest } from './panel/requests/entities/apertura-llc-reque
 import { RenovacionLlcRequest } from './panel/requests/entities/renovacion-llc-request.entity';
 import { CuentaBancariaRequest } from './panel/requests/entities/cuenta-bancaria-request.entity';
 import { Member } from './panel/requests/entities/member.entity';
-import { BankAccountValidator } from './panel/requests/entities/bank-account-validator.entity';
-import { BankAccountOwner } from './panel/requests/entities/bank-account-owner.entity';
-import { RequestRequiredDocument } from './panel/requests/entities/request-required-document.entity';
-import { ProcessStep } from './panel/process-steps/entities/process-step.entity';
-import { Document } from './panel/documents/entities/document.entity';
+// BankAccountValidator y BankAccountOwner ya no se usan - consolidados en Member y CuentaBancariaRequest
+// RequestRequiredDocument ya no se usa - eliminado
+// ProcessStep ya no se usa - eliminado
+// Document ya no se usa - URLs se guardan directamente en campos de request
 import { Notification } from './panel/notifications/entities/notification.entity';
 import { UserPreferences } from './panel/settings/entities/user-preferences.entity';
 import { ProcessConfig } from './panel/settings/entities/process-config.entity';
@@ -58,14 +57,9 @@ export const dataSourceOptions: DataSourceOptions = {
     RenovacionLlcRequest,
     CuentaBancariaRequest,
     Member,
-    BankAccountValidator,
-    BankAccountOwner,
-    RequestRequiredDocument,
-    ProcessStep,
-    Document,
+    // BankAccountValidator y BankAccountOwner ya no se usan - consolidados en Member y CuentaBancariaRequest
+    // RequestRequiredDocument, Document, ProcessStep, UserPreferences y ProcessConfig eliminados - no se usan
     Notification,
-    UserPreferences,
-    ProcessConfig,
     Client,
     ZohoConfig,
   ],

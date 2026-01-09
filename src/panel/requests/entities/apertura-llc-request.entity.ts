@@ -67,6 +67,25 @@ export class AperturaLlcRequest {
   @Column({ name: 'actividad_financiera_esperada', nullable: true, type: 'text' })
   actividadFinancieraEsperada?: string;
 
+  // Campos para apertura bancaria (Sección 3)
+  @Column({ name: 'service_bill_url', nullable: true, type: 'text' })
+  serviceBillUrl?: string;
+
+  @Column({ name: 'bank_statement_url', nullable: true, type: 'text' })
+  bankStatementUrl?: string;
+
+  @Column({ name: 'periodic_income_10k', nullable: true, length: 10 })
+  periodicIncome10k?: string;
+
+  @Column({ name: 'bank_account_linked_email', nullable: true, length: 255 })
+  bankAccountLinkedEmail?: string;
+
+  @Column({ name: 'bank_account_linked_phone', nullable: true, length: 50 })
+  bankAccountLinkedPhone?: string;
+
+  @Column({ name: 'project_or_company_url', nullable: true, length: 500 })
+  projectOrCompanyUrl?: string;
+
   @Column({ name: 'almacena_productos_deposito_usa', nullable: true, type: 'boolean' })
   almacenaProductosDepositoUSA?: boolean;
 
@@ -81,9 +100,6 @@ export class AperturaLlcRequest {
 
   @Column({ name: 'activos_en_usa', nullable: true, type: 'boolean' })
   activosEnUSA?: boolean;
-
-  @Column({ name: 'ingresos_periodicos_10k', nullable: true, type: 'boolean' })
-  ingresosPeriodicos10k?: boolean;
 
   @Column({ name: 'contrata_servicios_usa', nullable: true, type: 'boolean' })
   contrataServiciosUSA?: boolean;

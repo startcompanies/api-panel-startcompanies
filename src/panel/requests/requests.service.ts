@@ -13,9 +13,8 @@ import { AperturaLlcRequest } from './entities/apertura-llc-request.entity';
 import { RenovacionLlcRequest } from './entities/renovacion-llc-request.entity';
 import { CuentaBancariaRequest } from './entities/cuenta-bancaria-request.entity';
 import { Member } from './entities/member.entity';
-import { BankAccountOwner } from './entities/bank-account-owner.entity';
-import { BankAccountValidator } from './entities/bank-account-validator.entity';
-import { RequestRequiredDocument } from './entities/request-required-document.entity';
+// BankAccountOwner y BankAccountValidator ya no se usan - consolidados en Member y CuentaBancariaRequest
+// RequestRequiredDocument ya no se usa - eliminado
 import { User } from '../../shared/user/entities/user.entity';
 import { Client } from '../clients/entities/client.entity';
 import { CreateRequestDto } from './dtos/create-request.dto';
@@ -24,14 +23,13 @@ import { ApproveRequestDto } from './dtos/approve-request.dto';
 import { RejectRequestDto } from './dtos/reject-request.dto';
 import { CreateMemberDto } from './dtos/create-member.dto';
 import { UpdateMemberDto } from './dtos/update-member.dto';
-import { CreateOwnerDto } from './dtos/create-owner.dto';
-import { UpdateOwnerDto } from './dtos/update-owner.dto';
-import { CreateBankAccountValidatorDto } from './dtos/create-bank-account-validator.dto';
-import { UpdateBankAccountValidatorDto } from './dtos/update-bank-account-validator.dto';
+// CreateOwnerDto, UpdateOwnerDto, CreateBankAccountValidatorDto y UpdateBankAccountValidatorDto ya no se usan
 import { StripeService } from '../../shared/payments/stripe.service';
 import { UserService } from '../../shared/user/user.service';
 import { encodePassword } from '../../shared/common/utils/bcrypt';
 import { validateRequestData } from './validation/request-validation-rules';
+import { UploadFileService } from '../../shared/upload-file/upload-file.service';
+import { awsConfigService } from '../../config/aws.config.service';
 // ZohoCrmService ya no se usa en findOne - solo se consulta la BD local
 // import { ZohoCrmService } from '../../zoho-config/zoho-crm.service';
 export type { RequestType } from './types/request-type';
@@ -67,12 +65,12 @@ export class RequestsService {
       };
     }
     if (createRequestDto.type === 'renovacion-llc' && createRequestDto.renovacionLlcData) {
-      // El frontend envía 'members' en renovacionLlcData, pero los tratamos como 'owners' para validación
+      // Homologado: el frontend envía 'members' (igual que apertura-llc)
       const renovacionData = createRequestDto.renovacionLlcData as any;
       return {
         ...renovacionData,
         llcType: renovacionData.llcType,
-        owners: renovacionData.owners || renovacionData.members || [],
+        members: renovacionData.members || [], // Usar solo 'members' (homologado con apertura-llc)
       };
     }
     if (createRequestDto.type === 'cuenta-bancaria' && createRequestDto.cuentaBancariaData) {
@@ -143,13 +141,13 @@ export class RequestsService {
       };
     }
     if (existingRequest.type === 'renovacion-llc' && updateRequestDto.renovacionLlcData) {
-      // El frontend envía 'members' en renovacionLlcData, pero los tratamos como 'owners' para validación
+      // Homologado: el frontend envía 'members' (igual que apertura-llc)
       const renovacionData = updateRequestDto.renovacionLlcData as any;
       return {
         ...existingData,
         ...renovacionData,
         llcType: renovacionData.llcType || existingData.llcType,
-        owners: renovacionData.owners || renovacionData.members || existingData.owners || [],
+        members: renovacionData.members || existingData.members || [], // Usar solo 'members' (homologado con apertura-llc)
       };
     }
     if (existingRequest.type === 'cuenta-bancaria' && updateRequestDto.cuentaBancariaData) {
@@ -176,12 +174,8 @@ export class RequestsService {
     private readonly cuentaRepo: Repository<CuentaBancariaRequest>,
     @InjectRepository(Member)
     private readonly memberRepo: Repository<Member>,
-    @InjectRepository(BankAccountOwner)
-    private readonly ownerRepo: Repository<BankAccountOwner>,
-    @InjectRepository(BankAccountValidator)
-    private readonly validatorRepo: Repository<BankAccountValidator>,
-    @InjectRepository(RequestRequiredDocument)
-    private readonly requiredDocRepo: Repository<RequestRequiredDocument>,
+    // BankAccountOwner y BankAccountValidator ya no se usan - consolidados en Member y CuentaBancariaRequest
+    // RequestRequiredDocument ya no se usa - eliminado
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     @InjectRepository(Client)
@@ -190,6 +184,7 @@ export class RequestsService {
     private readonly dataSource: DataSource,
     private readonly stripeService: StripeService,
     private readonly userService: UserService,
+    private readonly uploadFileService: UploadFileService,
     // ZohoCrmService ya no se usa - solo consultamos BD local
     // private readonly zohoCrmService: ZohoCrmService,
   ) {}
@@ -373,6 +368,113 @@ export class RequestsService {
       }
     }
 
+    // Cargar Members relacionados si es una solicitud de Cuenta Bancaria (ahora usan Member en lugar de BankAccountOwner)
+    if (request.cuentaBancariaRequest) {
+      // Cargar members (antes eran owners)
+      const members = await this.memberRepo.find({
+        where: { requestId: request.id },
+        order: { id: 'ASC' },
+      });
+      (request as any).members = members;
+      
+      // Mapeo inverso: convertir campos de la entidad a nombres del frontend
+      if (request.cuentaBancariaRequest) {
+        const cuentaData = request.cuentaBancariaRequest as any;
+        
+        // legalBusinessIdentifier -> legalBusinessName
+        if (cuentaData.legalBusinessIdentifier) {
+          cuentaData.legalBusinessName = cuentaData.legalBusinessIdentifier;
+        }
+        
+        // ein -> einNumber
+        if (cuentaData.ein) {
+          cuentaData.einNumber = cuentaData.ein;
+        }
+        
+        // economicActivity -> briefDescription
+        if (cuentaData.economicActivity) {
+          cuentaData.briefDescription = cuentaData.economicActivity;
+        }
+        
+        // certificateOfConstitutionOrArticlesUrl -> articlesOrCertificateUrl
+        if (cuentaData.certificateOfConstitutionOrArticlesUrl) {
+          cuentaData.articlesOrCertificateUrl = cuentaData.certificateOfConstitutionOrArticlesUrl;
+        }
+        
+        // proofOfAddressUrl -> serviceBillUrl
+        if (cuentaData.proofOfAddressUrl) {
+          cuentaData.serviceBillUrl = cuentaData.proofOfAddressUrl;
+        }
+        
+        // llcType -> isMultiMember
+        if (cuentaData.llcType) {
+          cuentaData.isMultiMember = cuentaData.llcType === 'multi' ? 'yes' : 'no';
+        }
+        
+        // Construir campos individuales de registeredAgentAddress desde el string
+        // Si registeredAgentState existe por separado, usarlo; sino, extraerlo de la dirección
+        if (cuentaData.registeredAgentAddress && typeof cuentaData.registeredAgentAddress === 'string') {
+          const addressParts = cuentaData.registeredAgentAddress.split(',').map((s: string) => s.trim());
+          cuentaData.registeredAgentStreet = addressParts[0] || '';
+          cuentaData.registeredAgentUnit = addressParts[1] || '';
+          cuentaData.registeredAgentCity = addressParts[2] || '';
+          // Usar registeredAgentState de la BD si existe, sino extraerlo de la dirección
+          cuentaData.registeredAgentState = cuentaData.registeredAgentState || addressParts[3] || '';
+          cuentaData.registeredAgentZipCode = addressParts[4] || '';
+          cuentaData.registeredAgentCountry = addressParts[5] || '';
+        } else if (cuentaData.registeredAgentState) {
+          // Si solo existe registeredAgentState pero no la dirección completa, mantenerlo
+          cuentaData.registeredAgentState = cuentaData.registeredAgentState;
+        }
+        
+        // Construir campos individuales de ownerPersonalAddress desde el objeto JSONB
+        if (cuentaData.ownerPersonalAddress && typeof cuentaData.ownerPersonalAddress === 'object') {
+          cuentaData.ownerPersonalStreet = cuentaData.ownerPersonalAddress.street || '';
+          cuentaData.ownerPersonalUnit = cuentaData.ownerPersonalAddress.unit || '';
+          cuentaData.ownerPersonalCity = cuentaData.ownerPersonalAddress.city || '';
+          cuentaData.ownerPersonalState = cuentaData.ownerPersonalAddress.state || '';
+          cuentaData.ownerPersonalPostalCode = cuentaData.ownerPersonalAddress.postalCode || '';
+          cuentaData.ownerPersonalCountry = cuentaData.ownerPersonalAddress.country || '';
+        }
+        
+        // Cargar campos de la sección 2 (incorporationState, incorporationMonthYear, countriesWhereBusiness)
+        // countriesWhereBusiness puede venir como string separado por comas, convertirlo a array para el frontend
+        if (cuentaData.countriesWhereBusiness && typeof cuentaData.countriesWhereBusiness === 'string') {
+          cuentaData.countriesWhereBusiness = cuentaData.countriesWhereBusiness 
+            ? cuentaData.countriesWhereBusiness.split(',').map((c: string) => c.trim()).filter((c: string) => c.length > 0)
+            : [];
+        } else if (!cuentaData.countriesWhereBusiness) {
+          cuentaData.countriesWhereBusiness = [];
+        }
+        
+        // IncorporationState e incorporationMonthYear se cargan directamente si existen
+        if (cuentaData.incorporationState === undefined) {
+          cuentaData.incorporationState = '';
+        }
+        if (cuentaData.incorporationMonthYear === undefined) {
+          cuentaData.incorporationMonthYear = '';
+        }
+        
+        // Mapear campos del validador desde CuentaBancariaRequest (ya no hay BankAccountValidator separado)
+        if (cuentaData.validatorFirstName || cuentaData.validatorLastName) {
+          (request as any).bankAccountValidator = {
+            firstName: cuentaData.validatorFirstName || '',
+            lastName: cuentaData.validatorLastName || '',
+            dateOfBirth: cuentaData.validatorDateOfBirth || null,
+            nationality: cuentaData.validatorNationality || '',
+            citizenship: cuentaData.validatorCitizenship || '',
+            passportNumber: cuentaData.validatorPassportNumber || '',
+            scannedPassportUrl: cuentaData.validatorScannedPassportUrl || '',
+            workEmail: cuentaData.validatorWorkEmail || '',
+            useEmailForRelayLogin: cuentaData.validatorUseEmailForRelayLogin || false,
+            phone: cuentaData.validatorPhone || '',
+            canReceiveSMS: cuentaData.validatorCanReceiveSMS || false,
+            isUSResident: cuentaData.validatorIsUSResident || false,
+          };
+        }
+      }
+    }
+
     // No consultamos Zoho - usamos solo datos de la BD local
     // Los datos ya están sincronizados en aperturaLlcRequest/renovacionLlcRequest/cuentaBancariaRequest
     // y en las relaciones con Members, Owners, Validators, etc.
@@ -445,6 +547,113 @@ export class RequestsService {
       // Mapear totalRevenue a totalRevenue2025 para compatibilidad con el frontend
       if (request.renovacionLlcRequest && request.renovacionLlcRequest.totalRevenue !== undefined) {
         (request.renovacionLlcRequest as any).totalRevenue2025 = request.renovacionLlcRequest.totalRevenue;
+      }
+    }
+
+    // Cargar Members relacionados si es una solicitud de Cuenta Bancaria (ahora usan Member en lugar de BankAccountOwner)
+    if (request.cuentaBancariaRequest) {
+      // Cargar members (antes eran owners)
+      const members = await this.memberRepo.find({
+        where: { requestId: id },
+        order: { id: 'ASC' },
+      });
+      (request as any).members = members;
+      
+      // Mapeo inverso: convertir campos de la entidad a nombres del frontend
+      if (request.cuentaBancariaRequest) {
+        const cuentaData = request.cuentaBancariaRequest as any;
+        
+        // legalBusinessIdentifier -> legalBusinessName
+        if (cuentaData.legalBusinessIdentifier) {
+          cuentaData.legalBusinessName = cuentaData.legalBusinessIdentifier;
+        }
+        
+        // ein -> einNumber
+        if (cuentaData.ein) {
+          cuentaData.einNumber = cuentaData.ein;
+        }
+        
+        // economicActivity -> briefDescription
+        if (cuentaData.economicActivity) {
+          cuentaData.briefDescription = cuentaData.economicActivity;
+        }
+        
+        // certificateOfConstitutionOrArticlesUrl -> articlesOrCertificateUrl
+        if (cuentaData.certificateOfConstitutionOrArticlesUrl) {
+          cuentaData.articlesOrCertificateUrl = cuentaData.certificateOfConstitutionOrArticlesUrl;
+        }
+        
+        // proofOfAddressUrl -> serviceBillUrl
+        if (cuentaData.proofOfAddressUrl) {
+          cuentaData.serviceBillUrl = cuentaData.proofOfAddressUrl;
+        }
+        
+        // llcType -> isMultiMember
+        if (cuentaData.llcType) {
+          cuentaData.isMultiMember = cuentaData.llcType === 'multi' ? 'yes' : 'no';
+        }
+        
+        // Construir campos individuales de registeredAgentAddress desde el string
+        // Si registeredAgentState existe por separado, usarlo; sino, extraerlo de la dirección
+        if (cuentaData.registeredAgentAddress && typeof cuentaData.registeredAgentAddress === 'string') {
+          const addressParts = cuentaData.registeredAgentAddress.split(',').map((s: string) => s.trim());
+          cuentaData.registeredAgentStreet = addressParts[0] || '';
+          cuentaData.registeredAgentUnit = addressParts[1] || '';
+          cuentaData.registeredAgentCity = addressParts[2] || '';
+          // Usar registeredAgentState de la BD si existe, sino extraerlo de la dirección
+          cuentaData.registeredAgentState = cuentaData.registeredAgentState || addressParts[3] || '';
+          cuentaData.registeredAgentZipCode = addressParts[4] || '';
+          cuentaData.registeredAgentCountry = addressParts[5] || '';
+        } else if (cuentaData.registeredAgentState) {
+          // Si solo existe registeredAgentState pero no la dirección completa, mantenerlo
+          cuentaData.registeredAgentState = cuentaData.registeredAgentState;
+        }
+        
+        // Construir campos individuales de ownerPersonalAddress desde el objeto JSONB
+        if (cuentaData.ownerPersonalAddress && typeof cuentaData.ownerPersonalAddress === 'object') {
+          cuentaData.ownerPersonalStreet = cuentaData.ownerPersonalAddress.street || '';
+          cuentaData.ownerPersonalUnit = cuentaData.ownerPersonalAddress.unit || '';
+          cuentaData.ownerPersonalCity = cuentaData.ownerPersonalAddress.city || '';
+          cuentaData.ownerPersonalState = cuentaData.ownerPersonalAddress.state || '';
+          cuentaData.ownerPersonalPostalCode = cuentaData.ownerPersonalAddress.postalCode || '';
+          cuentaData.ownerPersonalCountry = cuentaData.ownerPersonalAddress.country || '';
+        }
+        
+        // Cargar campos de la sección 2 (incorporationState, incorporationMonthYear, countriesWhereBusiness)
+        // countriesWhereBusiness puede venir como string separado por comas, convertirlo a array para el frontend
+        if (cuentaData.countriesWhereBusiness && typeof cuentaData.countriesWhereBusiness === 'string') {
+          cuentaData.countriesWhereBusiness = cuentaData.countriesWhereBusiness 
+            ? cuentaData.countriesWhereBusiness.split(',').map((c: string) => c.trim()).filter((c: string) => c.length > 0)
+            : [];
+        } else if (!cuentaData.countriesWhereBusiness) {
+          cuentaData.countriesWhereBusiness = [];
+        }
+        
+        // IncorporationState e incorporationMonthYear se cargan directamente si existen
+        if (cuentaData.incorporationState === undefined) {
+          cuentaData.incorporationState = '';
+        }
+        if (cuentaData.incorporationMonthYear === undefined) {
+          cuentaData.incorporationMonthYear = '';
+        }
+        
+        // Mapear campos del validador desde CuentaBancariaRequest (ya no hay BankAccountValidator separado)
+        if (cuentaData.validatorFirstName || cuentaData.validatorLastName) {
+          (request as any).bankAccountValidator = {
+            firstName: cuentaData.validatorFirstName || '',
+            lastName: cuentaData.validatorLastName || '',
+            dateOfBirth: cuentaData.validatorDateOfBirth || null,
+            nationality: cuentaData.validatorNationality || '',
+            citizenship: cuentaData.validatorCitizenship || '',
+            passportNumber: cuentaData.validatorPassportNumber || '',
+            scannedPassportUrl: cuentaData.validatorScannedPassportUrl || '',
+            workEmail: cuentaData.validatorWorkEmail || '',
+            useEmailForRelayLogin: cuentaData.validatorUseEmailForRelayLogin || false,
+            phone: cuentaData.validatorPhone || '',
+            canReceiveSMS: cuentaData.validatorCanReceiveSMS || false,
+            isUSResident: cuentaData.validatorIsUSResident || false,
+          };
+        }
       }
     }
 
@@ -813,19 +1022,387 @@ export class RequestsService {
           );
         }
 
-        const cuentaData = this.cuentaRepo.create({
+        const cuentaDataRaw: any = { ...createRequestDto.cuentaBancariaData };
+        
+        // Mapear campos del frontend a nombres de la entidad
+        // articlesOrCertificateUrl -> certificateOfConstitutionOrArticlesUrl
+        if (cuentaDataRaw.articlesOrCertificateUrl !== undefined) {
+          cuentaDataRaw.certificateOfConstitutionOrArticlesUrl = cuentaDataRaw.articlesOrCertificateUrl;
+          delete cuentaDataRaw.articlesOrCertificateUrl;
+        }
+        
+        // serviceBillUrl -> proofOfAddressUrl
+        if (cuentaDataRaw.serviceBillUrl !== undefined) {
+          cuentaDataRaw.proofOfAddressUrl = cuentaDataRaw.serviceBillUrl;
+          delete cuentaDataRaw.serviceBillUrl;
+        }
+        
+        // legalBusinessName -> legalBusinessIdentifier
+        if (cuentaDataRaw.legalBusinessName !== undefined) {
+          cuentaDataRaw.legalBusinessIdentifier = cuentaDataRaw.legalBusinessName;
+          delete cuentaDataRaw.legalBusinessName;
+        }
+        
+        // einNumber -> ein
+        if (cuentaDataRaw.einNumber !== undefined) {
+          cuentaDataRaw.ein = cuentaDataRaw.einNumber;
+          delete cuentaDataRaw.einNumber;
+        }
+        
+        // briefDescription -> economicActivity
+        if (cuentaDataRaw.briefDescription !== undefined) {
+          cuentaDataRaw.economicActivity = cuentaDataRaw.briefDescription;
+          delete cuentaDataRaw.briefDescription;
+        }
+        
+        // Construir registeredAgentAddress desde campos individuales (sección 2)
+        // Guardar registeredAgentState por separado además de la dirección completa
+        if (cuentaDataRaw.registeredAgentState !== undefined) {
+          cuentaDataRaw.registeredAgentState = cuentaDataRaw.registeredAgentState || '';
+        }
+        
+        if (cuentaDataRaw.registeredAgentStreet || cuentaDataRaw.registeredAgentCity || cuentaDataRaw.registeredAgentState) {
+          cuentaDataRaw.registeredAgentAddress = [
+            cuentaDataRaw.registeredAgentStreet || '',
+            cuentaDataRaw.registeredAgentUnit || '',
+            cuentaDataRaw.registeredAgentCity || '',
+            cuentaDataRaw.registeredAgentState || '',
+            cuentaDataRaw.registeredAgentZipCode || '',
+            cuentaDataRaw.registeredAgentCountry || ''
+          ].filter(Boolean).join(', ');
+          
+          // Eliminar campos individuales después de construir la dirección (excepto registeredAgentState que se guarda por separado)
+          delete cuentaDataRaw.registeredAgentStreet;
+          delete cuentaDataRaw.registeredAgentUnit;
+          delete cuentaDataRaw.registeredAgentCity;
+          // NO eliminar registeredAgentState - se guarda por separado
+          delete cuentaDataRaw.registeredAgentZipCode;
+          delete cuentaDataRaw.registeredAgentCountry;
+        }
+        
+        // Construir ownerPersonalAddress desde campos individuales (sección 4)
+        if (cuentaDataRaw.ownerPersonalStreet || cuentaDataRaw.ownerPersonalCity || cuentaDataRaw.ownerPersonalState) {
+          cuentaDataRaw.ownerPersonalAddress = {
+            street: cuentaDataRaw.ownerPersonalStreet || '',
+            unit: cuentaDataRaw.ownerPersonalUnit || '',
+            city: cuentaDataRaw.ownerPersonalCity || '',
+            state: cuentaDataRaw.ownerPersonalState || '',
+            postalCode: cuentaDataRaw.ownerPersonalPostalCode || '',
+            country: cuentaDataRaw.ownerPersonalCountry || ''
+          };
+          
+          // Eliminar campos individuales después de construir la dirección
+          delete cuentaDataRaw.ownerPersonalStreet;
+          delete cuentaDataRaw.ownerPersonalUnit;
+          delete cuentaDataRaw.ownerPersonalCity;
+          delete cuentaDataRaw.ownerPersonalState;
+          delete cuentaDataRaw.ownerPersonalPostalCode;
+          delete cuentaDataRaw.ownerPersonalCountry;
+        }
+        
+        // Eliminar campos que se procesan por separado
+        delete cuentaDataRaw.owners; // Se procesa por separado
+        delete cuentaDataRaw.validators; // Se procesa por separado
+        
+        // Guardar campos de la sección 2 (incorporationState, incorporationMonthYear, countriesWhereBusiness)
+        // Convertir countriesWhereBusiness de array a string separado por comas si viene como array
+        if (cuentaDataRaw.countriesWhereBusiness !== undefined) {
+          if (Array.isArray(cuentaDataRaw.countriesWhereBusiness)) {
+            cuentaDataRaw.countriesWhereBusiness = cuentaDataRaw.countriesWhereBusiness.length > 0 
+              ? cuentaDataRaw.countriesWhereBusiness.join(', ') 
+              : '';
+          } else if (cuentaDataRaw.countriesWhereBusiness === '' || cuentaDataRaw.countriesWhereBusiness === null) {
+            cuentaDataRaw.countriesWhereBusiness = '';
+          }
+          // Si ya es string, mantenerlo tal cual
+        }
+        
+        // Guardar incorporationState e incorporationMonthYear si vienen
+        if (cuentaDataRaw.incorporationState !== undefined) {
+          cuentaDataRaw.incorporationState = cuentaDataRaw.incorporationState || '';
+        }
+        
+        if (cuentaDataRaw.incorporationMonthYear !== undefined) {
+          cuentaDataRaw.incorporationMonthYear = cuentaDataRaw.incorporationMonthYear || '';
+        }
+        
+        // Mapear isMultiMember a llcType
+        // 'yes' -> 'multi', 'no' -> 'single'
+        // Solo mapear si isMultiMember tiene un valor válido Y estamos en la sección 5 o superior
+        // El campo isMultiMember solo se completa en la sección 5, antes de eso no debe incluirse llcType
+        // El constraint check_cuenta_llc_type solo permite 'single' o 'multi', no NULL ni cadena vacía
+        const currentStep = createRequestDto.currentStepNumber || 1;
+        const isSection5OrHigher = currentStep >= 5;
+        
+        if (isSection5OrHigher && cuentaDataRaw.isMultiMember !== undefined && cuentaDataRaw.isMultiMember !== '' && cuentaDataRaw.isMultiMember !== null) {
+          // Solo mapear si estamos en la sección 5 o superior y hay un valor válido
+          if (cuentaDataRaw.isMultiMember === 'yes') {
+            cuentaDataRaw.llcType = 'multi';
+          } else if (cuentaDataRaw.isMultiMember === 'no') {
+            cuentaDataRaw.llcType = 'single';
+          }
+          delete cuentaDataRaw.isMultiMember;
+        } else {
+          // Si no estamos en la sección 5 o superior, o isMultiMember no tiene valor válido,
+          // eliminar llcType si existe para que no se intente guardar un valor inválido
+          delete cuentaDataRaw.llcType;
+          delete cuentaDataRaw.isMultiMember;
+        }
+        
+        // Si llcType viene como null o undefined, eliminarlo (no se ha completado la sección 5)
+        // Nota: llcType no puede ser cadena vacía según el tipo, solo 'single' | 'multi' | undefined
+        if (cuentaDataRaw.llcType === null || cuentaDataRaw.llcType === undefined) {
+          delete cuentaDataRaw.llcType;
+        }
+        
+        // Procesar owners y validators antes de crear cuentaData
+        const cuentaBancariaData = createRequestDto.cuentaBancariaData as any;
+        const owners = cuentaBancariaData?.owners || [];
+        const validators = cuentaBancariaData?.validators || [];
+        
+        // Eliminar campos de secciones que aún no se han completado
+        // Sección 3 (validador) - solo procesar si currentStepNumber >= 3
+        if (currentStep < 3) {
+          // Eliminar todos los campos del validador si estamos antes de la sección 3
+          delete cuentaDataRaw.validatorFirstName;
+          delete cuentaDataRaw.validatorLastName;
+          delete cuentaDataRaw.validatorDateOfBirth;
+          delete cuentaDataRaw.validatorNationality;
+          delete cuentaDataRaw.validatorCitizenship;
+          delete cuentaDataRaw.validatorPassportNumber;
+          delete cuentaDataRaw.validatorPassportUrl;
+          delete cuentaDataRaw.validatorScannedPassportUrl;
+          delete cuentaDataRaw.validatorWorkEmail;
+          delete cuentaDataRaw.validatorUseEmailForRelayLogin;
+          delete cuentaDataRaw.validatorPhone;
+          delete cuentaDataRaw.validatorCanReceiveSMS;
+          delete cuentaDataRaw.validatorIsUSResident;
+          delete cuentaDataRaw.validatorTitle;
+          delete cuentaDataRaw.validatorIncomeSource;
+          delete cuentaDataRaw.validatorAnnualIncome;
+        }
+        
+        // Sección 4 (dirección personal) - solo procesar si currentStepNumber >= 4
+        if (currentStep < 4) {
+          delete cuentaDataRaw.ownerPersonalStreet;
+          delete cuentaDataRaw.ownerPersonalUnit;
+          delete cuentaDataRaw.ownerPersonalCity;
+          delete cuentaDataRaw.ownerPersonalState;
+          delete cuentaDataRaw.ownerPersonalCountry;
+          delete cuentaDataRaw.ownerPersonalPostalCode;
+          delete cuentaDataRaw.ownerPersonalAddress;
+          delete cuentaDataRaw.serviceBillUrl;
+          delete cuentaDataRaw.proofOfAddressUrl;
+        }
+        
+        // Procesar validator: guardar directamente en CuentaBancariaRequest
+        // Solo procesar si estamos en la sección 3 o superior
+        if (currentStep >= 3) {
+          // Los campos del validador pueden venir en validators[] o directamente en cuentaDataRaw
+          // Priorizar validators[] si existe, sino usar cuentaDataRaw directamente
+          let validatorData: any = null;
+          
+          if (validators && validators.length > 0) {
+            validatorData = validators[0]; // Solo hay un validador
+          } else {
+            // Si no hay validators[], verificar si los campos vienen directamente en cuentaDataRaw
+            if (cuentaDataRaw.validatorFirstName || cuentaDataRaw.validatorLastName || 
+                cuentaDataRaw.validatorDateOfBirth || cuentaDataRaw.validatorPassportNumber ||
+                cuentaDataRaw.validatorPassportUrl || cuentaDataRaw.validatorScannedPassportUrl ||
+                cuentaDataRaw.isUSResident || cuentaDataRaw.validatorIsUSResident) {
+              validatorData = cuentaDataRaw;
+            }
+          }
+          
+          if (validatorData) {
+            // Mapear campos del frontend a campos del validador en cuentaDataRaw
+            // Solo asignar si el campo tiene un valor válido (no cadena vacía)
+            if (validatorData.validatorFirstName !== undefined && validatorData.validatorFirstName !== '') {
+              cuentaDataRaw.validatorFirstName = validatorData.validatorFirstName || validatorData.firstName || '';
+            }
+            if (validatorData.validatorLastName !== undefined && validatorData.validatorLastName !== '') {
+              cuentaDataRaw.validatorLastName = validatorData.validatorLastName || validatorData.lastName || '';
+            }
+            if (validatorData.validatorNationality !== undefined && validatorData.validatorNationality !== '') {
+              cuentaDataRaw.validatorNationality = validatorData.validatorNationality || validatorData.nationality || '';
+            }
+            if (validatorData.validatorCitizenship !== undefined && validatorData.validatorCitizenship !== '') {
+              cuentaDataRaw.validatorCitizenship = validatorData.validatorCitizenship || validatorData.citizenship || '';
+            }
+            if (validatorData.validatorPassportNumber !== undefined && validatorData.validatorPassportNumber !== '') {
+              cuentaDataRaw.validatorPassportNumber = validatorData.validatorPassportNumber || validatorData.passportNumber || '';
+            }
+            // Guardar URL del pasaporte - puede venir como validatorPassportUrl o validatorScannedPassportUrl
+            // Priorizar validatorData, pero si está vacío, verificar en cuentaDataRaw
+            const passportUrl = (validatorData.validatorPassportUrl && validatorData.validatorPassportUrl !== '') 
+              ? validatorData.validatorPassportUrl 
+              : (validatorData.scannedPassportUrl && validatorData.scannedPassportUrl !== '')
+                ? validatorData.scannedPassportUrl
+                : (cuentaDataRaw.validatorPassportUrl && cuentaDataRaw.validatorPassportUrl !== '')
+                  ? cuentaDataRaw.validatorPassportUrl
+                  : (cuentaDataRaw.validatorScannedPassportUrl && cuentaDataRaw.validatorScannedPassportUrl !== '')
+                    ? cuentaDataRaw.validatorScannedPassportUrl
+                    : '';
+            
+            if (passportUrl !== '') {
+              cuentaDataRaw.validatorScannedPassportUrl = passportUrl;
+            }
+            if (validatorData.validatorWorkEmail !== undefined && validatorData.validatorWorkEmail !== '') {
+              cuentaDataRaw.validatorWorkEmail = validatorData.validatorWorkEmail || validatorData.workEmail || '';
+            }
+            if (validatorData.validatorPhone !== undefined && validatorData.validatorPhone !== '') {
+              cuentaDataRaw.validatorPhone = validatorData.validatorPhone || validatorData.phone || '';
+            }
+            
+            // Campos adicionales del validador
+            if (validatorData.validatorTitle !== undefined && validatorData.validatorTitle !== '') {
+              cuentaDataRaw.validatorTitle = validatorData.validatorTitle || '';
+            }
+            if (validatorData.validatorIncomeSource !== undefined && validatorData.validatorIncomeSource !== '') {
+              cuentaDataRaw.validatorIncomeSource = validatorData.validatorIncomeSource || '';
+            }
+            if (validatorData.validatorAnnualIncome !== undefined && validatorData.validatorAnnualIncome !== '') {
+              // Convertir a número si viene como string
+              const annualIncome = typeof validatorData.validatorAnnualIncome === 'string' 
+                ? parseFloat(validatorData.validatorAnnualIncome) 
+                : validatorData.validatorAnnualIncome;
+              if (!isNaN(annualIncome)) {
+                cuentaDataRaw.validatorAnnualIncome = annualIncome;
+              }
+            }
+            
+            // Campos booleanos
+            if (validatorData.useEmailForRelayLogin !== undefined) {
+              cuentaDataRaw.validatorUseEmailForRelayLogin = validatorData.useEmailForRelayLogin || false;
+            }
+            if (validatorData.canReceiveSMS !== undefined) {
+              cuentaDataRaw.validatorCanReceiveSMS = validatorData.canReceiveSMS || false;
+            }
+            // Guardar isUSResident - puede venir como 'yes'/'no' o boolean
+            // Priorizar validatorData, pero si no está definido, verificar en cuentaDataRaw
+            const isUSResidentValue = validatorData.isUSResident !== undefined 
+              ? validatorData.isUSResident 
+              : cuentaDataRaw.isUSResident !== undefined
+                ? cuentaDataRaw.isUSResident
+                : undefined;
+            
+            if (isUSResidentValue !== undefined) {
+              cuentaDataRaw.validatorIsUSResident = isUSResidentValue === 'yes' || isUSResidentValue === true;
+            }
+            
+            // Parsear fecha de nacimiento - solo si tiene un valor válido (no cadena vacía)
+            const dateOfBirth = validatorData.validatorDateOfBirth || validatorData.dateOfBirth;
+            if (dateOfBirth && dateOfBirth.trim() !== '') {
+              const parsedDate = this.parseDate(dateOfBirth);
+              if (parsedDate) {
+                cuentaDataRaw.validatorDateOfBirth = parsedDate;
+              } else {
+                // Si no se puede parsear, no asignar (no incluir en cuentaDataRaw)
+                delete cuentaDataRaw.validatorDateOfBirth;
+              }
+            } else {
+              // Si viene como cadena vacía, no incluir en cuentaDataRaw
+              delete cuentaDataRaw.validatorDateOfBirth;
+            }
+          }
+        }
+        
+        // Preparar datos para crear, excluyendo llcType si no tiene un valor válido
+        const cuentaDataToCreate: any = {
           requestId: savedRequest.id,
           currentStepNumber: createRequestDto.currentStepNumber,
-          ...createRequestDto.cuentaBancariaData,
-          firstRegistrationDate: createRequestDto.cuentaBancariaData
-            .firstRegistrationDate
-            ? new Date(createRequestDto.cuentaBancariaData.firstRegistrationDate)
+          ...cuentaDataRaw,
+          firstRegistrationDate: cuentaDataRaw.firstRegistrationDate
+            ? new Date(cuentaDataRaw.firstRegistrationDate)
             : undefined,
-        });
+        };
+        
+        // Solo incluir llcType si tiene un valor válido ('single' o 'multi')
+        if (cuentaDataRaw.llcType === 'single' || cuentaDataRaw.llcType === 'multi') {
+          cuentaDataToCreate.llcType = cuentaDataRaw.llcType;
+        }
+        
+        const cuentaData = this.cuentaRepo.create(cuentaDataToCreate);
         await queryRunner.manager.save(CuentaBancariaRequest, cuentaData);
+        
+        // Procesar owners (ahora como Members) si estamos en el paso 6 o superior y hay datos
+        if (createRequestDto.currentStepNumber !== undefined && createRequestDto.currentStepNumber >= 6 && owners.length > 0) {
+          // Filtrar owners que tengan al menos algún dato válido
+          const validOwners = owners.filter((o: any) => 
+            o.firstName || o.lastName || o.passportNumber
+          );
+          
+          if (validOwners.length > 0) {
+            const membersToSave = validOwners.map((ownerDto: any) => {
+              const { dateOfBirth, passportFileUrl, lastName, passportNumber, ssnItin, cuit, participationPercentage, ...ownerDataWithoutDate } = ownerDto;
+              const parsedDate = this.parseDate(dateOfBirth);
+              
+              // Mapear campos del frontend a la estructura de Member
+              // Member ahora incluye: firstName, lastName, paternalLastName, maternalLastName, passportNumber, passportOrNationalId, scannedPassportUrl, identityDocumentUrl
+              const memberData: any = {
+                requestId: savedRequest.id,
+                firstName: ownerDto.firstName || '',
+                lastName: lastName || ownerDto.lastName || '',
+                // Separar lastName en paternal y maternal si es necesario
+                paternalLastName: ownerDto.paternalLastName || '',
+                maternalLastName: ownerDto.maternalLastName || '',
+                // Usar passportNumber o passportOrNationalId
+                passportNumber: passportNumber || ownerDto.passportNumber || '',
+                passportOrNationalId: passportNumber || ownerDto.passportOrNationalId || ownerDto.passportNumber || '',
+                // Mapear passportFileUrl a identityDocumentUrl y scannedPassportUrl
+                identityDocumentUrl: passportFileUrl || ownerDto.identityDocumentUrl || '',
+                scannedPassportUrl: passportFileUrl || ownerDto.scannedPassportUrl || '',
+                facialPhotographUrl: ownerDto.facialPhotographUrl || '',
+                nationality: ownerDto.nationality || '',
+                // Campos opcionales que pueden venir del frontend
+                ssnOrItin: ssnItin || ownerDto.ssnItin || null,
+                nationalTaxId: cuit || ownerDto.cuit || null,
+                percentageOfParticipation: participationPercentage || ownerDto.participationPercentage || 0,
+                // Campos requeridos de Member (valores por defecto si no vienen)
+                email: ownerDto.email || '',
+                phoneNumber: ownerDto.phoneNumber || '',
+                memberAddress: ownerDto.memberAddress || {
+                  street: '',
+                  city: '',
+                  stateRegion: '',
+                  postalCode: '',
+                  country: ''
+                },
+                validatesBankAccount: false,
+                ...(parsedDate ? { dateOfBirth: parsedDate } : {}),
+              };
+              
+              return this.memberRepo.create(memberData);
+            }) as unknown as Member[];
+            
+            await queryRunner.manager.save(Member, membersToSave);
+          }
+        }
       }
 
       await queryRunner.commitTransaction();
+
+      // Mover archivos de request/{servicio}/ a request/{servicio}/{uuid}/ si existen
+      // Esto organiza los archivos subidos antes de crear el request
+      if (savedRequest.uuid && createRequestDto.type) {
+        try {
+          this.logger.log(`Moviendo archivos para request ${savedRequest.uuid} de tipo ${createRequestDto.type}`);
+          const moveResult = await this.uploadFileService.moveFilesToRequestFolder(
+            createRequestDto.type,
+            savedRequest.uuid,
+          );
+          
+          if (moveResult.moved > 0) {
+            this.logger.log(`Archivos movidos: ${moveResult.moved} exitosos, ${moveResult.errors} errores`);
+            
+            // Actualizar URLs en la base de datos después de mover los archivos
+            await this.updateFileUrlsAfterMove(createRequestDto.type, savedRequest.uuid, savedRequest.id);
+          }
+        } catch (error) {
+          // No fallar la creación del request si falla el movimiento de archivos
+          this.logger.error(`Error al mover archivos para request ${savedRequest.uuid}:`, error);
+        }
+      }
 
       // Retornar la solicitud completa con relaciones
       const result = await this.findOne(savedRequest.id);
@@ -1077,10 +1654,57 @@ export class RequestsService {
         }
 
         if (updateRequestDto.aperturaLlcData) {
-          Object.assign(aperturaRequest, updateRequestDto.aperturaLlcData);
+          const { members, ...aperturaDataFields } = updateRequestDto.aperturaLlcData as any;
+          
+          // Actualizar campos de apertura (sin members)
+          Object.assign(aperturaRequest, aperturaDataFields);
         }
 
         await queryRunner.manager.save(AperturaLlcRequest, aperturaRequest);
+
+        // Procesar members si se proporcionan
+        if (updateRequestDto.aperturaLlcData) {
+          const aperturaData = updateRequestDto.aperturaLlcData as any;
+          const members = aperturaData.members || [];
+          
+          // Solo procesar si estamos en el paso 2 o superior y hay datos
+          if (updateRequestDto.currentStepNumber !== undefined && updateRequestDto.currentStepNumber >= 2 && members.length > 0) {
+            // Eliminar miembros existentes para reemplazarlos con los nuevos
+            const existingMembers = await this.memberRepo.find({
+              where: { requestId: id },
+            });
+            if (existingMembers.length > 0) {
+              await queryRunner.manager.remove(Member, existingMembers);
+            }
+
+            // Filtrar miembros que tengan al menos algún dato válido
+            const validMembers = members.filter((m: any) => 
+              m.firstName || m.name || m.lastName || m.email || m.passportNumber
+            );
+            
+            if (validMembers.length > 0) {
+              // Validar que solo un miembro valide la cuenta bancaria
+              const validators = validMembers.filter((m: any) => m.validatesBankAccount);
+              if (validators.length > 1) {
+                throw new BadRequestException(
+                  'Solo un miembro puede validar la cuenta bancaria',
+                );
+              }
+
+              const membersToSave = validMembers.map((memberDto: any) => {
+                const { dateOfBirth, ...memberDataWithoutDate } = memberDto;
+                const parsedDate = this.parseDate(dateOfBirth);
+                return this.memberRepo.create({
+                  requestId: id,
+                  ...memberDataWithoutDate,
+                  ...(parsedDate ? { dateOfBirth: parsedDate } : {}),
+                });
+              }) as unknown as Member[];
+              
+              await queryRunner.manager.save(Member, membersToSave);
+            }
+          }
+        }
       } else if (request.type === 'renovacion-llc') {
         const renovacionRequest = await this.renovacionRepo.findOne({
           where: { requestId: id },
@@ -1144,14 +1768,13 @@ export class RequestsService {
           renovacionRequest,
         );
 
-        // Procesar owners/members si se proporcionan
+        // Procesar members si se proporcionan (homologado: usar 'members' igual que apertura-llc)
         if (updateRequestDto.renovacionLlcData) {
           const renovacionData = updateRequestDto.renovacionLlcData as any;
-          // El frontend puede enviar 'owners' o 'members', ambos se tratan igual
-          const ownersOrMembers = renovacionData.owners || renovacionData.members || [];
+          const members = renovacionData.members || [];
           
           // Solo procesar si estamos en el paso 2 o superior y hay datos
-          if (updateRequestDto.currentStepNumber !== undefined && updateRequestDto.currentStepNumber >= 2 && ownersOrMembers.length > 0) {
+          if (updateRequestDto.currentStepNumber !== undefined && updateRequestDto.currentStepNumber >= 2 && members.length > 0) {
             // Eliminar miembros existentes para reemplazarlos con los nuevos
             const existingMembers = await this.memberRepo.find({
               where: { requestId: id },
@@ -1161,7 +1784,7 @@ export class RequestsService {
             }
 
             // Filtrar miembros que tengan al menos algún dato válido
-            const validMembers = ownersOrMembers.filter((m: any) => 
+            const validMembers = members.filter((m: any) => 
               m.firstName || m.name || m.lastName || m.email || m.passportNumber
             );
             
@@ -1235,21 +1858,470 @@ export class RequestsService {
           cuentaRequest.currentStepNumber = updateRequestDto.currentStepNumber;
         }
 
+        // Determinar qué secciones se deben procesar según currentStepNumber
+        // Declarar fuera de los bloques if para que esté disponible en todos los bloques anidados
+        const currentStep = updateRequestDto.currentStepNumber || cuentaRequest.currentStepNumber || 1;
+
         if (updateRequestDto.cuentaBancariaData) {
-          const cuentaData = { ...updateRequestDto.cuentaBancariaData };
-          // Convertir fecha si viene
-          if (cuentaData.firstRegistrationDate) {
-            cuentaData.firstRegistrationDate = new Date(
-              cuentaData.firstRegistrationDate as any,
-            ) as any;
+          const { owners, validators, ...cuentaDataFields } = updateRequestDto.cuentaBancariaData as any;
+          const cuentaData: any = { ...cuentaDataFields };
+          
+          // Eliminar campos de secciones que aún no se han completado
+          // Sección 3 (validador) - solo procesar si currentStepNumber >= 3
+          if (currentStep < 3) {
+            // Eliminar todos los campos del validador si estamos antes de la sección 3
+            delete cuentaData.validatorFirstName;
+            delete cuentaData.validatorLastName;
+            delete cuentaData.validatorDateOfBirth;
+            delete cuentaData.validatorNationality;
+            delete cuentaData.validatorCitizenship;
+            delete cuentaData.validatorPassportNumber;
+            delete cuentaData.validatorPassportUrl;
+            delete cuentaData.validatorScannedPassportUrl;
+            delete cuentaData.validatorWorkEmail;
+            delete cuentaData.validatorUseEmailForRelayLogin;
+            delete cuentaData.validatorPhone;
+            delete cuentaData.validatorCanReceiveSMS;
+            delete cuentaData.validatorIsUSResident;
+            delete cuentaData.validatorTitle;
+            delete cuentaData.validatorIncomeSource;
+            delete cuentaData.validatorAnnualIncome;
           }
-          Object.assign(cuentaRequest, cuentaData);
+          
+          // Sección 4 (dirección personal) - solo procesar si currentStepNumber >= 4
+          if (currentStep < 4) {
+            delete cuentaData.ownerPersonalStreet;
+            delete cuentaData.ownerPersonalUnit;
+            delete cuentaData.ownerPersonalCity;
+            delete cuentaData.ownerPersonalState;
+            delete cuentaData.ownerPersonalCountry;
+            delete cuentaData.ownerPersonalPostalCode;
+            delete cuentaData.ownerPersonalAddress;
+            delete cuentaData.serviceBillUrl;
+            delete cuentaData.proofOfAddressUrl;
+          }
+          
+          // Sección 5 (tipo de LLC) - solo procesar si currentStepNumber >= 5
+          if (currentStep < 5) {
+            delete cuentaData.isMultiMember;
+            delete cuentaData.llcType;
+          }
+          
+          // Sección 6 (owners) - se procesa por separado, no debe estar en cuentaData
+          // (ya se eliminó en la desestructuración)
+          
+          // Convertir fecha si viene, o eliminar si está vacía
+          if (cuentaData.firstRegistrationDate !== undefined) {
+            if (cuentaData.firstRegistrationDate && cuentaData.firstRegistrationDate.trim() !== '') {
+              const parsedDate = this.parseDate(cuentaData.firstRegistrationDate);
+              if (parsedDate) {
+                cuentaData.firstRegistrationDate = parsedDate;
+              } else {
+                // Si no se puede parsear, eliminar el campo para no intentar guardar un valor inválido
+                delete cuentaData.firstRegistrationDate;
+              }
+            } else {
+              // Si está vacío o es cadena vacía, eliminar el campo (no actualizar)
+              delete cuentaData.firstRegistrationDate;
+            }
+          }
+          
+          // Mapear campos del frontend a nombres de la entidad
+          // articlesOrCertificateUrl -> certificateOfConstitutionOrArticlesUrl
+          if (cuentaData.articlesOrCertificateUrl !== undefined) {
+            cuentaData.certificateOfConstitutionOrArticlesUrl = cuentaData.articlesOrCertificateUrl;
+            delete cuentaData.articlesOrCertificateUrl;
+          }
+          
+          // serviceBillUrl -> proofOfAddressUrl
+          if (cuentaData.serviceBillUrl !== undefined) {
+            cuentaData.proofOfAddressUrl = cuentaData.serviceBillUrl;
+            delete cuentaData.serviceBillUrl;
+          }
+          
+          // legalBusinessName -> legalBusinessIdentifier
+          if (cuentaData.legalBusinessName !== undefined) {
+            cuentaData.legalBusinessIdentifier = cuentaData.legalBusinessName;
+            delete cuentaData.legalBusinessName;
+          }
+          
+          // einNumber -> ein
+          if (cuentaData.einNumber !== undefined) {
+            cuentaData.ein = cuentaData.einNumber;
+            delete cuentaData.einNumber;
+          }
+          
+          // briefDescription -> economicActivity
+          if (cuentaData.briefDescription !== undefined) {
+            cuentaData.economicActivity = cuentaData.briefDescription;
+            delete cuentaData.briefDescription;
+          }
+          
+          // Construir registeredAgentAddress desde campos individuales (sección 2)
+          // Guardar registeredAgentState por separado además de la dirección completa
+          if (cuentaData.registeredAgentState !== undefined) {
+            cuentaData.registeredAgentState = cuentaData.registeredAgentState || '';
+          }
+          
+          if (cuentaData.registeredAgentStreet !== undefined || cuentaData.registeredAgentCity !== undefined || cuentaData.registeredAgentState !== undefined) {
+            cuentaData.registeredAgentAddress = [
+              cuentaData.registeredAgentStreet || '',
+              cuentaData.registeredAgentUnit || '',
+              cuentaData.registeredAgentCity || '',
+              cuentaData.registeredAgentState || '',
+              cuentaData.registeredAgentZipCode || '',
+              cuentaData.registeredAgentCountry || ''
+            ].filter(Boolean).join(', ');
+            
+            // Eliminar campos individuales después de construir la dirección (excepto registeredAgentState que se guarda por separado)
+            delete cuentaData.registeredAgentStreet;
+            delete cuentaData.registeredAgentUnit;
+            delete cuentaData.registeredAgentCity;
+            // NO eliminar registeredAgentState - se guarda por separado
+            delete cuentaData.registeredAgentZipCode;
+            delete cuentaData.registeredAgentCountry;
+          }
+          
+          // Construir ownerPersonalAddress desde campos individuales (sección 4)
+          if (cuentaData.ownerPersonalStreet !== undefined || cuentaData.ownerPersonalCity !== undefined || cuentaData.ownerPersonalState !== undefined) {
+            cuentaData.ownerPersonalAddress = {
+              street: cuentaData.ownerPersonalStreet || '',
+              unit: cuentaData.ownerPersonalUnit || '',
+              city: cuentaData.ownerPersonalCity || '',
+              state: cuentaData.ownerPersonalState || '',
+              postalCode: cuentaData.ownerPersonalPostalCode || '',
+              country: cuentaData.ownerPersonalCountry || ''
+            };
+            
+            // Eliminar campos individuales después de construir la dirección
+            delete cuentaData.ownerPersonalStreet;
+            delete cuentaData.ownerPersonalUnit;
+            delete cuentaData.ownerPersonalCity;
+            delete cuentaData.ownerPersonalState;
+            delete cuentaData.ownerPersonalPostalCode;
+            delete cuentaData.ownerPersonalCountry;
+          }
+          
+          // Guardar campos de la sección 2 (incorporationState, incorporationMonthYear, countriesWhereBusiness)
+          // Convertir countriesWhereBusiness de array a string separado por comas si viene como array
+          if (cuentaData.countriesWhereBusiness !== undefined) {
+            if (Array.isArray(cuentaData.countriesWhereBusiness)) {
+              cuentaData.countriesWhereBusiness = cuentaData.countriesWhereBusiness.length > 0 
+                ? cuentaData.countriesWhereBusiness.join(', ') 
+                : '';
+            } else if (cuentaData.countriesWhereBusiness === '' || cuentaData.countriesWhereBusiness === null) {
+              cuentaData.countriesWhereBusiness = '';
+            }
+            // Si ya es string, mantenerlo tal cual
+          }
+          
+          // Guardar incorporationState e incorporationMonthYear si vienen
+          if (cuentaData.incorporationState !== undefined) {
+            cuentaData.incorporationState = cuentaData.incorporationState || '';
+          }
+          
+          if (cuentaData.incorporationMonthYear !== undefined) {
+            cuentaData.incorporationMonthYear = cuentaData.incorporationMonthYear || '';
+          }
+          
+          // Mapear isMultiMember a llcType
+          // 'yes' -> 'multi', 'no' -> 'single'
+          // Solo mapear si isMultiMember tiene un valor válido Y estamos en la sección 5 o superior
+          // El campo isMultiMember solo se completa en la sección 5, antes de eso no debe incluirse llcType
+          // El constraint check_cuenta_llc_type solo permite 'single' o 'multi', no NULL ni cadena vacía
+          // Reutilizar currentStep ya declarado arriba (línea 1755)
+          const isSection5OrHigher = currentStep >= 5;
+          
+          if (isSection5OrHigher && cuentaData.isMultiMember !== undefined && cuentaData.isMultiMember !== '' && cuentaData.isMultiMember !== null) {
+            // Solo mapear si estamos en la sección 5 o superior y hay un valor válido
+            if (cuentaData.isMultiMember === 'yes') {
+              cuentaData.llcType = 'multi';
+            } else if (cuentaData.isMultiMember === 'no') {
+              cuentaData.llcType = 'single';
+            }
+            delete cuentaData.isMultiMember;
+          } else {
+            // Si no estamos en la sección 5 o superior, o isMultiMember no tiene valor válido,
+            // eliminar llcType si existe para que no se intente actualizar con un valor inválido
+            delete cuentaData.llcType;
+            delete cuentaData.isMultiMember;
+          }
+          
+          // Si llcType viene como null o undefined, eliminarlo (no se ha completado la sección 5)
+          // Nota: llcType no puede ser cadena vacía según el tipo, solo 'single' | 'multi' | undefined
+          if (cuentaData.llcType === null || cuentaData.llcType === undefined) {
+            delete cuentaData.llcType;
+          }
+          
+          // Solo asignar llcType si tiene un valor válido ('single' o 'multi')
+          // Esto evita que se intente actualizar con un valor inválido
+          const dataToAssign = { ...cuentaData };
+          if (dataToAssign.llcType !== 'single' && dataToAssign.llcType !== 'multi') {
+            delete dataToAssign.llcType;
+          }
+          
+          // Asegurarse de que los campos del validador no estén en dataToAssign si currentStep < 3
+          // Esto previene que se asignen cadenas vacías a campos de tipo date
+          if (currentStep < 3) {
+            delete dataToAssign.validatorFirstName;
+            delete dataToAssign.validatorLastName;
+            delete dataToAssign.validatorDateOfBirth;
+            delete dataToAssign.validatorNationality;
+            delete dataToAssign.validatorCitizenship;
+            delete dataToAssign.validatorPassportNumber;
+            delete dataToAssign.validatorPassportUrl;
+            delete dataToAssign.validatorScannedPassportUrl;
+            delete dataToAssign.validatorWorkEmail;
+            delete dataToAssign.validatorUseEmailForRelayLogin;
+            delete dataToAssign.validatorPhone;
+            delete dataToAssign.validatorCanReceiveSMS;
+            delete dataToAssign.validatorIsUSResident;
+            delete dataToAssign.validatorTitle;
+            delete dataToAssign.validatorIncomeSource;
+            delete dataToAssign.validatorAnnualIncome;
+          }
+          
+          Object.assign(cuentaRequest, dataToAssign);
         }
 
         await queryRunner.manager.save(CuentaBancariaRequest, cuentaRequest);
+
+        // Procesar validator: guardar directamente en CuentaBancariaRequest
+        // Solo procesar si estamos en la sección 3 o superior
+        if (updateRequestDto.cuentaBancariaData) {
+          const cuentaDataUpdate = updateRequestDto.cuentaBancariaData as any;
+          const validators = cuentaDataUpdate.validators || [];
+          // Reutilizar currentStep ya declarado arriba (línea 1755)
+          
+          if (currentStep >= 3) {
+            // Los campos del validador pueden venir en validators[] o directamente en cuentaData
+            // Priorizar validators[] si existe, sino usar cuentaData directamente
+            let validatorData: any = null;
+            
+            if (validators && validators.length > 0) {
+              validatorData = validators[0]; // Solo hay un validador
+            } else {
+              // Si no hay validators[], verificar si los campos vienen directamente en cuentaData
+              if (cuentaDataUpdate.validatorFirstName || cuentaDataUpdate.validatorLastName || 
+                  cuentaDataUpdate.validatorDateOfBirth || cuentaDataUpdate.validatorPassportNumber ||
+                  cuentaDataUpdate.validatorPassportUrl || cuentaDataUpdate.validatorScannedPassportUrl ||
+                  cuentaDataUpdate.isUSResident || cuentaDataUpdate.validatorIsUSResident) {
+                validatorData = cuentaDataUpdate;
+              }
+            }
+            
+            if (validatorData) {
+              // Mapear campos del frontend a campos del validador en cuentaRequest
+              // Solo asignar si el campo tiene un valor válido (no cadena vacía)
+              if (validatorData.validatorFirstName !== undefined && validatorData.validatorFirstName !== '') {
+                cuentaRequest.validatorFirstName = validatorData.validatorFirstName || validatorData.firstName || '';
+              }
+              if (validatorData.validatorLastName !== undefined && validatorData.validatorLastName !== '') {
+                cuentaRequest.validatorLastName = validatorData.validatorLastName || validatorData.lastName || '';
+              }
+              if (validatorData.validatorNationality !== undefined && validatorData.validatorNationality !== '') {
+                cuentaRequest.validatorNationality = validatorData.validatorNationality || validatorData.nationality || '';
+              }
+              if (validatorData.validatorCitizenship !== undefined && validatorData.validatorCitizenship !== '') {
+                cuentaRequest.validatorCitizenship = validatorData.validatorCitizenship || validatorData.citizenship || '';
+              }
+              if (validatorData.validatorPassportNumber !== undefined && validatorData.validatorPassportNumber !== '') {
+                cuentaRequest.validatorPassportNumber = validatorData.validatorPassportNumber || validatorData.passportNumber || '';
+              }
+              // Guardar URL del pasaporte - puede venir como validatorPassportUrl o validatorScannedPassportUrl
+              // Priorizar validatorData, pero si está vacío, verificar en cuentaDataUpdate
+              const passportUrl = (validatorData.validatorPassportUrl && validatorData.validatorPassportUrl !== '') 
+                ? validatorData.validatorPassportUrl 
+                : (validatorData.scannedPassportUrl && validatorData.scannedPassportUrl !== '')
+                  ? validatorData.scannedPassportUrl
+                  : (cuentaDataUpdate.validatorPassportUrl && cuentaDataUpdate.validatorPassportUrl !== '')
+                    ? cuentaDataUpdate.validatorPassportUrl
+                    : (cuentaDataUpdate.validatorScannedPassportUrl && cuentaDataUpdate.validatorScannedPassportUrl !== '')
+                      ? cuentaDataUpdate.validatorScannedPassportUrl
+                      : '';
+              
+              if (passportUrl !== '') {
+                cuentaRequest.validatorScannedPassportUrl = passportUrl;
+              }
+              if (validatorData.validatorWorkEmail !== undefined && validatorData.validatorWorkEmail !== '') {
+                cuentaRequest.validatorWorkEmail = validatorData.validatorWorkEmail || validatorData.workEmail || '';
+              }
+              if (validatorData.validatorPhone !== undefined && validatorData.validatorPhone !== '') {
+                cuentaRequest.validatorPhone = validatorData.validatorPhone || validatorData.phone || '';
+              }
+              
+              // Campos adicionales del validador
+              if (validatorData.validatorTitle !== undefined && validatorData.validatorTitle !== '') {
+                cuentaRequest.validatorTitle = validatorData.validatorTitle || '';
+              }
+              if (validatorData.validatorIncomeSource !== undefined && validatorData.validatorIncomeSource !== '') {
+                cuentaRequest.validatorIncomeSource = validatorData.validatorIncomeSource || '';
+              }
+              if (validatorData.validatorAnnualIncome !== undefined && validatorData.validatorAnnualIncome !== '') {
+                // Convertir a número si viene como string
+                const annualIncome = typeof validatorData.validatorAnnualIncome === 'string' 
+                  ? parseFloat(validatorData.validatorAnnualIncome) 
+                  : validatorData.validatorAnnualIncome;
+                if (!isNaN(annualIncome)) {
+                  cuentaRequest.validatorAnnualIncome = annualIncome;
+                }
+              }
+              
+              // Campos booleanos
+              if (validatorData.useEmailForRelayLogin !== undefined) {
+                cuentaRequest.validatorUseEmailForRelayLogin = validatorData.useEmailForRelayLogin || false;
+              }
+              if (validatorData.canReceiveSMS !== undefined) {
+                cuentaRequest.validatorCanReceiveSMS = validatorData.canReceiveSMS || false;
+              }
+              // Guardar isUSResident - puede venir como 'yes'/'no' o boolean
+              // Priorizar validatorData, pero si no está definido, verificar en cuentaDataUpdate
+              const isUSResidentValue = validatorData.isUSResident !== undefined 
+                ? validatorData.isUSResident 
+                : cuentaDataUpdate.isUSResident !== undefined
+                  ? cuentaDataUpdate.isUSResident
+                  : undefined;
+              
+              if (isUSResidentValue !== undefined) {
+                cuentaRequest.validatorIsUSResident = isUSResidentValue === 'yes' || isUSResidentValue === true;
+              }
+              
+              // Parsear fecha de nacimiento - solo si tiene un valor válido (no cadena vacía)
+              const dateOfBirth = validatorData.validatorDateOfBirth || validatorData.dateOfBirth;
+              if (dateOfBirth && dateOfBirth.trim() !== '') {
+                const parsedDate = this.parseDate(dateOfBirth);
+                if (parsedDate) {
+                  cuentaRequest.validatorDateOfBirth = parsedDate;
+                } else {
+                  // Si no se puede parsear, establecer a null en lugar de cadena vacía
+                  cuentaRequest.validatorDateOfBirth = null;
+                }
+              } else if (dateOfBirth === '' || dateOfBirth === null || dateOfBirth === undefined) {
+                // Si viene como cadena vacía, no actualizar (mantener el valor existente o null)
+                // No asignar nada para evitar que se intente guardar una cadena vacía
+              }
+            } else {
+              // Si no hay validatorData pero hay campos directamente en cuentaDataUpdate, guardarlos
+              if (currentStep >= 3) {
+                const passportUrlDirect = (cuentaDataUpdate.validatorPassportUrl && cuentaDataUpdate.validatorPassportUrl !== '') 
+                  ? cuentaDataUpdate.validatorPassportUrl
+                  : (cuentaDataUpdate.validatorScannedPassportUrl && cuentaDataUpdate.validatorScannedPassportUrl !== '')
+                    ? cuentaDataUpdate.validatorScannedPassportUrl
+                    : '';
+                
+                if (passportUrlDirect !== '') {
+                  cuentaRequest.validatorScannedPassportUrl = passportUrlDirect;
+                }
+                
+                const isUSResidentDirect = cuentaDataUpdate.isUSResident !== undefined
+                  ? cuentaDataUpdate.isUSResident
+                  : undefined;
+                
+                if (isUSResidentDirect !== undefined) {
+                  cuentaRequest.validatorIsUSResident = isUSResidentDirect === 'yes' || isUSResidentDirect === true;
+                }
+              }
+            }
+          } else {
+            // Si estamos antes de la sección 3, asegurarse de que los campos del validador no se actualicen
+            // (ya se eliminaron de cuentaData arriba)
+          }
+          
+          // Guardar cuentaRequest después de actualizar los campos del validador
+          await queryRunner.manager.save(CuentaBancariaRequest, cuentaRequest);
+        }
+        
+        // Procesar owners (ahora como Members) si se proporcionan
+        if (updateRequestDto.cuentaBancariaData) {
+          const cuentaDataUpdate = updateRequestDto.cuentaBancariaData as any;
+          const owners = cuentaDataUpdate.owners || [];
+          
+          // Procesar owners (ahora como Members) si estamos en el paso 6 o superior y hay datos
+          if (updateRequestDto.currentStepNumber !== undefined && updateRequestDto.currentStepNumber >= 6 && owners.length > 0) {
+            // Eliminar members existentes para reemplazarlos con los nuevos
+            const existingMembers = await this.memberRepo.find({
+              where: { requestId: id },
+            });
+            if (existingMembers.length > 0) {
+              await queryRunner.manager.remove(Member, existingMembers);
+            }
+
+            // Filtrar owners que tengan al menos algún dato válido
+            const validOwners = owners.filter((o: any) => 
+              o.firstName || o.lastName || o.passportNumber
+            );
+            
+            if (validOwners.length > 0) {
+              const membersToSave = validOwners.map((ownerDto: any) => {
+                const { dateOfBirth, passportFileUrl, lastName, passportNumber, ssnItin, cuit, participationPercentage, ...ownerDataWithoutDate } = ownerDto;
+                const parsedDate = this.parseDate(dateOfBirth);
+                
+                // Mapear campos del frontend a la estructura de Member
+                const memberData: any = {
+                  requestId: id,
+                  firstName: ownerDto.firstName || '',
+                  lastName: lastName || ownerDto.lastName || '',
+                  // Separar lastName en paternal y maternal si es necesario
+                  paternalLastName: ownerDto.paternalLastName || '',
+                  maternalLastName: ownerDto.maternalLastName || '',
+                  // Usar passportNumber o passportOrNationalId
+                  passportNumber: passportNumber || ownerDto.passportNumber || '',
+                  passportOrNationalId: passportNumber || ownerDto.passportOrNationalId || ownerDto.passportNumber || '',
+                  // Mapear passportFileUrl a identityDocumentUrl y scannedPassportUrl
+                  identityDocumentUrl: passportFileUrl || ownerDto.identityDocumentUrl || '',
+                  scannedPassportUrl: passportFileUrl || ownerDto.scannedPassportUrl || '',
+                  facialPhotographUrl: ownerDto.facialPhotographUrl || '',
+                  nationality: ownerDto.nationality || '',
+                  // Campos opcionales que pueden venir del frontend
+                  ssnOrItin: ssnItin || ownerDto.ssnItin || null,
+                  nationalTaxId: cuit || ownerDto.cuit || null,
+                  percentageOfParticipation: participationPercentage || ownerDto.participationPercentage || 0,
+                  // Campos requeridos de Member (valores por defecto si no vienen)
+                  email: ownerDto.email || '',
+                  phoneNumber: ownerDto.phoneNumber || '',
+                  memberAddress: ownerDto.memberAddress || {
+                    street: '',
+                    city: '',
+                    stateRegion: '',
+                    postalCode: '',
+                    country: ''
+                  },
+                  validatesBankAccount: false,
+                  ...(parsedDate ? { dateOfBirth: parsedDate } : {}),
+                };
+                
+                return this.memberRepo.create(memberData);
+              }) as unknown as Member[];
+              
+              await queryRunner.manager.save(Member, membersToSave);
+            }
+          }
+        }
       }
 
       await queryRunner.commitTransaction();
+
+      // Mover archivos de request/{servicio}/ a request/{servicio}/{uuid}/ si existen y actualizar URLs
+      // Esto organiza los archivos subidos antes de crear el request o cuando se actualiza un request existente
+      if (request.uuid && request.type) {
+        try {
+          this.logger.log(`Moviendo archivos para request ${request.uuid} de tipo ${request.type}`);
+          const moveResult = await this.uploadFileService.moveFilesToRequestFolder(
+            request.type,
+            request.uuid,
+          );
+          
+          if (moveResult.moved > 0) {
+            this.logger.log(`Archivos movidos: ${moveResult.moved} exitosos, ${moveResult.errors} errores`);
+            
+            // Actualizar URLs en la base de datos después de mover los archivos
+            await this.updateFileUrlsAfterMove(request.type, request.uuid, id);
+          }
+        } catch (error) {
+          // No fallar la actualización del request si falla el movimiento de archivos
+          this.logger.error(`Error al mover archivos para request ${request.uuid}:`, error);
+        }
+      }
 
       // Retornar la solicitud actualizada con relaciones
       return this.findOne(id);
@@ -1306,13 +2378,14 @@ export class RequestsService {
         );
       }
 
-      // Verificar que la solicitud es de tipo LLC
+      // Verificar que la solicitud es de tipo LLC o cuenta-bancaria
       if (
         request.type !== 'apertura-llc' &&
-        request.type !== 'renovacion-llc'
+        request.type !== 'renovacion-llc' &&
+        request.type !== 'cuenta-bancaria'
       ) {
         throw new BadRequestException(
-          'Los miembros solo pueden agregarse a solicitudes de Apertura LLC o Renovación LLC',
+          'Los miembros solo pueden agregarse a solicitudes de Apertura LLC, Renovación LLC o Cuenta Bancaria',
         );
       }
 
@@ -1498,358 +2571,11 @@ export class RequestsService {
     };
   }
 
-  // ========== MÉTODOS DE PROPIETARIOS (CUENTA BANCARIA) ==========
-
-  async findOwnersByRequest(requestId: number) {
-    // Verificar que la solicitud existe y es de tipo cuenta-bancaria
-    const request = await this.requestRepository.findOne({
-      where: { id: requestId },
-    });
-    if (!request) {
-      throw new NotFoundException(
-        `Solicitud con ID ${requestId} no encontrada`,
-      );
-    }
-    if (request.type !== 'cuenta-bancaria') {
-      throw new BadRequestException(
-        'Los propietarios solo pueden agregarse a solicitudes de Cuenta Bancaria',
-      );
-    }
-
-    return this.ownerRepo.find({
-      where: { requestId },
-      order: { createdAt: 'ASC' },
-    });
-  }
-
-  async createOwner(requestId: number, createOwnerDto: CreateOwnerDto) {
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
-
-    try {
-      // Verificar que la solicitud existe y es de tipo cuenta-bancaria
-      const request = await this.requestRepository.findOne({
-        where: { id: requestId },
-      });
-      if (!request) {
-        throw new NotFoundException(
-          `Solicitud con ID ${requestId} no encontrada`,
-        );
-      }
-      if (request.type !== 'cuenta-bancaria') {
-        throw new BadRequestException(
-          'Los propietarios solo pueden agregarse a solicitudes de Cuenta Bancaria',
-        );
-      }
-
-      // Crear el propietario
-      const { dateOfBirth, ...ownerDataWithoutDate } = createOwnerDto;
-      const parsedDate = this.parseDate(dateOfBirth);
-      const owner = this.ownerRepo.create({
-        requestId,
-        ...ownerDataWithoutDate,
-        ...(parsedDate ? { dateOfBirth: parsedDate } : {}),
-      });
-
-      const savedOwner = await queryRunner.manager.save(
-        BankAccountOwner,
-        owner,
-      );
-
-      await queryRunner.commitTransaction();
-      return savedOwner;
-    } catch (error) {
-      await queryRunner.rollbackTransaction();
-      if (
-        error instanceof NotFoundException ||
-        error instanceof BadRequestException
-      ) {
-        throw error;
-      }
-      console.error('Error al crear propietario:', error);
-      throw new InternalServerErrorException(
-        'Error al crear el propietario. Por favor, intente nuevamente.',
-      );
-    } finally {
-      await queryRunner.release();
-    }
-  }
-
-  async updateOwner(
-    requestId: number,
-    ownerId: number,
-    updateOwnerDto: UpdateOwnerDto,
-  ) {
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
-
-    try {
-      // Verificar que la solicitud existe
-      const request = await this.requestRepository.findOne({
-        where: { id: requestId },
-      });
-      if (!request) {
-        throw new NotFoundException(
-          `Solicitud con ID ${requestId} no encontrada`,
-        );
-      }
-
-      // Buscar el propietario
-      const owner = await this.ownerRepo.findOne({
-        where: { id: ownerId, requestId },
-      });
-      if (!owner) {
-        throw new NotFoundException(
-          `Propietario con ID ${ownerId} no encontrado en la solicitud ${requestId}`,
-        );
-      }
-
-      // Actualizar campos
-      if (updateOwnerDto.dateOfBirth) {
-        const parsedDate = this.parseDate(updateOwnerDto.dateOfBirth as string);
-        if (parsedDate) {
-          updateOwnerDto.dateOfBirth = parsedDate as any;
-        } else {
-          delete updateOwnerDto.dateOfBirth;
-        }
-      }
-      Object.assign(owner, updateOwnerDto);
-
-      const updatedOwner = await queryRunner.manager.save(
-        BankAccountOwner,
-        owner,
-      );
-
-      await queryRunner.commitTransaction();
-      return updatedOwner;
-    } catch (error) {
-      await queryRunner.rollbackTransaction();
-      if (
-        error instanceof NotFoundException ||
-        error instanceof BadRequestException
-      ) {
-        throw error;
-      }
-      console.error('Error al actualizar propietario:', error);
-      throw new InternalServerErrorException(
-        'Error al actualizar el propietario. Por favor, intente nuevamente.',
-      );
-    } finally {
-      await queryRunner.release();
-    }
-  }
-
-  async deleteOwner(requestId: number, ownerId: number) {
-    // Verificar que la solicitud existe
-    const request = await this.requestRepository.findOne({
-      where: { id: requestId },
-    });
-    if (!request) {
-      throw new NotFoundException(
-        `Solicitud con ID ${requestId} no encontrada`,
-      );
-    }
-
-    // Buscar el propietario
-    const owner = await this.ownerRepo.findOne({
-      where: { id: ownerId, requestId },
-    });
-    if (!owner) {
-      throw new NotFoundException(
-        `Propietario con ID ${ownerId} no encontrado en la solicitud ${requestId}`,
-      );
-    }
-
-    await this.ownerRepo.remove(owner);
-    return { message: 'Propietario eliminado correctamente' };
-  }
-
-  // ========== MÉTODOS DE VALIDADOR DE CUENTA BANCARIA ==========
-
-  async findBankAccountValidator(requestId: number) {
-    // Verificar que la solicitud existe y es de tipo cuenta-bancaria
-    const request = await this.requestRepository.findOne({
-      where: { id: requestId },
-    });
-    if (!request) {
-      throw new NotFoundException(
-        `Solicitud con ID ${requestId} no encontrada`,
-      );
-    }
-    if (request.type !== 'cuenta-bancaria') {
-      throw new BadRequestException(
-        'El validador solo puede agregarse a solicitudes de Cuenta Bancaria',
-      );
-    }
-
-    return this.validatorRepo.findOne({
-      where: { requestId },
-    });
-  }
-
-  async createOrUpdateBankAccountValidator(
-    requestId: number,
-    createValidatorDto: CreateBankAccountValidatorDto,
-  ) {
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
-
-    try {
-      // Verificar que la solicitud existe y es de tipo cuenta-bancaria
-      const request = await this.requestRepository.findOne({
-        where: { id: requestId },
-      });
-      if (!request) {
-        throw new NotFoundException(
-          `Solicitud con ID ${requestId} no encontrada`,
-        );
-      }
-      if (request.type !== 'cuenta-bancaria') {
-        throw new BadRequestException(
-          'El validador solo puede agregarse a solicitudes de Cuenta Bancaria',
-        );
-      }
-
-      // Buscar si ya existe un validador
-      let validator = await this.validatorRepo.findOne({
-        where: { requestId },
-      });
-
-      const { dateOfBirth, ...validatorDataWithoutDate } = createValidatorDto;
-      const parsedDate = this.parseDate(dateOfBirth);
-      if (validator) {
-        // Actualizar existente
-        Object.assign(validator, {
-          ...validatorDataWithoutDate,
-          ...(parsedDate ? { dateOfBirth: parsedDate } : {}),
-        });
-        validator = await queryRunner.manager.save(
-          BankAccountValidator,
-          validator,
-        );
-      } else {
-        // Crear nuevo
-        validator = this.validatorRepo.create({
-          requestId,
-          ...validatorDataWithoutDate,
-          ...(parsedDate ? { dateOfBirth: parsedDate } : {}),
-        });
-        validator = await queryRunner.manager.save(
-          BankAccountValidator,
-          validator,
-        );
-      }
-
-      await queryRunner.commitTransaction();
-      return validator;
-    } catch (error) {
-      await queryRunner.rollbackTransaction();
-      if (
-        error instanceof NotFoundException ||
-        error instanceof BadRequestException
-      ) {
-        throw error;
-      }
-      console.error('Error al crear/actualizar validador:', error);
-      throw new InternalServerErrorException(
-        'Error al crear/actualizar el validador. Por favor, intente nuevamente.',
-      );
-    } finally {
-      await queryRunner.release();
-    }
-  }
-
-  async updateBankAccountValidator(
-    requestId: number,
-    updateValidatorDto: UpdateBankAccountValidatorDto,
-  ) {
-    const queryRunner = this.dataSource.createQueryRunner();
-    await queryRunner.connect();
-    await queryRunner.startTransaction();
-
-    try {
-      // Verificar que la solicitud existe
-      const request = await this.requestRepository.findOne({
-        where: { id: requestId },
-      });
-      if (!request) {
-        throw new NotFoundException(
-          `Solicitud con ID ${requestId} no encontrada`,
-        );
-      }
-
-      // Buscar el validador
-      const validator = await this.validatorRepo.findOne({
-        where: { requestId },
-      });
-      if (!validator) {
-        throw new NotFoundException(
-          `Validador no encontrado para la solicitud ${requestId}`,
-        );
-      }
-
-      // Actualizar campos
-      if (updateValidatorDto.dateOfBirth) {
-        const parsedDate = this.parseDate(updateValidatorDto.dateOfBirth as string);
-        if (parsedDate) {
-          updateValidatorDto.dateOfBirth = parsedDate as any;
-        } else {
-          delete updateValidatorDto.dateOfBirth;
-        }
-      }
-      Object.assign(validator, updateValidatorDto);
-
-      const updatedValidator = await queryRunner.manager.save(
-        BankAccountValidator,
-        validator,
-      );
-
-      await queryRunner.commitTransaction();
-      return updatedValidator;
-    } catch (error) {
-      await queryRunner.rollbackTransaction();
-      if (
-        error instanceof NotFoundException ||
-        error instanceof BadRequestException
-      ) {
-        throw error;
-      }
-      console.error('Error al actualizar validador:', error);
-      throw new InternalServerErrorException(
-        'Error al actualizar el validador. Por favor, intente nuevamente.',
-      );
-    } finally {
-      await queryRunner.release();
-    }
-  }
-
-  async deleteBankAccountValidator(requestId: number) {
-    // Verificar que la solicitud existe
-    const request = await this.requestRepository.findOne({
-      where: { id: requestId },
-    });
-    if (!request) {
-      throw new NotFoundException(
-        `Solicitud con ID ${requestId} no encontrada`,
-      );
-    }
-
-    // Buscar el validador
-    const validator = await this.validatorRepo.findOne({
-      where: { requestId },
-    });
-    if (!validator) {
-      throw new NotFoundException(
-        `Validador no encontrado para la solicitud ${requestId}`,
-      );
-    }
-
-    await this.validatorRepo.remove(validator);
-    return { message: 'Validador eliminado correctamente' };
-  }
+  // ========== MÉTODOS DE PROPIETARIOS Y VALIDADORES (DEPRECADOS) ==========
+  // NOTA: Estos métodos ya no se usan. Los owners ahora se manejan como Members
+  // y los validators se guardan directamente en CuentaBancariaRequest con campos validator_*
+  // Se mantienen comentados por compatibilidad temporal, pero pueden eliminarse después de verificar
+  // que no hay código externo que los use.
 
   // ========== MÉTODOS ADICIONALES ==========
 
@@ -1911,28 +2637,7 @@ export class RequestsService {
     };
   }
 
-  async getRequiredDocuments(
-    type: 'apertura-llc' | 'renovacion-llc' | 'cuenta-bancaria',
-    llcType?: 'single' | 'multi',
-  ) {
-    const where: any = { requestType: type };
-
-    // Si es tipo LLC y se especifica llcType, filtrar por ese tipo
-    if (
-      (type === 'apertura-llc' || type === 'renovacion-llc') &&
-      llcType
-    ) {
-      where.llcType = llcType;
-    } else if (type === 'cuenta-bancaria') {
-      // Para cuenta bancaria, llcType debe ser null
-      where.llcType = null;
-    }
-
-      return this.requiredDocRepo.find({
-        where,
-        order: { order: 'ASC' },
-      });
-  }
+  // getRequiredDocuments eliminado - RequestRequiredDocument ya no se usa
 
   async delete(id: number, userId: number, userRole: string) {
     const request = await this.requestRepository.findOne({
@@ -2088,6 +2793,134 @@ export class RequestsService {
       // 'Cuenta Bancaria Finalizada' - Solo se muestra si es el stage actual
       // 'Cuenta Bancaria Perdida' - Solo se muestra si es el stage actual (y ahí se queda)
     ];
+  }
+
+  /**
+   * Actualiza las URLs de archivos después de moverlos de request/{servicio}/ a request/{servicio}/{uuid}/
+   */
+  private async updateFileUrlsAfterMove(
+    servicio: string,
+    requestUuid: string,
+    requestId: number,
+  ): Promise<void> {
+    const servicioNormalizado = servicio
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+    
+    const mediaDomain = awsConfigService.getMediaDomain().replace(/\/$/, '');
+    const oldPrefix = `${mediaDomain}/request/${servicioNormalizado}/`;
+    const newPrefix = `${mediaDomain}/request/${servicioNormalizado}/${requestUuid}/`;
+
+    this.logger.log(`Actualizando URLs de archivos: ${oldPrefix} -> ${newPrefix}`);
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      // Buscar la request para determinar el tipo
+      const request = await this.requestRepository.findOne({
+        where: { id: requestId },
+        relations: ['aperturaLlcRequest', 'renovacionLlcRequest', 'cuentaBancariaRequest'],
+      });
+
+      if (!request) {
+        throw new NotFoundException(`Request ${requestId} no encontrada`);
+      }
+
+      // Función helper para actualizar URLs en un objeto
+      const updateUrlsInObject = (obj: any, urlFields: string[]): boolean => {
+        let updated = false;
+        for (const field of urlFields) {
+          if (obj[field] && typeof obj[field] === 'string' && obj[field].startsWith(oldPrefix)) {
+            obj[field] = obj[field].replace(oldPrefix, newPrefix);
+            updated = true;
+          }
+        }
+        return updated;
+      };
+
+      // Actualizar URLs según el tipo de request
+      if (request.type === 'apertura-llc' && request.aperturaLlcRequest) {
+        const urlFields = [
+          'einDocumentUrl',
+          'certificateOfFormationUrl',
+          'serviceBillUrl',
+          'bankStatementUrl',
+        ];
+        if (updateUrlsInObject(request.aperturaLlcRequest, urlFields)) {
+          await queryRunner.manager.save(AperturaLlcRequest, request.aperturaLlcRequest);
+        }
+
+        // Actualizar URLs en miembros
+        const members = await this.memberRepo.find({ where: { requestId } });
+        for (const member of members) {
+          const memberUrlFields = ['scannedPassportUrl', 'additionalBankDocsUrl'];
+          if (updateUrlsInObject(member, memberUrlFields)) {
+            await queryRunner.manager.save(Member, member);
+          }
+        }
+      } else if (request.type === 'renovacion-llc' && request.renovacionLlcRequest) {
+        const urlFields = [
+          'identityDocumentUrl',
+          'proofOfAddressUrl',
+          'llcContractOrOperatingAgreementUrl',
+          'articlesOfIncorporationUrl',
+          'capitalContributionsUrl',
+          'stateRegistrationUrl',
+          'certificateOfGoodStandingUrl',
+          'partnersPassportsFileUrl',
+          'operatingAgreementAdditionalFileUrl',
+          'form147Or575FileUrl',
+          'articlesOfOrganizationAdditionalFileUrl',
+          'boiReportFileUrl',
+          'bankStatementsFileUrl',
+        ];
+        if (updateUrlsInObject(request.renovacionLlcRequest, urlFields)) {
+          await queryRunner.manager.save(RenovacionLlcRequest, request.renovacionLlcRequest);
+        }
+
+        // Actualizar URLs en miembros
+        const members = await this.memberRepo.find({ where: { requestId } });
+        for (const member of members) {
+          const memberUrlFields = ['scannedPassportUrl', 'additionalBankDocsUrl'];
+          if (updateUrlsInObject(member, memberUrlFields)) {
+            await queryRunner.manager.save(Member, member);
+          }
+        }
+      } else if (request.type === 'cuenta-bancaria' && request.cuentaBancariaRequest) {
+        const urlFields = [
+          'einLetterUrl',
+          'certificateOfConstitutionOrArticlesUrl',
+          'proofOfAddressUrl',
+          'validatorScannedPassportUrl', // Validador ahora está en CuentaBancariaRequest
+        ];
+        if (updateUrlsInObject(request.cuentaBancariaRequest, urlFields)) {
+          await queryRunner.manager.save(CuentaBancariaRequest, request.cuentaBancariaRequest);
+        }
+
+        // Actualizar URLs en members (ahora usan Member en lugar de BankAccountOwner)
+        const members = await this.memberRepo.find({ where: { requestId } });
+        for (const member of members) {
+          const memberUrlFields = ['identityDocumentUrl', 'scannedPassportUrl'];
+          if (updateUrlsInObject(member, memberUrlFields)) {
+            await queryRunner.manager.save(Member, member);
+          }
+        }
+      }
+
+      await queryRunner.commitTransaction();
+      this.logger.log(`URLs actualizadas para request ${requestId}`);
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      this.logger.error(`Error al actualizar URLs para request ${requestId}:`, error);
+      // No lanzar error, solo loguear
+    } finally {
+      await queryRunner.release();
+    }
   }
 }
 
