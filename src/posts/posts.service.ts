@@ -269,11 +269,12 @@ export class PostsService {
       post.published_at = postDto.published_at
         ? new Date(postDto.published_at)
         : post.published_at; // Mantiene la fecha si no se provee una nueva
-      post.slug = slugify(postDto.title, {
+      /*post.slug = slugify(postDto.title, {
         lower: true,
         strict: true,
         remove: /[:.]/g,
-      });
+      });*/
+      post.slug = postDto.slug;
       post.excerpt = postDto.content.substring(0, 150) + '...';
 
       // Actualiza las relaciones
