@@ -70,6 +70,16 @@ export class PostsController {
     return this.postsService.findAllByCategorySlug(slug);
   }
 
+  // Obtener todos los post correspondientes a una categoria en modo de revisión
+  @Get('get-sandbox-posts/category/:slug')
+  @ApiOperation({
+    summary: 'Obtener todos los posts correspondientes a una categoría en modo de revisión',
+  })
+  async findAllSandboxPostsByCategorySlug(@Param('slug') slug: string) {
+    return this.postsService.findAllSandboxPostsByCategorySlug(slug);
+  }
+
+  // Crear un nuevo post
   @HttpPost()
   @UseGuards(AuthGuard)
   @ApiBearerAuth('JWT-auth')
