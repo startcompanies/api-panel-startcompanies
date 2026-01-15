@@ -24,6 +24,16 @@ export class PostDto {
   @IsNotEmpty()
   content: string;
 
+  // Slug del post
+  @ApiProperty({
+    example: 'mi-primer-articulo-sobre-nestjs',
+    description: 'El slug del post.',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  slug?: string;
+
   @ApiProperty({
     example: 'https://ejemplo.com/imagen-de-portada.jpg',
     description: 'URL de la imagen destacada para el post.',
