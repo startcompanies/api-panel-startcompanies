@@ -1,0 +1,305 @@
+import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { SignUpDto } from './dtos/signup.dto';
+import { comparePasswords, encodePassword } from 'src/shared/common/utils/bcrypt';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { User } from 'src/shared/user/entities/user.entity';
+import { HandleExceptionsService } from 'src/shared/common/common.service';
+import { SignInDto } from './dtos/signin.dto';
+import { JwtService } from '@nestjs/jwt';
+import { ChangePasswordDto } from './dtos/changePassword.dto';
+import { ForgotPasswordDto } from './dtos/forgotPassword.dto';
+import { ResetPasswordDto } from './dtos/resetPassword.dto';
+import { EmailService } from 'src/shared/common/services/email.service';
+import { SsoDto, RefreshSsoDto } from './dtos/sso.dto';
+import * as crypto from 'crypto';
+
+@Injectable()
+export class authService {
+  constructor(
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
+    private handleExceptionService: HandleExceptionsService,
+    private jwtService: JwtService,
+    private emailService: EmailService,
+  ) {}
+
+  async signUp(signUpDto: SignUpDto) {
+    const password = encodePassword(signUpDto.password);
+    const user = this.userRepository.create({
+      ...signUpDto,
+      password,
+      type: signUpDto.type || 'user', // Asegurar que tenga un valor por defecto
+    });
+    try {
+      await this.userRepository.save(user);
+      delete user.password;
+      return user;
+    } catch (error) {
+      this.handleExceptionService.handleDBExceptions(error);
+    }
+  }
+
+  async signIn(signInDto: SignInDto) {
+    const { email, password } = signInDto;
+
+    const user = await this.userRepository.findOneBy({
+      email: email ?? undefined,
+    });
+
+    if (!user) {
+      return this.handleExceptionService.handleErrorLoginException(email);
+    }
+    
+    const isMatch = await comparePasswords(password, user.password ?? '');
+
+    if (!isMatch) {
+      return this.handleExceptionService.handleErrorPasswordException(email);
+    }
+
+    const infoUser = {
+      id: user.id,
+      userName: user.username,
+      email: user.email,
+      status: user.status,
+      type: user.type
+    };
+
+    const token = await this.jwtService.signAsync(infoUser);
+
+    return { token };
+  }
+
+  async changePassword(changePasswordDto: ChangePasswordDto) {
+    const { email, oldPassword, newPassword } = changePasswordDto;
+
+    const user = await this.userRepository.findOneBy({
+      email: email ?? undefined,
+    });
+
+    if (!user) {
+      return this.handleExceptionService.handleErrorLoginException(email);
+    }
+
+    const isMatch = await comparePasswords(oldPassword, user.password ?? '');
+
+    if (!isMatch) {
+      return this.handleExceptionService.handleErrorPasswordException(email);
+    }
+
+    const hashedNewPassword = encodePassword(newPassword);
+    user.password = hashedNewPassword;
+
+    try {
+      await this.userRepository.save(user);
+      return {
+        message: 'Contraseña actualizada exitosamente',
+        code: 200,
+      };
+    } catch (error) {
+      this.handleExceptionService.handleDBExceptions(error);
+    }
+  }
+
+  async forgotPassword(forgotPasswordDto: ForgotPasswordDto) {
+    const { email } = forgotPasswordDto;
+
+    const user = await this.userRepository.findOneBy({
+      email: email ?? undefined,
+    });
+
+    if (!user) {
+      // Por seguridad, no revelamos si el email existe o no
+      return {
+        message:
+          'Si el email existe en nuestro sistema, recibirás un enlace para restablecer tu contraseña',
+        code: 200,
+      };
+    }
+
+    // Generar token de reset (en producción, debería ser más seguro y almacenarse en BD)
+    const resetToken = await this.jwtService.signAsync(
+      { id: user.id, email: user.email, type: 'password-reset' },
+      { expiresIn: '1h' },
+    );
+
+    // Enviar email con el token
+    const userName = `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username;
+    try {
+      await this.emailService.sendPasswordResetEmail(user.email, userName, resetToken);
+    } catch (emailError) {
+      console.error('Error al enviar email de reset:', emailError);
+      // No fallar si el email falla, pero loguear el error
+    }
+
+    return {
+      message:
+        'Si el email existe en nuestro sistema, recibirás un enlace para restablecer tu contraseña',
+      code: 200,
+    };
+  }
+
+  async resetPassword(resetPasswordDto: ResetPasswordDto) {
+    const { token, newPassword } = resetPasswordDto;
+
+    try {
+      // Verificar token
+      const payload = await this.jwtService.verifyAsync(token);
+
+      // Aceptar tanto tokens de reset como de setup inicial
+      if (payload.type !== 'password-reset' && payload.type !== 'password-setup') {
+        return {
+          message: 'Token inválido',
+          code: 400,
+        };
+      }
+
+      const user = await this.userRepository.findOneBy({
+        id: payload.id,
+        email: payload.email,
+      });
+
+      if (!user) {
+        return {
+          message: 'Usuario no encontrado',
+          code: 404,
+        };
+      }
+
+      // Actualizar contraseña
+      const hashedNewPassword = encodePassword(newPassword);
+      user.password = hashedNewPassword;
+
+      await this.userRepository.save(user);
+
+      return {
+        message: 'Contraseña restablecida exitosamente',
+        code: 200,
+      };
+    } catch (error) {
+      return {
+        message: 'Token inválido o expirado',
+        code: 400,
+      };
+    }
+  }
+
+  /**
+   * SSO Sign In - Autenticación mediante parámetros de URL (para embedding en Zoho CRM)
+   */
+  async ssoSignIn(ssoDto: SsoDto) {
+    const { email, token } = ssoDto;
+
+    // Validar token SSO
+    const isValidToken = this.validateSsoToken(email, token);
+    if (!isValidToken) {
+      throw new UnauthorizedException('Invalid SSO token');
+    }
+
+    // Buscar usuario por email
+    const userEntity = await this.userRepository.findOne({
+      where: [{ email }, { username: email }],
+    });
+
+    if (!userEntity) {
+      throw new UnauthorizedException('Usuario no encontrado');
+    }
+
+    if (userEntity.status === false) {
+      throw new UnauthorizedException('Usuario inactivo');
+    }
+
+    // Generar tokens JWT
+    const payload = { 
+      id: userEntity.id,
+      username: userEntity.username, 
+      email: userEntity.email,
+      status: userEntity.status,
+      type: userEntity.type
+    };
+    const accessToken = this.jwtService.sign(payload, { expiresIn: '1h' });
+    const refreshToken = this.jwtService.sign(payload, { expiresIn: '5d' });
+
+    return {
+      id: userEntity.id,
+      username: userEntity.username,
+      email: userEntity.email,
+      status: userEntity.status,
+      type: userEntity.type,
+      accessToken,
+      refreshToken,
+    };
+  }
+
+  /**
+   * Valida el token SSO comparándolo con una clave secreta
+   */
+  private validateSsoToken(email: string, token: string): boolean {
+    const secretKey = process.env.ZOHO_SSO_SECRET || 'default-secret-key-change-in-production';
+    
+    // Si el token es igual a la clave secreta (modo simple para desarrollo/testing)
+    if (token === secretKey) {
+      return true;
+    }
+
+    // Validación con timestamp (permite tokens válidos por 2 minutos)
+    const currentMinute = Math.floor(Date.now() / 60000);
+    
+    // Validar con timestamp actual y los 2 minutos anteriores
+    for (let i = 0; i <= 2; i++) {
+      const timestamp = currentMinute - i;
+      const expectedHash = crypto
+        .createHmac('sha256', secretKey)
+        .update(email + timestamp.toString())
+        .digest('hex');
+      
+      if (token === expectedHash) {
+        return true;
+      }
+    }
+
+    // Validación adicional: token puede ser un hash del email + secretKey
+    const emailHash = crypto
+      .createHmac('sha256', secretKey)
+      .update(email)
+      .digest('hex');
+    
+    if (token === emailHash) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Refresh token - Renueva el access token usando un refresh token
+   */
+  async refresh(refreshToken: string) {
+    try {
+      const payload = await this.jwtService.verifyAsync(refreshToken);
+      
+      // Verificar que el usuario existe y está activo
+      const user = await this.userRepository.findOne({
+        where: { id: payload.id },
+      });
+
+      if (!user || !user.status) {
+        throw new UnauthorizedException('Usuario no encontrado o inactivo');
+      }
+
+      // Generar nuevo access token
+      const newPayload = {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        status: user.status,
+        type: user.type,
+      };
+      const accessToken = this.jwtService.sign(newPayload, { expiresIn: '1h' });
+
+      return { accessToken };
+    } catch (error) {
+      throw new UnauthorizedException('Token inválido o expirado');
+    }
+  }
+}

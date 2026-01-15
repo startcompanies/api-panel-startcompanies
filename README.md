@@ -23,13 +23,39 @@
 
 ## Description
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+API Backend para el Panel de Administración de Start Companies LLC, desarrollado con NestJS y TypeORM.
 
 ## Project setup
+
+### 1. Instalar dependencias
 
 ```bash
 $ npm install
 ```
+
+### 2. Configurar variables de entorno
+
+Copia el archivo `.env.example` a `.env` y completa los valores:
+
+```bash
+$ cp .env.example .env
+```
+
+Edita el archivo `.env` con tus credenciales de base de datos y otras configuraciones necesarias.
+
+**Variables de entorno requeridas:**
+- `DB_HOST`: Host de PostgreSQL (default: localhost)
+- `DB_PORT`: Puerto de PostgreSQL (default: 5432)
+- `DB_USER`: Usuario de PostgreSQL
+- `DB_PASSWORD`: Contraseña de PostgreSQL
+- `DB_NAME`: Nombre de la base de datos
+- `PORT`: Puerto del servidor (default: 3000)
+- `MODE`: Modo de ejecución (DEV o PROD)
+- `JWT_SECRET`: Secreto para firmar tokens JWT
+- `AWS_ACCESS_KEY_ID`: (Opcional) Para almacenamiento en S3
+- `AWS_SECRET_ACCESS_KEY`: (Opcional) Para almacenamiento en S3
+- `AWS_REGION`: (Opcional) Región de AWS
+- `AWS_S3_BUCKET_NAME`: (Opcional) Nombre del bucket S3
 
 ## Compile and run the project
 
@@ -42,6 +68,25 @@ $ npm run start:dev
 
 # production mode
 $ npm run start:prod
+```
+
+## Migraciones de Base de Datos
+
+Este proyecto usa TypeORM para gestionar las migraciones. Ver [README_MIGRATIONS.md](./README_MIGRATIONS.md) para más detalles.
+
+**Comandos principales:**
+```bash
+# Generar una nueva migración
+$ npm run migration:generate -- NombreDeLaMigracion
+
+# Ejecutar migraciones pendientes
+$ npm run migration:run
+
+# Revertir última migración
+$ npm run migration:revert
+
+# Ver estado de migraciones
+$ npm run migration:show
 ```
 
 ## Run tests

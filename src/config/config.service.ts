@@ -32,6 +32,11 @@ class ConfigService {
   }
 
   public getTypeOrmConfig(): TypeOrmModuleOptions {
+    // Leer SYNCHRONIZE del .env, por defecto false (seguro)
+    // Si no está definido, usar false para evitar sincronización automática
+    const synchronizeValue = this.getValue('SYNCHRONIZE', false);
+    const synchronize = synchronizeValue ? synchronizeValue.toLowerCase() === 'true' : false;
+    
     return {
       type: 'postgres',
       host: this.getValue('DB_HOST'),
@@ -40,7 +45,7 @@ class ConfigService {
       password: this.getValue('DB_PASSWORD'),
       database: this.getValue('DB_NAME'),
       autoLoadEntities: true,
-      synchronize: false
+      synchronize: synchronize
     };
   }
 }

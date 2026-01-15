@@ -3,27 +3,30 @@ import { AppService } from './app.service';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { configService } from './config/config.service';
-import { UserModule } from './user/user.module';
-import { PostsModule } from './posts/posts.module';
-import { CategoriesModule } from './categories/categories.module';
-import { TagsModule } from './tags/tags.module';
-import { AuthModule } from './auth/auth.module';
-import { CommonModule } from './common/common.module';
-import { UploadFileModule } from './upload-file/upload-file.module';
-import { ReusableElementsModule } from './reusable-elements/reusable-elements.module';
+import { UserModule } from './shared/user/user.module';
+import { AuthModule } from './shared/auth/auth.module';
+import { CommonModule } from './shared/common/common.module';
+import { UploadFileModule } from './shared/upload-file/upload-file.module';
+// Módulos agrupados por funcionalidad
+import { BlogModule } from './blog/blog.module';
+import { PanelModule } from './panel/panel.module';
+import { WizardModule } from './wizard/wizard.module';
+import { ZohoConfigModule } from './zoho-config/zoho-config.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot(),
     TypeOrmModule.forRoot(configService.getTypeOrmConfig()),
-    UserModule,
-    PostsModule,
-    CategoriesModule,
-    TagsModule,
+    // Módulos compartidos (usados por Blog y Panel)
     AuthModule,
+    UserModule,
     CommonModule,
     UploadFileModule,
-    ReusableElementsModule
+    // Módulos agrupados por funcionalidad
+    BlogModule, // Agrupa: PostsModule, CategoriesModule, TagsModule, ReusableElementsModule
+    PanelModule, // Agrupa: RequestsModule, ProcessStepsModule, DocumentsModule, NotificationsModule, SettingsModule, ReportsModule
+    WizardModule, // Módulo para flujo wizard (nuevos usuarios)
+    ZohoConfigModule, // Configuración OAuth y SSO de Zoho
   ],
   controllers: [],
   providers: [AppService],
