@@ -11,6 +11,7 @@ import { PaginationDto } from 'src/shared/common/dtos/pagination.dto';
 import { GetPostsFilterDto } from './dtos/get-posts-filter.dto';
 
 export class PostsService {
+
   constructor(
     @InjectRepository(Post)
     private postsRepository: Repository<Post>,
@@ -148,6 +149,39 @@ export class PostsService {
     }
   }
 
+  // Obtener todos los posts correspondientes a una categoria en modo de revisión
+  async findAllSandboxPostsByCategorySlug(categorySlug: string) {
+    try {
+      const posts = await this.postsRepository
+        .createQueryBuilder('post')
+        .leftJoinAndSelect('post.user', 'user')
+        .leftJoinAndSelect('post.categories', 'category')
+        .leftJoinAndSelect('post.tags', 'tag')
+        .where('category.slug = :slug', { slug: categorySlug })
+        .andWhere('post.sandbox = :sandbox', { sandbox: true })
+        .select([
+          'post.title',
+          'post.slug',
+          'post.excerpt',
+          'post.image_url',
+          'post.published_at',
+          'user.id',
+          'user.first_name',
+          'user.last_name',
+          'category.name',
+          'category.slug',
+          'tag.name',
+          'tag.slug',
+        ])
+        .orderBy('post.published_at', 'DESC')
+        .getMany();
+
+      return posts;
+    } catch (error) {
+      this.exceptionsService.handleDBExceptions(error);
+    }
+  }
+
   // Get post by ID
   async findOneById(id: string): Promise<Post | undefined | null> {
     try {
@@ -235,11 +269,12 @@ export class PostsService {
       post.published_at = postDto.published_at
         ? new Date(postDto.published_at)
         : post.published_at; // Mantiene la fecha si no se provee una nueva
-      post.slug = slugify(postDto.title, {
+      /*post.slug = slugify(postDto.title, {
         lower: true,
         strict: true,
         remove: /[:.]/g,
-      });
+      });*/
+      post.slug = postDto.slug;
       post.excerpt = postDto.content.substring(0, 150) + '...';
 
       // Actualiza las relaciones
