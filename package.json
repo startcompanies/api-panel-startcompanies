@@ -21,7 +21,9 @@
     "migration:generate": "ts-node --project tsconfig.json scripts/run-migration.ts generate",
     "migration:create": "ts-node --project tsconfig.json scripts/run-migration.ts create",
     "migration:run": "ts-node --project tsconfig.json scripts/run-migration.ts run",
+    "migration:run:prod": "node dist/scripts/run-migration.js run",
     "migration:revert": "ts-node --project tsconfig.json scripts/run-migration.ts revert",
+    "migration:revert:prod": "node dist/scripts/run-migration.js revert",
     "migration:show": "ts-node --project tsconfig.json scripts/run-migration.ts show"
   },
   "dependencies": {

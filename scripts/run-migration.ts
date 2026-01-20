@@ -1,5 +1,6 @@
 import 'reflect-metadata';
 import { execSync } from 'child_process';
+import { existsSync } from 'fs';
 import * as path from 'path';
 
 const command = process.argv[2];
@@ -12,12 +13,24 @@ if (!command) {
 
 const projectRoot = path.join(__dirname, '..');
 
+const isCompiledDist =
+  existsSync(path.join(projectRoot, 'src', 'data-source.js')) &&
+  !existsSync(path.join(projectRoot, 'src', 'data-source.ts'));
+
+const dataSourcePath = isCompiledDist ? 'src/data-source.js' : 'src/data-source.ts';
+const typeormCli = isCompiledDist ? 'npx typeorm' : 'npx typeorm-ts-node-commonjs';
+
 try {
   switch (command) {
     case 'generate':
       if (!migrationName) {
         console.error('❌ Error: Debes especificar un nombre para la migración');
         console.log('Uso: npm run migration:generate -- NombreDeLaMigracion');
+        process.exit(1);
+      }
+      if (isCompiledDist) {
+        console.error('❌ Error: migration:generate no está soportado en modo compilado (dist).');
+        console.log('Usa este comando en desarrollo (ts-node) desde el código fuente.');
         process.exit(1);
       }
       console.log(`📝 Generando migración: ${migrationName}...`);
@@ -34,6 +47,11 @@ try {
         console.log('Uso: npm run migration:create -- NombreDeLaMigracion');
         process.exit(1);
       }
+      if (isCompiledDist) {
+        console.error('❌ Error: migration:create no está soportado en modo compilado (dist).');
+        console.log('Usa este comando en desarrollo (ts-node) desde el código fuente.');
+        process.exit(1);
+      }
       console.log(`📝 Creando migración vacía: ${migrationName}...`);
       execSync(
         `npx typeorm-ts-node-commonjs migration:create migrations/${migrationName}`,
@@ -44,7 +62,7 @@ try {
 
     case 'run':
       console.log('🚀 Ejecutando migraciones pendientes...');
-      execSync(`npx typeorm-ts-node-commonjs migration:run -d src/data-source.ts`, {
+      execSync(`${typeormCli} migration:run -d ${dataSourcePath}`, {
         stdio: 'inherit',
         cwd: projectRoot,
       });
@@ -53,7 +71,7 @@ try {
 
     case 'revert':
       console.log('⏪ Revirtiendo última migración...');
-      execSync(`npx typeorm-ts-node-commonjs migration:revert -d src/data-source.ts`, {
+      execSync(`${typeormCli} migration:revert -d ${dataSourcePath}`, {
         stdio: 'inherit',
         cwd: projectRoot,
       });
@@ -62,7 +80,7 @@ try {
 
     case 'show':
       console.log('📊 Estado de las migraciones:');
-      execSync(`npx typeorm-ts-node-commonjs migration:show -d src/data-source.ts`, {
+      execSync(`${typeormCli} migration:show -d ${dataSourcePath}`, {
         stdio: 'inherit',
         cwd: projectRoot,
       });
