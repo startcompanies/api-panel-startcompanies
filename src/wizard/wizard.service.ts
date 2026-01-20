@@ -546,6 +546,7 @@ export class WizardService {
         type: createWizardRequestDto.type,
         status: 'pendiente', // Siempre pendiente al crear desde wizard
         currentStep: createWizardRequestDto.currentStep || 1,
+        createdFrom: 'wizard',
         clientId: client.id,
         partnerId: undefined, // Wizard no tiene partners
         notes: createWizardRequestDto.notes,
