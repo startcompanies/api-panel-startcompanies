@@ -86,6 +86,15 @@ export class Request {
   @Column({ name: 'payment_proof_url', nullable: true, type: 'text' })
   paymentProofUrl?: string; // URL del comprobante de transferencia
 
+  // Origen de creación del request (panel vs wizard) para interpretar pasos correctamente
+  @Column({
+    name: 'created_from',
+    type: 'varchar',
+    length: 20,
+    default: "'panel'",
+  })
+  createdFrom: 'panel' | 'wizard';
+
   @CreateDateColumn({
     type: 'timestamp with time zone',
     default: () => 'CURRENT_TIMESTAMP',

@@ -546,6 +546,7 @@ export class WizardService {
         type: createWizardRequestDto.type,
         status: 'pendiente', // Siempre pendiente al crear desde wizard
         currentStep: createWizardRequestDto.currentStep || 1,
+        createdFrom: 'wizard',
         clientId: client.id,
         partnerId: undefined, // Wizard no tiene partners
         notes: createWizardRequestDto.notes,
@@ -567,16 +568,33 @@ export class WizardService {
         }
 
         const { members, ...aperturaDataFields } = createWizardRequestDto.aperturaLlcData;
+        const currentStep = createWizardRequestDto.currentStepNumber;
+
+        // Preparar datos según la sección actual (igual que en panel)
+        const aperturaDataRaw: any = { ...aperturaDataFields };
+        
+        // Sección 1 (información básica) - siempre se procesa
+        // Sección 2 (miembros) - se procesa si currentStep >= 2
+        // Sección 3 (apertura bancaria) - solo procesar si currentStep >= 3
+        if (currentStep < 3) {
+          delete aperturaDataRaw.serviceBillUrl;
+          delete aperturaDataRaw.bankStatementUrl;
+          delete aperturaDataRaw.periodicIncome10k;
+          delete aperturaDataRaw.bankAccountLinkedEmail;
+          delete aperturaDataRaw.bankAccountLinkedPhone;
+          delete aperturaDataRaw.actividadFinancieraEsperada;
+          delete aperturaDataRaw.projectOrCompanyUrl;
+        }
 
         const aperturaData = this.aperturaRepo.create({
           requestId: savedRequest.id,
           currentStepNumber: createWizardRequestDto.currentStepNumber,
-          ...aperturaDataFields,
+          ...aperturaDataRaw,
         });
         await queryRunner.manager.save(AperturaLlcRequest, aperturaData);
 
-        // Crear miembros si están presentes
-        if (createWizardRequestDto.currentStepNumber >= 2 && members && members.length > 0) {
+        // Crear miembros si están presentes (igual que en panel)
+        if (members && members.length > 0) {
           const validMembers = members.filter((m: any) =>
             m.firstName || m.lastName || m.email || m.passportNumber
           );
@@ -590,11 +608,26 @@ export class WizardService {
             }
 
             const membersToSave = validMembers.map((memberDto: any) => {
-              const { dateOfBirth, ...memberDataWithoutDate } = memberDto;
+              const { dateOfBirth, scannedPassportUrl, ...memberDataWithoutDate } = memberDto;
               const parsedDate = this.parseDate(dateOfBirth);
               return this.memberRepo.create({
                 requestId: savedRequest.id,
-                ...memberDataWithoutDate,
+                firstName: memberDto.firstName || '',
+                lastName: memberDto.lastName || '',
+                passportNumber: memberDto.passportNumber || '',
+                scannedPassportUrl: scannedPassportUrl || memberDto.scannedPassportUrl || '',
+                nationality: memberDto.nationality || '',
+                email: memberDto.email || '',
+                phoneNumber: memberDto.phoneNumber || '',
+                percentageOfParticipation: memberDto.percentageOfParticipation || 0,
+                memberAddress: memberDto.memberAddress || {
+                  street: '',
+                  city: '',
+                  stateRegion: '',
+                  postalCode: '',
+                  country: ''
+                },
+                validatesBankAccount: memberDto.validatesBankAccount || false,
                 ...(parsedDate ? { dateOfBirth: parsedDate } : {}),
               });
             }) as unknown as Member[];
@@ -608,28 +641,94 @@ export class WizardService {
           );
         }
 
-        const { members, ...renovacionDataFields } = createWizardRequestDto.renovacionLlcData;
+        const renovacionDataRaw = createWizardRequestDto.renovacionLlcData as any;
+        const { members, owners, ...renovacionDataFields } = renovacionDataRaw;
+        const currentStep = createWizardRequestDto.currentStepNumber;
+
+        // Preparar datos según la sección actual
+        const dataToSave: any = { ...renovacionDataFields };
+        
+        // Sección 1: Información General de la LLC - siempre se procesa
+        // Sección 2: Información de Propietarios - se procesa si currentStep >= 2
+        // Sección 3: Información Contable - solo procesar si currentStep >= 3
+        if (currentStep < 3) {
+          delete dataToSave.llcOpeningCost;
+          delete dataToSave.paidToFamilyMembers;
+          delete dataToSave.paidToLocalCompanies;
+          delete dataToSave.paidForLLCFormation;
+          delete dataToSave.paidForLLCDissolution;
+          delete dataToSave.bankAccountBalanceEndOfYear;
+        }
+        
+        // Sección 4: Movimientos Financieros - solo procesar si currentStep >= 4
+        if (currentStep < 4) {
+          delete dataToSave.totalRevenue2025;
+        }
+        
+        // Sección 5: Información Adicional - solo procesar si currentStep >= 5
+        if (currentStep < 5) {
+          delete dataToSave.hasFinancialInvestmentsInUSA;
+          delete dataToSave.hasFiledTaxesBefore;
+          delete dataToSave.wasConstitutedWithStartCompanies;
+          delete dataToSave.partnersPassportsFileUrl;
+          delete dataToSave.operatingAgreementAdditionalFileUrl;
+          delete dataToSave.form147Or575FileUrl;
+          delete dataToSave.articlesOfOrganizationAdditionalFileUrl;
+          delete dataToSave.boiReportFileUrl;
+          delete dataToSave.bankStatementsFileUrl;
+        }
 
         const renovacionData = this.renovacionRepo.create({
           requestId: savedRequest.id,
           currentStepNumber: createWizardRequestDto.currentStepNumber,
-          ...renovacionDataFields,
+          ...dataToSave,
         });
         await queryRunner.manager.save(RenovacionLlcRequest, renovacionData);
 
-        // Crear miembros si están presentes
-        if (createWizardRequestDto.currentStepNumber >= 2 && members && members.length > 0) {
-          const validMembers = members.filter((m: any) =>
-            m.firstName || m.lastName || m.email || m.passportNumber || m.name || m.lastName
+        // Crear miembros si están presentes (homologado: usar 'members' o 'owners')
+        const membersArray = members || owners || [];
+        if (membersArray.length > 0) {
+          const validMembers = membersArray.filter((m: any) =>
+            m.firstName || m.lastName || m.email || m.passportNumber || m.name
           );
 
           if (validMembers.length > 0) {
             const membersToSave = validMembers.map((memberDto: any) => {
               const { dateOfBirth, ...memberDataWithoutDate } = memberDto;
               const parsedDate = this.parseDate(dateOfBirth);
+              
+              // Mapear campos del frontend a la estructura de Member
               return this.memberRepo.create({
                 requestId: savedRequest.id,
-                ...memberDataWithoutDate,
+                firstName: memberDto.firstName || memberDto.name || '',
+                lastName: memberDto.lastName || '',
+                passportNumber: memberDto.passportNumber || '',
+                scannedPassportUrl: memberDto.scannedPassportUrl || '',
+                nationality: memberDto.nationality || '',
+                email: memberDto.email || '',
+                phoneNumber: memberDto.phoneNumber || memberDto.phone || '',
+                percentageOfParticipation: memberDto.percentageOfParticipation || memberDto.participationPercentage || 0,
+                memberAddress: memberDto.memberAddress || {
+                  street: memberDto.fullAddress || '',
+                  unit: memberDto.unit || '',
+                  city: memberDto.city || '',
+                  stateRegion: memberDto.stateRegion || '',
+                  postalCode: memberDto.postalCode || '',
+                  country: memberDto.country || ''
+                },
+                // Campos adicionales para renovación
+                ssnOrItin: memberDto.ssnItin || memberDto.ssnOrItin || null,
+                nationalTaxId: memberDto.cuit || memberDto.nationalTaxId || null,
+                ownerContributions: memberDto.capitalContributions2025 || memberDto.ownerContributions || 0,
+                ownerLoansToLLC: memberDto.loansToLLC2025 || memberDto.ownerLoansToLLC || 0,
+                loansReimbursedByLLC: memberDto.loansRepaid2025 || memberDto.loansReimbursedByLLC || 0,
+                profitDistributions: memberDto.capitalWithdrawals2025 || memberDto.profitDistributions || 0,
+                hasUSFinancialInvestments: memberDto.hasInvestmentsInUSA || memberDto.hasUSFinancialInvestments || '',
+                isUSCitizen: memberDto.isUSCitizen || '',
+                taxFilingCountry: Array.isArray(memberDto.taxCountry) 
+                  ? memberDto.taxCountry.join(', ') 
+                  : (memberDto.taxCountry || memberDto.taxFilingCountry || ''),
+                spentMoreThan31DaysInUS: memberDto.wasInUSA31Days2025 || memberDto.wasInUSA31Days || memberDto.spentMoreThan31DaysInUS || '',
                 ...(parsedDate ? { dateOfBirth: parsedDate } : {}),
               });
             }) as unknown as Member[];
@@ -643,15 +742,301 @@ export class WizardService {
           );
         }
 
-        const cuentaData = this.cuentaRepo.create({
+        const cuentaDataRaw = createWizardRequestDto.cuentaBancariaData as any;
+        const { owners, validators, ...cuentaDataFields } = cuentaDataRaw;
+        const currentStep = createWizardRequestDto.currentStepNumber;
+
+        // Preparar datos según la sección actual (igual que en panel)
+        const dataToSave: any = { ...cuentaDataFields };
+        
+        // Mapear campos del frontend a la entidad
+        // Sección 1: Información de la LLC
+        if (cuentaDataRaw.legalBusinessName) {
+          dataToSave.legalBusinessIdentifier = cuentaDataRaw.legalBusinessName;
+        }
+        if (cuentaDataRaw.briefDescription) {
+          dataToSave.economicActivity = cuentaDataRaw.briefDescription;
+        }
+        if (cuentaDataRaw.einNumber) {
+          dataToSave.ein = cuentaDataRaw.einNumber;
+        }
+        if (cuentaDataRaw.articlesOrCertificateUrl) {
+          dataToSave.certificateOfConstitutionOrArticlesUrl = cuentaDataRaw.articlesOrCertificateUrl;
+        }
+        
+        // Sección 2: Dirección del Registered Agent
+        if (currentStep >= 2) {
+          // Construir registeredAgentAddress desde campos individuales
+          const raStreet = cuentaDataRaw.registeredAgentStreet || '';
+          const raUnit = cuentaDataRaw.registeredAgentUnit || '';
+          const raCity = cuentaDataRaw.registeredAgentCity || '';
+          const raState = cuentaDataRaw.registeredAgentState || '';
+          const raZip = cuentaDataRaw.registeredAgentZipCode || '';
+          const raCountry = cuentaDataRaw.registeredAgentCountry || 'United States';
+          
+          if (raStreet || raCity || raState) {
+            dataToSave.registeredAgentAddress = [raStreet, raUnit, raCity, raState, raCountry].filter(Boolean).join(', ');
+          }
+          
+          // Guardar estado del registered agent
+          if (cuentaDataRaw.registeredAgentState) {
+            dataToSave.registeredAgentState = cuentaDataRaw.registeredAgentState;
+          }
+          
+          // Guardar countriesWhereBusiness como string
+          if (cuentaDataRaw.countriesWhereBusiness) {
+            dataToSave.countriesWhereBusiness = Array.isArray(cuentaDataRaw.countriesWhereBusiness)
+              ? cuentaDataRaw.countriesWhereBusiness.join(', ')
+              : cuentaDataRaw.countriesWhereBusiness;
+          }
+        } else {
+          delete dataToSave.registeredAgentStreet;
+          delete dataToSave.registeredAgentUnit;
+          delete dataToSave.registeredAgentCity;
+          delete dataToSave.registeredAgentState;
+          delete dataToSave.registeredAgentZipCode;
+          delete dataToSave.registeredAgentCountry;
+          delete dataToSave.registeredAgentAddress;
+          delete dataToSave.incorporationState;
+          delete dataToSave.incorporationMonthYear;
+          delete dataToSave.countriesWhereBusiness;
+        }
+        
+        // Sección 3: Información del validador
+        if (currentStep >= 3) {
+          // Los campos del validador pueden venir en validators[] o directamente
+          let validatorData: any = null;
+          
+          if (validators && validators.length > 0) {
+            validatorData = validators[0];
+          } else if (cuentaDataRaw.validatorFirstName || cuentaDataRaw.validatorLastName || 
+                     cuentaDataRaw.validatorDateOfBirth || cuentaDataRaw.validatorPassportNumber ||
+                     cuentaDataRaw.validatorPassportUrl || cuentaDataRaw.isUSResident) {
+            validatorData = cuentaDataRaw;
+          }
+          
+          if (validatorData) {
+            if (validatorData.validatorFirstName || validatorData.firstName) {
+              dataToSave.validatorFirstName = validatorData.validatorFirstName || validatorData.firstName || '';
+            }
+            if (validatorData.validatorLastName || validatorData.lastName) {
+              dataToSave.validatorLastName = validatorData.validatorLastName || validatorData.lastName || '';
+            }
+            if (validatorData.validatorNationality || validatorData.nationality) {
+              dataToSave.validatorNationality = validatorData.validatorNationality || validatorData.nationality || '';
+            }
+            if (validatorData.validatorCitizenship || validatorData.citizenship) {
+              dataToSave.validatorCitizenship = validatorData.validatorCitizenship || validatorData.citizenship || '';
+            }
+            if (validatorData.validatorPassportNumber || validatorData.passportNumber) {
+              dataToSave.validatorPassportNumber = validatorData.validatorPassportNumber || validatorData.passportNumber || '';
+            }
+            
+            // URL del pasaporte
+            const passportUrl = validatorData.validatorPassportUrl || validatorData.scannedPassportUrl || 
+                               cuentaDataRaw.validatorPassportUrl || '';
+            if (passportUrl) {
+              dataToSave.validatorScannedPassportUrl = passportUrl;
+            }
+            
+            if (validatorData.validatorWorkEmail || validatorData.workEmail) {
+              dataToSave.validatorWorkEmail = validatorData.validatorWorkEmail || validatorData.workEmail || '';
+            }
+            if (validatorData.validatorPhone || validatorData.phone) {
+              dataToSave.validatorPhone = validatorData.validatorPhone || validatorData.phone || '';
+            }
+            
+            // Campos adicionales del validador
+            if (validatorData.validatorTitle || validatorData.title) {
+              dataToSave.validatorTitle = validatorData.validatorTitle || validatorData.title || '';
+            }
+            if (validatorData.validatorIncomeSource || validatorData.incomeSource) {
+              dataToSave.validatorIncomeSource = validatorData.validatorIncomeSource || validatorData.incomeSource || '';
+            }
+            if (validatorData.validatorAnnualIncome || validatorData.annualIncome) {
+              const annualIncome = typeof (validatorData.validatorAnnualIncome || validatorData.annualIncome) === 'string'
+                ? parseFloat(validatorData.validatorAnnualIncome || validatorData.annualIncome)
+                : (validatorData.validatorAnnualIncome || validatorData.annualIncome);
+              if (!isNaN(annualIncome)) {
+                dataToSave.validatorAnnualIncome = annualIncome;
+              }
+            }
+            
+            // Campos booleanos
+            if (validatorData.useEmailForRelayLogin !== undefined) {
+              dataToSave.validatorUseEmailForRelayLogin = validatorData.useEmailForRelayLogin || false;
+            }
+            if (validatorData.canReceiveSMS !== undefined) {
+              dataToSave.validatorCanReceiveSMS = validatorData.canReceiveSMS || false;
+            }
+            
+            // isUSResident
+            const isUSResidentValue = validatorData.isUSResident !== undefined && validatorData.isUSResident !== ''
+              ? validatorData.isUSResident 
+              : cuentaDataRaw.isUSResident;
+            if (isUSResidentValue !== undefined && isUSResidentValue !== '') {
+              dataToSave.validatorIsUSResident = isUSResidentValue === 'yes' || isUSResidentValue === true;
+            }
+            
+            // Fecha de nacimiento
+            const dateOfBirth = validatorData.validatorDateOfBirth || validatorData.dateOfBirth;
+            if (dateOfBirth && dateOfBirth.trim && dateOfBirth.trim() !== '') {
+              const parsedDate = this.parseDate(dateOfBirth);
+              if (parsedDate) {
+                dataToSave.validatorDateOfBirth = parsedDate;
+              }
+            }
+          }
+        } else {
+          // Eliminar campos del validador si no estamos en la sección 3
+          delete dataToSave.validatorFirstName;
+          delete dataToSave.validatorLastName;
+          delete dataToSave.validatorDateOfBirth;
+          delete dataToSave.validatorNationality;
+          delete dataToSave.validatorCitizenship;
+          delete dataToSave.validatorPassportNumber;
+          delete dataToSave.validatorPassportUrl;
+          delete dataToSave.validatorScannedPassportUrl;
+          delete dataToSave.validatorWorkEmail;
+          delete dataToSave.validatorPhone;
+          delete dataToSave.validatorTitle;
+          delete dataToSave.validatorIncomeSource;
+          delete dataToSave.validatorAnnualIncome;
+        }
+        
+        // Sección 4: Dirección personal del propietario
+        if (currentStep >= 4) {
+          // Construir ownerPersonalAddress desde campos individuales
+          if (cuentaDataRaw.ownerPersonalStreet || cuentaDataRaw.ownerPersonalCity) {
+            dataToSave.ownerPersonalAddress = {
+              street: cuentaDataRaw.ownerPersonalStreet || '',
+              unit: cuentaDataRaw.ownerPersonalUnit || '',
+              city: cuentaDataRaw.ownerPersonalCity || '',
+              state: cuentaDataRaw.ownerPersonalState || '',
+              postalCode: cuentaDataRaw.ownerPersonalPostalCode || '',
+              country: cuentaDataRaw.ownerPersonalCountry || ''
+            };
+          }
+          if (cuentaDataRaw.serviceBillUrl) {
+            dataToSave.proofOfAddressUrl = cuentaDataRaw.serviceBillUrl;
+          }
+        } else {
+          delete dataToSave.ownerPersonalStreet;
+          delete dataToSave.ownerPersonalUnit;
+          delete dataToSave.ownerPersonalCity;
+          delete dataToSave.ownerPersonalState;
+          delete dataToSave.ownerPersonalCountry;
+          delete dataToSave.ownerPersonalPostalCode;
+          delete dataToSave.ownerPersonalAddress;
+          delete dataToSave.serviceBillUrl;
+          delete dataToSave.proofOfAddressUrl;
+        }
+        
+        // Sección 5: Tipo de LLC
+        if (currentStep >= 5) {
+          // Mapear isMultiMember a llcType
+          if (cuentaDataRaw.isMultiMember === 'yes') {
+            dataToSave.llcType = 'multi';
+          } else if (cuentaDataRaw.isMultiMember === 'no') {
+            dataToSave.llcType = 'single';
+          }
+        }
+        
+        // Limpiar campos que no deben guardarse directamente
+        delete dataToSave.legalBusinessName;
+        delete dataToSave.briefDescription;
+        delete dataToSave.einNumber;
+        delete dataToSave.articlesOrCertificateUrl;
+        delete dataToSave.registeredAgentStreet;
+        delete dataToSave.registeredAgentUnit;
+        delete dataToSave.registeredAgentCity;
+        delete dataToSave.registeredAgentZipCode;
+        delete dataToSave.registeredAgentCountry;
+        delete dataToSave.ownerPersonalStreet;
+        delete dataToSave.ownerPersonalUnit;
+        delete dataToSave.ownerPersonalCity;
+        delete dataToSave.ownerPersonalState;
+        delete dataToSave.ownerPersonalCountry;
+        delete dataToSave.ownerPersonalPostalCode;
+        delete dataToSave.isMultiMember;
+        delete dataToSave.validatorPassportUrl;
+        
+        // Preparar datos para crear
+        const cuentaDataToCreate: any = {
           requestId: savedRequest.id,
           currentStepNumber: createWizardRequestDto.currentStepNumber,
-          ...createWizardRequestDto.cuentaBancariaData,
-          firstRegistrationDate: createWizardRequestDto.cuentaBancariaData.firstRegistrationDate
-            ? new Date(createWizardRequestDto.cuentaBancariaData.firstRegistrationDate)
-            : undefined,
-        });
+          ...dataToSave,
+        };
+        
+        // Parsear firstRegistrationDate si existe
+        if (dataToSave.firstRegistrationDate) {
+          const parsedDate = this.parseDate(dataToSave.firstRegistrationDate);
+          if (parsedDate) {
+            cuentaDataToCreate.firstRegistrationDate = parsedDate;
+          } else {
+            delete cuentaDataToCreate.firstRegistrationDate;
+          }
+        }
+        
+        // Solo incluir llcType si tiene un valor válido
+        if (dataToSave.llcType !== 'single' && dataToSave.llcType !== 'multi') {
+          delete cuentaDataToCreate.llcType;
+        }
+
+        const cuentaData = this.cuentaRepo.create(cuentaDataToCreate);
         await queryRunner.manager.save(CuentaBancariaRequest, cuentaData);
+        
+        // Procesar owners como Members si hay datos
+        const ownersArray = owners || [];
+        if (ownersArray.length > 0) {
+          const validOwners = ownersArray.filter((o: any) => 
+            o.firstName || o.lastName || o.passportNumber
+          );
+          
+          if (validOwners.length > 0) {
+            const membersToSave = validOwners.map((ownerDto: any) => {
+              const { dateOfBirth, passportFileUrl, lastName, passportNumber, ssnItin, cuit, participationPercentage, ...ownerDataWithoutDate } = ownerDto;
+              const parsedDate = this.parseDate(dateOfBirth);
+              
+              return this.memberRepo.create({
+                requestId: savedRequest.id,
+                firstName: ownerDto.firstName || '',
+                lastName: lastName || ownerDto.lastName || '',
+                paternalLastName: ownerDto.paternalLastName || '',
+                maternalLastName: ownerDto.maternalLastName || '',
+                passportNumber: passportNumber || ownerDto.passportNumber || '',
+                passportOrNationalId: passportNumber || ownerDto.passportOrNationalId || ownerDto.passportNumber || '',
+                identityDocumentUrl: (passportFileUrl && passportFileUrl !== '') 
+                  ? passportFileUrl 
+                  : (ownerDto.identityDocumentUrl && ownerDto.identityDocumentUrl !== '') 
+                    ? ownerDto.identityDocumentUrl 
+                    : '',
+                scannedPassportUrl: (passportFileUrl && passportFileUrl !== '') 
+                  ? passportFileUrl 
+                  : (ownerDto.scannedPassportUrl && ownerDto.scannedPassportUrl !== '') 
+                    ? ownerDto.scannedPassportUrl 
+                    : '',
+                nationality: ownerDto.nationality || '',
+                ssnOrItin: ssnItin || ownerDto.ssnItin || null,
+                nationalTaxId: cuit || ownerDto.cuit || null,
+                percentageOfParticipation: participationPercentage || ownerDto.participationPercentage || 0,
+                email: ownerDto.email || '',
+                phoneNumber: ownerDto.phoneNumber || '',
+                memberAddress: ownerDto.memberAddress || {
+                  street: '',
+                  city: '',
+                  stateRegion: '',
+                  postalCode: '',
+                  country: ''
+                },
+                validatesBankAccount: false,
+                ...(parsedDate ? { dateOfBirth: parsedDate } : {}),
+              });
+            }) as unknown as Member[];
+            
+            await queryRunner.manager.save(Member, membersToSave);
+          }
+        }
       }
 
       await queryRunner.commitTransaction();
@@ -849,12 +1234,73 @@ export class WizardService {
           );
         }
 
+        const currentStep = updateRequestDto.currentStepNumber ?? aperturaRequest.currentStepNumber;
+        
         if (updateRequestDto.currentStepNumber !== undefined) {
           aperturaRequest.currentStepNumber = updateRequestDto.currentStepNumber;
         }
 
         if (updateRequestDto.aperturaLlcData) {
-          Object.assign(aperturaRequest, updateRequestDto.aperturaLlcData);
+          const { members, ...aperturaDataFields } = updateRequestDto.aperturaLlcData;
+          const aperturaDataRaw: any = { ...aperturaDataFields };
+          
+          // Sección 3 (apertura bancaria) - solo procesar si currentStep >= 3
+          if (currentStep < 3) {
+            delete aperturaDataRaw.serviceBillUrl;
+            delete aperturaDataRaw.bankStatementUrl;
+            delete aperturaDataRaw.periodicIncome10k;
+            delete aperturaDataRaw.bankAccountLinkedEmail;
+            delete aperturaDataRaw.bankAccountLinkedPhone;
+            delete aperturaDataRaw.actividadFinancieraEsperada;
+            delete aperturaDataRaw.projectOrCompanyUrl;
+          }
+          
+          Object.assign(aperturaRequest, aperturaDataRaw);
+          
+          // Actualizar miembros si están presentes
+          if (members && members.length > 0) {
+            // Eliminar miembros existentes
+            await queryRunner.manager.delete(Member, { requestId: id });
+            
+            const validMembers = members.filter((m: any) =>
+              m.firstName || m.lastName || m.email || m.passportNumber
+            );
+
+            if (validMembers.length > 0) {
+              const validators = validMembers.filter((m: any) => m.validatesBankAccount);
+              if (validators.length > 1) {
+                throw new BadRequestException(
+                  'Solo un miembro puede validar la cuenta bancaria',
+                );
+              }
+
+              const membersToSave = validMembers.map((memberDto: any) => {
+                const { dateOfBirth, scannedPassportUrl, ...memberDataWithoutDate } = memberDto;
+                const parsedDate = this.parseDate(dateOfBirth);
+                return this.memberRepo.create({
+                  requestId: id,
+                  firstName: memberDto.firstName || '',
+                  lastName: memberDto.lastName || '',
+                  passportNumber: memberDto.passportNumber || '',
+                  scannedPassportUrl: scannedPassportUrl || memberDto.scannedPassportUrl || '',
+                  nationality: memberDto.nationality || '',
+                  email: memberDto.email || '',
+                  phoneNumber: memberDto.phoneNumber || '',
+                  percentageOfParticipation: memberDto.percentageOfParticipation || 0,
+                  memberAddress: memberDto.memberAddress || {
+                    street: '',
+                    city: '',
+                    stateRegion: '',
+                    postalCode: '',
+                    country: ''
+                  },
+                  validatesBankAccount: memberDto.validatesBankAccount || false,
+                  ...(parsedDate ? { dateOfBirth: parsedDate } : {}),
+                });
+              }) as unknown as Member[];
+              await queryRunner.manager.save(Member, membersToSave);
+            }
+          }
         }
 
         await queryRunner.manager.save(AperturaLlcRequest, aperturaRequest);
@@ -869,12 +1315,98 @@ export class WizardService {
           );
         }
 
+        const currentStep = updateRequestDto.currentStepNumber ?? renovacionRequest.currentStepNumber;
+        
         if (updateRequestDto.currentStepNumber !== undefined) {
           renovacionRequest.currentStepNumber = updateRequestDto.currentStepNumber;
         }
 
         if (updateRequestDto.renovacionLlcData) {
-          Object.assign(renovacionRequest, updateRequestDto.renovacionLlcData);
+          const renovacionDataRaw = updateRequestDto.renovacionLlcData as any;
+          const { members, owners, ...renovacionDataFields } = renovacionDataRaw;
+          const dataToSave: any = { ...renovacionDataFields };
+          
+          // Sección 3: Información Contable - solo procesar si currentStep >= 3
+          if (currentStep < 3) {
+            delete dataToSave.llcOpeningCost;
+            delete dataToSave.paidToFamilyMembers;
+            delete dataToSave.paidToLocalCompanies;
+            delete dataToSave.paidForLLCFormation;
+            delete dataToSave.paidForLLCDissolution;
+            delete dataToSave.bankAccountBalanceEndOfYear;
+          }
+          
+          // Sección 4: Movimientos Financieros - solo procesar si currentStep >= 4
+          if (currentStep < 4) {
+            delete dataToSave.totalRevenue2025;
+          }
+          
+          // Sección 5: Información Adicional - solo procesar si currentStep >= 5
+          if (currentStep < 5) {
+            delete dataToSave.hasFinancialInvestmentsInUSA;
+            delete dataToSave.hasFiledTaxesBefore;
+            delete dataToSave.wasConstitutedWithStartCompanies;
+            delete dataToSave.partnersPassportsFileUrl;
+            delete dataToSave.operatingAgreementAdditionalFileUrl;
+            delete dataToSave.form147Or575FileUrl;
+            delete dataToSave.articlesOfOrganizationAdditionalFileUrl;
+            delete dataToSave.boiReportFileUrl;
+            delete dataToSave.bankStatementsFileUrl;
+          }
+          
+          Object.assign(renovacionRequest, dataToSave);
+          
+          // Actualizar miembros si están presentes (homologado: usar 'members' o 'owners')
+          const membersArray = members || owners || [];
+          if (membersArray.length > 0) {
+            // Eliminar miembros existentes
+            await queryRunner.manager.delete(Member, { requestId: id });
+            
+            const validMembers = membersArray.filter((m: any) =>
+              m.firstName || m.lastName || m.email || m.passportNumber || m.name
+            );
+
+            if (validMembers.length > 0) {
+              const membersToSave = validMembers.map((memberDto: any) => {
+                const { dateOfBirth, ...memberDataWithoutDate } = memberDto;
+                const parsedDate = this.parseDate(dateOfBirth);
+                
+                return this.memberRepo.create({
+                  requestId: id,
+                  firstName: memberDto.firstName || memberDto.name || '',
+                  lastName: memberDto.lastName || '',
+                  passportNumber: memberDto.passportNumber || '',
+                  scannedPassportUrl: memberDto.scannedPassportUrl || '',
+                  nationality: memberDto.nationality || '',
+                  email: memberDto.email || '',
+                  phoneNumber: memberDto.phoneNumber || memberDto.phone || '',
+                  percentageOfParticipation: memberDto.percentageOfParticipation || memberDto.participationPercentage || 0,
+                  memberAddress: memberDto.memberAddress || {
+                    street: memberDto.fullAddress || '',
+                    unit: memberDto.unit || '',
+                    city: memberDto.city || '',
+                    stateRegion: memberDto.stateRegion || '',
+                    postalCode: memberDto.postalCode || '',
+                    country: memberDto.country || ''
+                  },
+                  ssnOrItin: memberDto.ssnItin || memberDto.ssnOrItin || null,
+                  nationalTaxId: memberDto.cuit || memberDto.nationalTaxId || null,
+                  ownerContributions: memberDto.capitalContributions2025 || memberDto.ownerContributions || 0,
+                  ownerLoansToLLC: memberDto.loansToLLC2025 || memberDto.ownerLoansToLLC || 0,
+                  loansReimbursedByLLC: memberDto.loansRepaid2025 || memberDto.loansReimbursedByLLC || 0,
+                  profitDistributions: memberDto.capitalWithdrawals2025 || memberDto.profitDistributions || 0,
+                  hasUSFinancialInvestments: memberDto.hasInvestmentsInUSA || memberDto.hasUSFinancialInvestments || '',
+                  isUSCitizen: memberDto.isUSCitizen || '',
+                  taxFilingCountry: Array.isArray(memberDto.taxCountry) 
+                    ? memberDto.taxCountry.join(', ') 
+                    : (memberDto.taxCountry || memberDto.taxFilingCountry || ''),
+                  spentMoreThan31DaysInUS: memberDto.wasInUSA31Days2025 || memberDto.wasInUSA31Days || memberDto.spentMoreThan31DaysInUS || '',
+                  ...(parsedDate ? { dateOfBirth: parsedDate } : {}),
+                });
+              }) as unknown as Member[];
+              await queryRunner.manager.save(Member, membersToSave);
+            }
+          }
         }
 
         await queryRunner.manager.save(RenovacionLlcRequest, renovacionRequest);
@@ -889,18 +1421,247 @@ export class WizardService {
           );
         }
 
+        const currentStep = updateRequestDto.currentStepNumber ?? cuentaRequest.currentStepNumber;
+        
         if (updateRequestDto.currentStepNumber !== undefined) {
           cuentaRequest.currentStepNumber = updateRequestDto.currentStepNumber;
         }
 
         if (updateRequestDto.cuentaBancariaData) {
-          const cuentaData = { ...updateRequestDto.cuentaBancariaData };
-          if (cuentaData.firstRegistrationDate) {
-            cuentaData.firstRegistrationDate = new Date(
-              cuentaData.firstRegistrationDate as any,
-            ) as any;
+          const cuentaDataRaw = updateRequestDto.cuentaBancariaData as any;
+          const { owners, validators, ...cuentaDataFields } = cuentaDataRaw;
+          const dataToSave: any = { ...cuentaDataFields };
+          
+          // Mapear campos del frontend a la entidad
+          if (cuentaDataRaw.legalBusinessName) {
+            dataToSave.legalBusinessIdentifier = cuentaDataRaw.legalBusinessName;
           }
-          Object.assign(cuentaRequest, cuentaData);
+          if (cuentaDataRaw.briefDescription) {
+            dataToSave.economicActivity = cuentaDataRaw.briefDescription;
+          }
+          if (cuentaDataRaw.einNumber) {
+            dataToSave.ein = cuentaDataRaw.einNumber;
+          }
+          if (cuentaDataRaw.articlesOrCertificateUrl) {
+            dataToSave.certificateOfConstitutionOrArticlesUrl = cuentaDataRaw.articlesOrCertificateUrl;
+          }
+          
+          // Sección 2: Dirección del Registered Agent
+          if (currentStep >= 2) {
+            const raStreet = cuentaDataRaw.registeredAgentStreet || '';
+            const raUnit = cuentaDataRaw.registeredAgentUnit || '';
+            const raCity = cuentaDataRaw.registeredAgentCity || '';
+            const raState = cuentaDataRaw.registeredAgentState || '';
+            const raZip = cuentaDataRaw.registeredAgentZipCode || '';
+            const raCountry = cuentaDataRaw.registeredAgentCountry || 'United States';
+            
+            if (raStreet || raCity || raState) {
+              dataToSave.registeredAgentAddress = [raStreet, raUnit, raCity, raState, raCountry].filter(Boolean).join(', ');
+            }
+            
+            if (cuentaDataRaw.registeredAgentState) {
+              dataToSave.registeredAgentState = cuentaDataRaw.registeredAgentState;
+            }
+            
+            if (cuentaDataRaw.countriesWhereBusiness) {
+              dataToSave.countriesWhereBusiness = Array.isArray(cuentaDataRaw.countriesWhereBusiness)
+                ? cuentaDataRaw.countriesWhereBusiness.join(', ')
+                : cuentaDataRaw.countriesWhereBusiness;
+            }
+          }
+          
+          // Sección 3: Información del validador
+          if (currentStep >= 3) {
+            let validatorData: any = null;
+            
+            if (validators && validators.length > 0) {
+              validatorData = validators[0];
+            } else if (cuentaDataRaw.validatorFirstName || cuentaDataRaw.validatorLastName || 
+                       cuentaDataRaw.validatorDateOfBirth || cuentaDataRaw.validatorPassportNumber ||
+                       cuentaDataRaw.validatorPassportUrl || cuentaDataRaw.isUSResident) {
+              validatorData = cuentaDataRaw;
+            }
+            
+            if (validatorData) {
+              if (validatorData.validatorFirstName || validatorData.firstName) {
+                dataToSave.validatorFirstName = validatorData.validatorFirstName || validatorData.firstName || '';
+              }
+              if (validatorData.validatorLastName || validatorData.lastName) {
+                dataToSave.validatorLastName = validatorData.validatorLastName || validatorData.lastName || '';
+              }
+              if (validatorData.validatorNationality || validatorData.nationality) {
+                dataToSave.validatorNationality = validatorData.validatorNationality || validatorData.nationality || '';
+              }
+              if (validatorData.validatorCitizenship || validatorData.citizenship) {
+                dataToSave.validatorCitizenship = validatorData.validatorCitizenship || validatorData.citizenship || '';
+              }
+              if (validatorData.validatorPassportNumber || validatorData.passportNumber) {
+                dataToSave.validatorPassportNumber = validatorData.validatorPassportNumber || validatorData.passportNumber || '';
+              }
+              
+              const passportUrl = validatorData.validatorPassportUrl || validatorData.scannedPassportUrl || 
+                                 cuentaDataRaw.validatorPassportUrl || '';
+              if (passportUrl) {
+                dataToSave.validatorScannedPassportUrl = passportUrl;
+              }
+              
+              if (validatorData.validatorWorkEmail || validatorData.workEmail) {
+                dataToSave.validatorWorkEmail = validatorData.validatorWorkEmail || validatorData.workEmail || '';
+              }
+              if (validatorData.validatorPhone || validatorData.phone) {
+                dataToSave.validatorPhone = validatorData.validatorPhone || validatorData.phone || '';
+              }
+              
+              if (validatorData.validatorTitle || validatorData.title) {
+                dataToSave.validatorTitle = validatorData.validatorTitle || validatorData.title || '';
+              }
+              if (validatorData.validatorIncomeSource || validatorData.incomeSource) {
+                dataToSave.validatorIncomeSource = validatorData.validatorIncomeSource || validatorData.incomeSource || '';
+              }
+              if (validatorData.validatorAnnualIncome || validatorData.annualIncome) {
+                const annualIncome = typeof (validatorData.validatorAnnualIncome || validatorData.annualIncome) === 'string'
+                  ? parseFloat(validatorData.validatorAnnualIncome || validatorData.annualIncome)
+                  : (validatorData.validatorAnnualIncome || validatorData.annualIncome);
+                if (!isNaN(annualIncome)) {
+                  dataToSave.validatorAnnualIncome = annualIncome;
+                }
+              }
+              
+              if (validatorData.useEmailForRelayLogin !== undefined) {
+                dataToSave.validatorUseEmailForRelayLogin = validatorData.useEmailForRelayLogin || false;
+              }
+              if (validatorData.canReceiveSMS !== undefined) {
+                dataToSave.validatorCanReceiveSMS = validatorData.canReceiveSMS || false;
+              }
+              
+              const isUSResidentValue = validatorData.isUSResident !== undefined && validatorData.isUSResident !== ''
+                ? validatorData.isUSResident 
+                : cuentaDataRaw.isUSResident;
+              if (isUSResidentValue !== undefined && isUSResidentValue !== '') {
+                dataToSave.validatorIsUSResident = isUSResidentValue === 'yes' || isUSResidentValue === true;
+              }
+              
+              const dateOfBirth = validatorData.validatorDateOfBirth || validatorData.dateOfBirth;
+              if (dateOfBirth && dateOfBirth.trim && dateOfBirth.trim() !== '') {
+                const parsedDate = this.parseDate(dateOfBirth);
+                if (parsedDate) {
+                  dataToSave.validatorDateOfBirth = parsedDate;
+                }
+              }
+            }
+          }
+          
+          // Sección 4: Dirección personal del propietario
+          if (currentStep >= 4) {
+            if (cuentaDataRaw.ownerPersonalStreet || cuentaDataRaw.ownerPersonalCity) {
+              dataToSave.ownerPersonalAddress = {
+                street: cuentaDataRaw.ownerPersonalStreet || '',
+                unit: cuentaDataRaw.ownerPersonalUnit || '',
+                city: cuentaDataRaw.ownerPersonalCity || '',
+                state: cuentaDataRaw.ownerPersonalState || '',
+                postalCode: cuentaDataRaw.ownerPersonalPostalCode || '',
+                country: cuentaDataRaw.ownerPersonalCountry || ''
+              };
+            }
+            if (cuentaDataRaw.serviceBillUrl) {
+              dataToSave.proofOfAddressUrl = cuentaDataRaw.serviceBillUrl;
+            }
+          }
+          
+          // Sección 5: Tipo de LLC
+          if (currentStep >= 5) {
+            if (cuentaDataRaw.isMultiMember === 'yes') {
+              dataToSave.llcType = 'multi';
+            } else if (cuentaDataRaw.isMultiMember === 'no') {
+              dataToSave.llcType = 'single';
+            }
+          }
+          
+          // Limpiar campos que no deben guardarse directamente
+          delete dataToSave.legalBusinessName;
+          delete dataToSave.briefDescription;
+          delete dataToSave.einNumber;
+          delete dataToSave.articlesOrCertificateUrl;
+          delete dataToSave.registeredAgentStreet;
+          delete dataToSave.registeredAgentUnit;
+          delete dataToSave.registeredAgentCity;
+          delete dataToSave.registeredAgentZipCode;
+          delete dataToSave.registeredAgentCountry;
+          delete dataToSave.ownerPersonalStreet;
+          delete dataToSave.ownerPersonalUnit;
+          delete dataToSave.ownerPersonalCity;
+          delete dataToSave.ownerPersonalState;
+          delete dataToSave.ownerPersonalCountry;
+          delete dataToSave.ownerPersonalPostalCode;
+          delete dataToSave.isMultiMember;
+          delete dataToSave.validatorPassportUrl;
+          
+          // Parsear firstRegistrationDate si existe
+          if (dataToSave.firstRegistrationDate) {
+            const parsedDate = this.parseDate(dataToSave.firstRegistrationDate);
+            if (parsedDate) {
+              dataToSave.firstRegistrationDate = parsedDate;
+            } else {
+              delete dataToSave.firstRegistrationDate;
+            }
+          }
+          
+          Object.assign(cuentaRequest, dataToSave);
+          
+          // Actualizar owners como Members si hay datos
+          const ownersArray = owners || [];
+          if (ownersArray.length > 0) {
+            // Eliminar miembros existentes
+            await queryRunner.manager.delete(Member, { requestId: id });
+            
+            const validOwners = ownersArray.filter((o: any) => 
+              o.firstName || o.lastName || o.passportNumber
+            );
+            
+            if (validOwners.length > 0) {
+              const membersToSave = validOwners.map((ownerDto: any) => {
+                const { dateOfBirth, passportFileUrl, lastName, passportNumber, ssnItin, cuit, participationPercentage, ...ownerDataWithoutDate } = ownerDto;
+                const parsedDate = this.parseDate(dateOfBirth);
+                
+                return this.memberRepo.create({
+                  requestId: id,
+                  firstName: ownerDto.firstName || '',
+                  lastName: lastName || ownerDto.lastName || '',
+                  paternalLastName: ownerDto.paternalLastName || '',
+                  maternalLastName: ownerDto.maternalLastName || '',
+                  passportNumber: passportNumber || ownerDto.passportNumber || '',
+                  passportOrNationalId: passportNumber || ownerDto.passportOrNationalId || ownerDto.passportNumber || '',
+                  identityDocumentUrl: (passportFileUrl && passportFileUrl !== '') 
+                    ? passportFileUrl 
+                    : (ownerDto.identityDocumentUrl && ownerDto.identityDocumentUrl !== '') 
+                      ? ownerDto.identityDocumentUrl 
+                      : '',
+                  scannedPassportUrl: (passportFileUrl && passportFileUrl !== '') 
+                    ? passportFileUrl 
+                    : (ownerDto.scannedPassportUrl && ownerDto.scannedPassportUrl !== '') 
+                      ? ownerDto.scannedPassportUrl 
+                      : '',
+                  nationality: ownerDto.nationality || '',
+                  ssnOrItin: ssnItin || ownerDto.ssnItin || null,
+                  nationalTaxId: cuit || ownerDto.cuit || null,
+                  percentageOfParticipation: participationPercentage || ownerDto.participationPercentage || 0,
+                  email: ownerDto.email || '',
+                  phoneNumber: ownerDto.phoneNumber || '',
+                  memberAddress: ownerDto.memberAddress || {
+                    street: '',
+                    city: '',
+                    stateRegion: '',
+                    postalCode: '',
+                    country: ''
+                  },
+                  validatesBankAccount: false,
+                  ...(parsedDate ? { dateOfBirth: parsedDate } : {}),
+                });
+              }) as unknown as Member[];
+              
+              await queryRunner.manager.save(Member, membersToSave);
+            }
+          }
         }
 
         await queryRunner.manager.save(CuentaBancariaRequest, cuentaRequest);

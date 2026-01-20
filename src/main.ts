@@ -25,7 +25,7 @@ async function bootstrap() {
   const allowedOrigins = [
     'http://localhost:4200',
     'http://localhost:4000',
-    'http://0.0.0.0:4000',
+    'http://localhost:55167',
     'https://startcompanies.us',
     'https://admin-blog.startcompanies.us',
     'https://staging.startcompanies.io',
