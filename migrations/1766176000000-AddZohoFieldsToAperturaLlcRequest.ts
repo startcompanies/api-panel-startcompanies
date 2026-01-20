@@ -43,13 +43,10 @@ export class AddZohoFieldsToAperturaLlcRequest1766176000000
       `);
       
       if (hasColumn && hasColumn.length > 0) {
-        // Si tiene constraint, eliminarlo primero
-        if (colName === 'registered_agent_type') {
-          await queryRunner.query(`
-            ALTER TABLE "${table}" DROP CONSTRAINT IF EXISTS "check_apertura_registered_agent_type"
-          `);
-        }
-        await queryRunner.dropColumn(table, colName);
+        // Ojo: `queryRunner.dropColumn` (TypeORM) puede intentar borrar constraints aparte
+        // y fallar si el constraint ya fue eliminado al hacer DROP COLUMN.
+        // Usamos SQL directo e idempotente.
+        await queryRunner.query(`ALTER TABLE "${table}" DROP COLUMN IF EXISTS "${colName}"`);
       }
     }
 
