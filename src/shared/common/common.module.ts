@@ -9,4 +9,4 @@ import { ConfigModule } from '@nestjs/config';
   imports: [TypeOrmModule.forFeature([]), ConfigModule],
   exports: [HandleExceptionsService, EmailService, TypeOrmModule],
 })
-export class CommonModule {}
+ export class CommonModule {}

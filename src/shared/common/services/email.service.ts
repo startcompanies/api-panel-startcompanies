@@ -285,6 +285,84 @@ export class EmailService {
       throw error;
     }
   }
+
+  /**
+   * Envía un email confirmando que la solicitud del wizard fue enviada.
+   * Se dispara al pasar el request a status = 'solicitud-recibida'.
+   */
+  async sendWizardRequestSubmittedEmail(params: {
+    email: string;
+    name: string;
+    requestId: number;
+    requestType: string;
+  }): Promise<void> {
+    const { email, name, requestId, requestType } = params;
+
+    if (!this.resend) {
+      this.logger.warn(`Email de solicitud enviada no enviado a ${email} (Resend no configurado)`);
+      return;
+    }
+
+    const frontendUrl =
+      this.configService.get<string>('FRONTEND_URL') || 'http://localhost:4200';
+    const panelUrl = `${frontendUrl}/panel`;
+
+    const typeLabel =
+      requestType === 'apertura-llc'
+        ? 'Apertura de LLC'
+        : requestType === 'renovacion-llc'
+          ? 'Renovación de LLC'
+          : requestType === 'cuenta-bancaria'
+            ? 'Cuenta Bancaria'
+            : 'Solicitud';
+
+    await this.resend.emails.send({
+      from:
+        this.configService.get<string>('RESEND_FROM_EMAIL') ||
+        'Start Companies <noreply@startcompanies.us>',
+      to: email,
+      subject: `Hemos recibido tu solicitud - ${typeLabel}`,
+      html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background-color: #0d6efd; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+            .content { background-color: #f9f9f9; padding: 30px; border-radius: 0 0 5px 5px; }
+            .button { display: inline-block; padding: 12px 30px; background-color: #0d6efd; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+            .footer { text-align: center; margin-top: 20px; color: #666; font-size: 12px; }
+            .badge { display: inline-block; padding: 6px 12px; background: #eef5ff; border: 1px solid #cfe2ff; border-radius: 999px; color: #0d6efd; font-weight: 600; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>Solicitud enviada</h1>
+            </div>
+            <div class="content">
+              <p>Hola ${name || email},</p>
+              <p>Tu solicitud de <strong>${typeLabel}</strong> ha sido enviada exitosamente.</p>
+              <p class="badge">ID de solicitud: #${requestId}</p>
+              <p>En breve nuestro equipo revisará tu información y se pondrá en contacto contigo.</p>
+              <div style="text-align: center;">
+                <a href="${panelUrl}" class="button">Ir a mi panel</a>
+              </div>
+              <p>Si no solicitaste esto, por favor contáctanos.</p>
+            </div>
+            <div class="footer">
+              <p>© ${new Date().getFullYear()} Start Companies LLC. Todos los derechos reservados.</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+    });
+
+    this.logger.log(`Email de solicitud enviada enviado a ${email} (request #${requestId})`);
+  }
 }
 
 

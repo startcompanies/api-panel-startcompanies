@@ -1181,6 +1181,8 @@ export class WizardService {
         throw new NotFoundException(`Solicitud con ID ${id} no encontrada`);
       }
 
+      const previousStatus = request.status;
+
       // Validar que NO tenga partnerId (wizard no tiene partners)
       if (request.partnerId) {
         throw new BadRequestException('Esta solicitud no pertenece al flujo wizard');
@@ -1670,7 +1672,7 @@ export class WizardService {
       await queryRunner.commitTransaction();
 
       // Retornar la solicitud actualizada
-      return await this.requestRepository.findOne({
+      const updatedRequest = await this.requestRepository.findOne({
         where: { id },
         relations: [
           'client',
@@ -1679,6 +1681,36 @@ export class WizardService {
           'cuentaBancariaRequest',
         ],
       });
+
+      // Enviar email solo cuando la solicitud pasa a "solicitud-recibida" por primera vez
+      try {
+        if (
+          previousStatus !== 'solicitud-recibida' &&
+          updatedRequest?.status === 'solicitud-recibida'
+        ) {
+          const clientEmail = updatedRequest.client?.email;
+          if (clientEmail) {
+            const clientName = updatedRequest.client?.full_name || clientEmail;
+            await this.emailService.sendWizardRequestSubmittedEmail({
+              email: clientEmail,
+              name: clientName,
+              requestId: id,
+              requestType: updatedRequest.type,
+            });
+          } else {
+            this.logger.warn(
+              `[Wizard] No se pudo enviar email de solicitud enviada: client email vacío (request ${id})`,
+            );
+          }
+        }
+      } catch (emailError) {
+        // No bloquear el flujo si falla el email
+        this.logger.error(
+          `[Wizard] Error al enviar email de solicitud enviada para request ${id}: ${emailError}`,
+        );
+      }
+
+      return updatedRequest;
     } catch (error) {
       await queryRunner.rollbackTransaction();
       if (
