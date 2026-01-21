@@ -98,6 +98,37 @@ export class WizardService {
   }
 
   /**
+   * Verifica si un email está disponible para registro
+   * Retorna información sobre el estado del email
+   */
+  async checkEmailAvailability(email: string) {
+    const existingUser = await this.userRepo.findOne({
+      where: { email },
+    });
+
+    if (!existingUser) {
+      return {
+        available: true,
+        message: 'Email disponible',
+      };
+    }
+
+    if (existingUser.emailVerified) {
+      return {
+        available: false,
+        message: 'El email ya está registrado y confirmado. Por favor, inicia sesión.',
+        emailVerified: true,
+      };
+    } else {
+      return {
+        available: false,
+        message: 'El email ya está registrado pero no ha sido confirmado. Por favor, revisa tu correo para confirmar tu cuenta.',
+        emailVerified: false,
+      };
+    }
+  }
+
+  /**
    * Registra un nuevo usuario en el flujo wizard
    * Crea usuario y cliente, envía correo de confirmación
    */

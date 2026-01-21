@@ -11,8 +11,6 @@ import { ChangePasswordDto } from './dtos/changePassword.dto';
 import { ForgotPasswordDto } from './dtos/forgotPassword.dto';
 import { ResetPasswordDto } from './dtos/resetPassword.dto';
 import { EmailService } from 'src/shared/common/services/email.service';
-import { SsoDto, RefreshSsoDto } from './dtos/sso.dto';
-import * as crypto from 'crypto';
 
 @Injectable()
 export class authService {
@@ -184,92 +182,6 @@ export class authService {
     }
   }
 
-  /**
-   * SSO Sign In - Autenticación mediante parámetros de URL (para embedding en Zoho CRM)
-   */
-  async ssoSignIn(ssoDto: SsoDto) {
-    const { email, token } = ssoDto;
-
-    // Validar token SSO
-    const isValidToken = this.validateSsoToken(email, token);
-    if (!isValidToken) {
-      throw new UnauthorizedException('Invalid SSO token');
-    }
-
-    // Buscar usuario por email
-    const userEntity = await this.userRepository.findOne({
-      where: [{ email }, { username: email }],
-    });
-
-    if (!userEntity) {
-      throw new UnauthorizedException('Usuario no encontrado');
-    }
-
-    if (userEntity.status === false) {
-      throw new UnauthorizedException('Usuario inactivo');
-    }
-
-    // Generar tokens JWT
-    const payload = { 
-      id: userEntity.id,
-      username: userEntity.username, 
-      email: userEntity.email,
-      status: userEntity.status,
-      type: userEntity.type
-    };
-    const accessToken = this.jwtService.sign(payload, { expiresIn: '1h' });
-    const refreshToken = this.jwtService.sign(payload, { expiresIn: '5d' });
-
-    return {
-      id: userEntity.id,
-      username: userEntity.username,
-      email: userEntity.email,
-      status: userEntity.status,
-      type: userEntity.type,
-      accessToken,
-      refreshToken,
-    };
-  }
-
-  /**
-   * Valida el token SSO comparándolo con una clave secreta
-   */
-  private validateSsoToken(email: string, token: string): boolean {
-    const secretKey = process.env.ZOHO_SSO_SECRET || 'default-secret-key-change-in-production';
-    
-    // Si el token es igual a la clave secreta (modo simple para desarrollo/testing)
-    if (token === secretKey) {
-      return true;
-    }
-
-    // Validación con timestamp (permite tokens válidos por 2 minutos)
-    const currentMinute = Math.floor(Date.now() / 60000);
-    
-    // Validar con timestamp actual y los 2 minutos anteriores
-    for (let i = 0; i <= 2; i++) {
-      const timestamp = currentMinute - i;
-      const expectedHash = crypto
-        .createHmac('sha256', secretKey)
-        .update(email + timestamp.toString())
-        .digest('hex');
-      
-      if (token === expectedHash) {
-        return true;
-      }
-    }
-
-    // Validación adicional: token puede ser un hash del email + secretKey
-    const emailHash = crypto
-      .createHmac('sha256', secretKey)
-      .update(email)
-      .digest('hex');
-    
-    if (token === emailHash) {
-      return true;
-    }
-
-    return false;
-  }
 
   /**
    * Refresh token - Renueva el access token usando un refresh token
