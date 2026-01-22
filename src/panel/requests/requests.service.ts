@@ -32,6 +32,7 @@ import { UploadFileService } from '../../shared/upload-file/upload-file.service'
 import { awsConfigService } from '../../config/aws.config.service';
 // ZohoCrmService ya no se usa en findOne - solo se consulta la BD local
 // import { ZohoCrmService } from '../../zoho-config/zoho-crm.service';
+import { ZohoSyncService } from '../../zoho-config/zoho-sync.service';
 export type { RequestType } from './types/request-type';
 
 @Injectable()
@@ -187,6 +188,7 @@ export class RequestsService {
     private readonly uploadFileService: UploadFileService,
     // ZohoCrmService ya no se usa - solo consultamos BD local
     // private readonly zohoCrmService: ZohoCrmService,
+    private readonly zohoSyncService: ZohoSyncService,
   ) {}
 
   async findAllByUser(userId: number, role: 'client' | 'partner') {
@@ -2844,7 +2846,24 @@ export class RequestsService {
     
     const initialStage = approveDto.initialStage || defaultStage;
 
-    // Actualizar estado y etapa
+    // PRIMERO: Sincronizar con Zoho CRM antes de aprobar
+    // Si la sincronización falla, no se aprueba la solicitud
+    try {
+      this.logger.log(`Iniciando sincronización con Zoho para solicitud ${id} antes de aprobar`);
+      await this.zohoSyncService.syncRequestToZoho(id);
+      this.logger.log(`Sincronización con Zoho completada exitosamente para solicitud ${id}`);
+    } catch (error: any) {
+      // Si la sincronización falla, no aprobar la solicitud
+      this.logger.error(
+        `Error al sincronizar solicitud ${id} con Zoho. La solicitud NO será aprobada:`,
+        error.message || error,
+      );
+      throw new BadRequestException(
+        `No se pudo aprobar la solicitud porque falló la sincronización con Zoho: ${error.message || 'Error desconocido'}`,
+      );
+    }
+
+    // SOLO si la sincronización fue exitosa, aprobar la solicitud
     request.status = 'en-proceso';
     request.stage = initialStage;
     if (approveDto.notes) {
@@ -2854,7 +2873,7 @@ export class RequestsService {
     await this.requestRepository.save(request);
 
     this.logger.log(
-      `Solicitud ${id} aprobada. Etapa inicial: ${initialStage}`,
+      `Solicitud ${id} aprobada exitosamente. Etapa inicial: ${initialStage}`,
     );
 
     return {

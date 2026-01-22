@@ -113,8 +113,9 @@ export class ZohoSyncService {
   }
 
   /**
-   * Sincroniza una solicitud completa (Request + detalles) a Zoho CRM
-   * Crea/actualiza Account, Contacts, Deal y subformularios
+   * Sincroniza una solicitud desde BD a Zoho CRM
+   * SOLO crea/actualiza Account (NO crea Contacts ni Deals)
+   * Nota: El proceso inverso (Zoho a BD) es diferente y sí crea Contacts y Deals
    */
   async syncRequestToZoho(requestId: number, org: string = 'startcompanies') {
     try {
@@ -131,36 +132,32 @@ export class ZohoSyncService {
         );
       }
 
-      // Obtener miembros de la solicitud
+      // Obtener miembros de la solicitud (necesarios para el mapeo del Account)
       const members = await this.memberRepo.find({
         where: { requestId },
-        order: { id: 'ASC' }, // El primero será el contacto principal
+        order: { id: 'ASC' },
       });
 
-      // Determinar el contacto principal
-      // Si hay partner, el partner es el contacto principal
-      // Si no hay partner, el primer miembro o el cliente es el contacto principal
-      let primaryContact: User | Member | Client | null = null;
-      let primaryContactEmail: string | null = null;
-      let primaryContactPhone: string | null = null;
-
-      if (request.partner) {
-        primaryContact = request.partner;
-        primaryContactEmail = request.partner.email;
-        primaryContactPhone = this.normalizePhoneNumber(request.partner.phone);
-      } else if (members.length > 0) {
-        primaryContact = members[0];
-        primaryContactEmail = members[0].email;
-        primaryContactPhone = this.normalizePhoneNumber(members[0].phoneNumber);
-      } else if (request.client) {
-        primaryContact = request.client;
-        primaryContactEmail = request.client.email;
-        primaryContactPhone = this.normalizePhoneNumber(request.client.phone);
-      }
-
-      // 1. Crear/Actualizar Account en Zoho
-      // Nota: No se incluyen subformularios aquí para evitar validación de porcentajes
+      // Crear/Actualizar Account en Zoho con subformularios (Contacto Principal LLC y Socios LLC)
       const accountData = await this.mapRequestToAccount(request, members);
+      
+      // Agregar subformularios si hay members
+      if (members.length > 0) {
+        // El primer miembro va a "Contacto Principal LLC"
+        const primaryMember = members[0];
+        const primaryContactSubform = this.mapMemberToPrimaryContactSubform(primaryMember);
+        accountData.Contacto_Principal_LLC = [primaryContactSubform];
+
+        // Los demás miembros van a "Socios LLC"
+        const otherMembers = members.slice(1);
+        if (otherMembers.length > 0) {
+          const sociosSubform = otherMembers.map((member) =>
+            this.mapMemberToSociosSubform(member),
+          );
+          accountData.Socios_LLC = sociosSubform;
+        }
+      }
+      
       let accountResult;
       try {
         accountResult = await this.zohoCrmService.upsertRecords(
@@ -170,7 +167,7 @@ export class ZohoSyncService {
           org,
         );
       } catch (error: any) {
-        // Si el error es sobre porcentajes, ignorarlo y continuar
+        // Si el error es sobre porcentajes, intentar buscar el Account existente
         const errorMessage = error.message || error.toString() || '';
         const isPercentageError = errorMessage.includes('porcentajes') || 
                                   errorMessage.includes('porcentaje') ||
@@ -218,95 +215,20 @@ export class ZohoSyncService {
         );
       }
 
-      // Guardar zohoAccountId en Request
-      request.zohoAccountId = accountId;
-      await this.requestRepository.save(request);
-
-      this.logger.log(`Account sincronizado: ${accountId}`);
-
-      // 2. Crear/Actualizar Contacts en Zoho
-      const contactIds: string[] = [];
-      let primaryContactId: string | null = null;
-
-      // Sincronizar el contacto principal primero
-      if (primaryContactEmail) {
-        const primaryContactData = this.mapToContact(
-          primaryContact as any,
-          accountId,
-          true, // Es contacto principal
-        );
-        const primaryContactResult = await this.zohoCrmService.upsertRecords(
-          'Contacts',
-          [primaryContactData],
-          ['Email'], // Campo único
-          org,
-        );
-        primaryContactId = primaryContactResult.data?.[0]?.details?.id;
-        if (primaryContactId) {
-          contactIds.push(primaryContactId);
-        }
-      }
-
-      // Sincronizar otros miembros como contactos adicionales
-      const otherMembers = request.partner ? members : members.slice(1);
-      for (const member of otherMembers) {
-        const contactData = this.mapMemberToContact(member, accountId, false);
-        const contactResult = await this.zohoCrmService.upsertRecords(
-          'Contacts',
-          [contactData],
-          ['Email'],
-          org,
-        );
-        const contactId = contactResult.data?.[0]?.details?.id;
-        if (contactId) {
-          contactIds.push(contactId);
-        }
-      }
-
-      // 3. Crear/Actualizar Deal en Zoho
-      const dealData = await this.mapRequestToDeal(request, accountId, primaryContactId);
-      const dealResult = await this.zohoCrmService.upsertRecords(
-        'Deals',
-        [dealData],
-        ['Deal_Name'], // Campo único
-        org,
+      // Guardar zohoAccountId en Request usando update directo para asegurar que se guarde
+      await this.requestRepository.update(
+        { id: requestId },
+        { zohoAccountId: accountId },
       );
 
-      const dealId = dealResult.data?.[0]?.details?.id;
-      if (!dealId) {
-        throw new HttpException(
-          'No se pudo obtener el ID de Deal de Zoho',
-          HttpStatus.BAD_REQUEST,
-        );
-      }
+      // Actualizar también el objeto en memoria para consistencia
+      request.zohoAccountId = accountId;
 
-      this.logger.log(`Deal sincronizado: ${dealId}`);
-
-      // 4. Actualizar Account con subformularios (Contacto Principal LLC y Socios LLC)
-      // COMENTADO: Validación de porcentajes deshabilitada por ahora
-      // if (members.length > 0) {
-      //   await this.updateAccountSubforms(accountId, members, org);
-      // }
-
-      // 5. Crear usuario si no existe (basado en contacto principal)
-      if (primaryContactEmail && !request.partner && primaryContact) {
-        // Si es un Client, verificar si tiene User asociado
-        if ('full_name' in primaryContact && !('username' in primaryContact) && !('phoneNumber' in primaryContact)) {
-          const client = primaryContact as Client;
-          if (!client.userId) {
-            await this.createUserFromClient(client);
-          }
-        } else {
-          await this.createUserFromPrimaryContact(primaryContactEmail, primaryContact as User | Member);
-        }
-      }
+      this.logger.log(`Account sincronizado exitosamente: ${accountId}. zohoAccountId guardado en BD: ${accountId}`);
 
       return {
         success: true,
         accountId,
-        dealId,
-        primaryContactId,
-        contactIds,
       };
     } catch (error: any) {
       this.logger.error(`Error al sincronizar solicitud ${requestId} a Zoho:`, error);
@@ -328,73 +250,107 @@ export class ZohoSyncService {
       Account_Name: '', // Se llenará según el tipo
       Tipo: this.mapRequestTypeToDealType(request.type),
       Empresa: 'Start Companies',
-      Owner: {
-        id: '5725767000000411001', // Start Companies Staff - ajustar según tu configuración
-      },
+      // Owner se asigna automáticamente por Zoho basado en el usuario que hace la petición
+      // No incluir Owner si causa problemas de validación
     };
 
     // Mapear datos según el tipo de solicitud
     if (request.type === 'apertura-llc' && request.aperturaLlcRequest) {
       const apertura = request.aperturaLlcRequest;
+      // Usar Website si existe, sino P_gina_web_de_la_LLC (según data.md)
+      const website = apertura.website || '';
       accountData = {
         ...accountData,
-        // Mapeo según campos proporcionados (solo los que existen en el mapeo)
+        // Mapeo según data.md - solo campos MANTENER
         Account_Name: apertura.llcName || '',
-        Actividad_Principal_de_la_LLC: apertura.businessDescription || '',
+        Nombre_de_la_LLC_Opci_n_2: apertura.llcNameOption2 || '',
+        Nombre_de_la_LLC_Opci_n_3: apertura.llcNameOption3 || '',
         Estado_de_Registro: apertura.incorporationState || '',
+        Actividad_Principal_de_la_LLC: apertura.businessDescription || '',
         Estructura_Societaria:
           apertura.llcType === 'single'
             ? 'LLC de un solo miembro (Single Member LLC)'
             : 'LLC multi-miembro (Multi-Member LLC)',
-        P_gina_web_de_la_LLC: apertura.website || '',
-        Website: apertura.website || '',
-        N_mero_de_EIN: apertura.einNumber || '',
-        Nombre_de_la_LLC_Opci_n_2: apertura.llcNameOption2 || '',
-        Nombre_de_la_LLC_Opci_n_3: apertura.llcNameOption3 || '',
-        Annual_Revenue: apertura.annualRevenue ? apertura.annualRevenue.toString() : '',
-        Account_Type: apertura.accountType || '',
-        Estado_de_constituci_n: apertura.estadoConstitucion || '',
         LinkedIn: apertura.linkedin || '',
+        N_mero_de_EIN: apertura.einNumber || '',
+        Website: website,
+        P_gina_web_de_la_LLC: website,
         Actividad_financiera_esperada: apertura.actividadFinancieraEsperada || '',
-        Almacena_productos_en_un_dep_sito_en_EE_UU: apertura.almacenaProductosDepositoUSA ? 'true' : 'false',
-        La_LLC_declar_impuestos_anteriormente: apertura.declaroImpuestosAntes ? 'true' : 'false',
-        La_LLC_se_constituy_con_Start_Companies: apertura.llcConStartCompanies ? 'true' : 'false',
-        Los_ingresos_brutos_o_activos_superan_250_000: apertura.ingresosMayor250k ? 'true' : 'false',
-        Posee_la_LLC_inversiones_o_activos_en_EE_UU: apertura.activosEnUSA ? 'true' : 'false',
-        Tendr_ingresos_peri_dicos_que_sumen_USD_10_000: apertura.periodicIncome10k === 'si' ? 'true' : 'false',
-        Tu_empresa_contrata_servicios_en_EE_UU: apertura.contrataServiciosUSA ? 'true' : 'false',
-        Tu_empresa_posee_o_renta_una_propiedad_en_EE_UU: apertura.propiedadEnUSA ? 'true' : 'false',
-        Tu_LLC_tiene_cuentas_bancarias_a_su_nombre: apertura.tieneCuentasBancarias ? 'true' : 'false',
+        Tendr_ingresos_peri_dicos_que_sumen_USD_10_000: this.mapBooleanToPickList(apertura.periodicIncome10k),
+        // Campos eliminados según data.md: Annual_Revenue, Account_Type, Estado_de_constituci_n,
+        // y campos booleanos obsoletos (almacenaProductosDepositoUSA, declaroImpuestosAntes, etc.)
       };
     } else if (request.type === 'renovacion-llc' && request.renovacionLlcRequest) {
       const renovacion = request.renovacionLlcRequest;
       accountData = {
         ...accountData,
+        // Campos MANTENER según data.md
         Account_Name: renovacion.llcName || '',
         Estado_de_Registro: renovacion.state || '',
-        N_mero_de_EIN: renovacion.einNumber || '',
         Actividad_Principal_de_la_LLC: renovacion.mainActivity || '',
-        Correo_electr_nico: '', // contactEmail no existe en RenovacionLlcRequest
-        Phone: '', // contactPhone no existe en RenovacionLlcRequest
+        N_mero_de_EIN: renovacion.einNumber || '',
         Estructura_Societaria:
           renovacion.llcType === 'single'
             ? 'LLC de un solo miembro (Single Member LLC)'
             : 'LLC multi-miembro (Multi-Member LLC)',
-        // Campos adicionales
-        // registrationNumber y societyType no existen en RenovacionLlcRequest
+        // Campos AGREGAR según data.md - usando Pick List (Sí/No)
+        Tu_empresa_posee_o_renta_una_propiedad_en_EE_UU: this.mapBooleanToPickList(renovacion.hasPropertyInUSA),
+        Almacena_productos_en_un_dep_sito_en_EE_UU: this.mapBooleanToPickList(renovacion.almacenaProductosDepositoUSA),
+        Tu_empresa_contrata_servicios_en_EE_UU: this.mapBooleanToPickList(renovacion.contrataServiciosUSA),
+        Tu_LLC_tiene_cuentas_bancarias_a_su_nombre: this.mapBooleanToPickList(renovacion.tieneCuentasBancarias),
+        Fecha_de_Constituci_n: this.formatDate(renovacion.llcCreationDate),
+        Pa_ses_donde_la_LLC_realiza_negocios: Array.isArray(renovacion.countriesWhereLLCDoesBusiness)
+          ? renovacion.countriesWhereLLCDoesBusiness.join(', ')
+          : renovacion.countriesWhereLLCDoesBusiness || '',
+        Posee_la_LLC_inversiones_o_activos_en_EE_UU: this.mapBooleanToPickList(renovacion.hasFinancialInvestmentsInUSA),
+        La_LLC_declar_impuestos_anteriormente: this.mapBooleanToPickList(renovacion.hasFiledTaxesBefore),
+        La_LLC_se_constituy_con_Start_Companies: this.mapBooleanToPickList(renovacion.wasConstitutedWithStartCompanies),
       };
     } else if (request.type === 'cuenta-bancaria' && request.cuentaBancariaRequest) {
       const cuenta = request.cuentaBancariaRequest;
-      // Para cuenta bancaria, necesitamos el nombre de la LLC del Account relacionado
-      // Por ahora, usamos el email del solicitante o el identificador legal
+      // Dirección comercial (Registered Agent) desde companyAddress
+      const companyAddr = cuenta.companyAddress || {
+        street: '',
+        unit: '',
+        city: '',
+        state: '',
+        postalCode: '',
+        country: '',
+      };
+      
       accountData = {
         ...accountData,
+        // Campos MANTENER según data.md
         Account_Name: cuenta.legalBusinessIdentifier || cuenta.applicantEmail || '',
-        Correo_electr_nico: cuenta.applicantEmail || '',
-        Phone: this.normalizePhoneNumber(cuenta.applicantPhone),
-        Actividad_financiera_esperada: cuenta.economicActivity || '',
-        ...(cuenta.industry && { Industry: cuenta.industry }),
-        ...(cuenta.businessType && { Account_Type: cuenta.businessType }),
+        Tipo_de_negocio: cuenta.businessType || '',
+        Industria_Rubro: cuenta.industry || '',
+        Descripci_n_breve: cuenta.economicActivity || '',
+        Estructura_Societaria:
+          cuenta.llcType === 'single'
+            ? 'LLC de un solo miembro (Single Member LLC)'
+            : 'LLC multi-miembro (Multi-Member LLC)',
+        N_mero_de_EIN: cuenta.ein || '',
+        Banco: cuenta.bankName || '',
+        Fecha_de_Constituci_n: this.formatDate(cuenta.firstRegistrationDate),
+        // Campos AGREGAR según data.md
+        Website: cuenta.websiteOrSocialMedia || '',
+        P_gina_web_de_la_LLC: cuenta.websiteOrSocialMedia || '',
+        // Dirección Comercial (Registered Agent) - priorizar Direcci_n_comercial_* según data.md
+        Direcci_n_comercial_Calle_y_numero: companyAddr.street || '',
+        Direcci_n_comercial_Suite: companyAddr.unit || '',
+        Direcci_n_comercial_Ciudad: companyAddr.city || '',
+        Direcci_n_comercial_Estado: companyAddr.state || '',
+        Direcci_n_comercial_Postal: companyAddr.postalCode || '',
+        Direcci_n_postal_Pais: companyAddr.country || '',
+        // También mapear a campos legacy (Calle_y_n_mero, etc.) para compatibilidad
+        Calle_y_n_mero: companyAddr.street || '',
+        Suite_Apto: companyAddr.unit || '',
+        Ciudad: companyAddr.city || '',
+        Estado_Provincia: companyAddr.state || '',
+        Postal_Zip_Code: companyAddr.postalCode || '',
+        Pais: companyAddr.country || '',
+        Estado_de_Registro: cuenta.incorporationState || '',
+        Pa_ses_donde_la_LLC_realiza_negocios: cuenta.countriesWhereBusiness || '',
       };
     }
 
@@ -498,9 +454,7 @@ export class ZohoSyncService {
       },
       Description: description || request.notes || '',
       Layout: request.type === 'apertura-llc' ? 'Aperturas' : 'Standard',
-      Owner: {
-        id: '5725767000000411001', // Start Companies Staff
-      },
+      // Owner se asigna automáticamente por Zoho basado en el usuario que hace la petición
     };
 
     if (primaryContactId) {
@@ -605,6 +559,7 @@ export class ZohoSyncService {
       Correo_electr_nico_Propietario: member.email,
       Tel_fono_Contacto_Propietario: this.normalizePhoneNumber(member.phoneNumber),
       Calle_y_n_mero_exterior_altura: member.memberAddress?.street || '',
+      N_mero_interior_departamento_P: member.memberAddress?.unit || '',
       Ciudad_Propietario: member.memberAddress?.city || '',
       Estado_Regi_n_Provincia_Prop: member.memberAddress?.stateRegion || '',
       C_digo_postal_Propietario: member.memberAddress?.postalCode || '',
@@ -650,6 +605,7 @@ export class ZohoSyncService {
       Correo_electr_nico_Socio: member.email,
       Tel_fono_Socio: this.normalizePhoneNumber(member.phoneNumber),
       Calle_y_n_mero_exterior_altura: member.memberAddress?.street || '',
+      N_mero_interior_departamento_S: member.memberAddress?.unit || '',
       Ciudad_Propietario: member.memberAddress?.city || '',
       Estado_Regi_n_Provincia_Socio: member.memberAddress?.stateRegion || '',
       C_digo_postal_Socio: member.memberAddress?.postalCode || '',
@@ -671,15 +627,44 @@ export class ZohoSyncService {
         Retiros_de_Capital_2024: member.profitDistributions,
       }),
       ...(member.spentMoreThan31DaysInUS && {
-        Estuvo_en_EE_UU_m_s_de_31_d_as_en_2024: member.spentMoreThan31DaysInUS === 'Sí' ? 'Sí' : 'No',
+        Estuvo_en_EE_UU_m_s_de_31_d_as_en_2024: this.mapBooleanToPickList(member.spentMoreThan31DaysInUS),
       }),
       ...(member.hasUSFinancialInvestments && {
-        Posee_inversiones_o_activos_en_EE_UU: member.hasUSFinancialInvestments === 'Sí' ? 'Sí' : 'No',
+        Posee_inversiones_o_activos_en_EE_UU: this.mapBooleanToPickList(member.hasUSFinancialInvestments),
       }),
       ...(member.isUSCitizen && {
-        Es_ciudadano_de_EE_UU: member.isUSCitizen === 'Sí' ? 'Sí' : 'No',
+        Es_ciudadano_de_EE_UU: this.mapBooleanToPickList(member.isUSCitizen),
       }),
     };
+  }
+
+  /**
+   * Mapea valores booleanos o strings a valores de Pick List de Zoho (Sí/No)
+   */
+  private mapBooleanToPickList(value: string | boolean | null | undefined): string {
+    if (value === null || value === undefined || value === '') {
+      return '';
+    }
+    if (typeof value === 'boolean') {
+      return value ? 'Sí' : 'No';
+    }
+    if (typeof value === 'string') {
+      const lower = value.toLowerCase().trim();
+      if (lower === 'true' || lower === 'yes' || lower === 'sí' || lower === 'si' || lower === '1') {
+        return 'Sí';
+      }
+      if (lower === 'false' || lower === 'no' || lower === '0') {
+        return 'No';
+      }
+      // Si ya es "Sí" o "No", devolverlo tal cual
+      if (lower === 'sí' || value === 'Sí') {
+        return 'Sí';
+      }
+      if (lower === 'no' || value === 'No') {
+        return 'No';
+      }
+    }
+    return '';
   }
 
   /**
