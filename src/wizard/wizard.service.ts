@@ -57,10 +57,22 @@ export class WizardService {
   /**
    * Convierte una fecha string a Date de manera segura
    */
-  private parseDate(dateString: string | null | undefined): Date | null {
+  private parseDate(dateString: string | null | undefined | Date): Date | null {
+    // Si ya es un objeto Date, retornarlo directamente
+    if (dateString instanceof Date) {
+      return isNaN(dateString.getTime()) ? null : dateString;
+    }
+    
+    // Si no es string, null o undefined, retornar null
+    if (typeof dateString !== 'string') {
+      return null;
+    }
+    
+    // Si es string vacío o inválido, retornar null
     if (!dateString || dateString.trim() === '' || dateString === '0NaN-aN-aN') {
       return null;
     }
+    
     const date = new Date(dateString);
     if (isNaN(date.getTime())) {
       return null;
@@ -545,48 +557,56 @@ export class WizardService {
       // PASO 2: Procesar pago PRIMERO (antes de crear request)
       let paymentResult: any = null;
 
-      if (createWizardRequestDto.paymentMethod === 'stripe' && createWizardRequestDto.stripeToken) {
-        try {
-          this.logger.log(
-            `[Wizard] Procesando pago con Stripe: ${createWizardRequestDto.paymentAmount} USD`,
-          );
+      // Verificar si hay pago requerido
+      const hasPayment = createWizardRequestDto.paymentAmount > 0 && 
+                        createWizardRequestDto.stripeToken !== 'no-payment';
 
-          const charge = await this.stripeService.createCharge(
-            createWizardRequestDto.stripeToken,
-            createWizardRequestDto.paymentAmount,
-            'usd',
-            `Pago de solicitud wizard - ${createWizardRequestDto.type}`,
-          );
+      if (hasPayment) {
+        if (createWizardRequestDto.paymentMethod === 'stripe' && createWizardRequestDto.stripeToken) {
+          try {
+            this.logger.log(
+              `[Wizard] Procesando pago con Stripe: ${createWizardRequestDto.paymentAmount} USD`,
+            );
 
+            const charge = await this.stripeService.createCharge(
+              createWizardRequestDto.stripeToken,
+              createWizardRequestDto.paymentAmount,
+              'usd',
+              `Pago de solicitud wizard - ${createWizardRequestDto.type}`,
+            );
+
+            paymentResult = {
+              chargeId: charge.id,
+              amount: charge.amount / 100,
+              currency: charge.currency,
+              status: charge.status,
+              paid: charge.paid,
+              receiptUrl: charge.receipt_url,
+            };
+
+            this.logger.log(`[Wizard] Pago procesado exitosamente: ${charge.id}`);
+          } catch (error: any) {
+            this.logger.error(`[Wizard] Error al procesar pago: ${error.message}`);
+            await queryRunner.rollbackTransaction();
+            throw new BadRequestException(`Error al procesar el pago: ${error.message}`);
+          }
+        } else if (createWizardRequestDto.paymentMethod === 'transferencia') {
+          // Para transferencia, solo validamos que venga el comprobante si hay monto a pagar
+          if (!createWizardRequestDto.paymentProofUrl) {
+            throw new BadRequestException('Se requiere comprobante de transferencia');
+          }
           paymentResult = {
-            chargeId: charge.id,
-            amount: charge.amount / 100,
-            currency: charge.currency,
-            status: charge.status,
-            paid: charge.paid,
-            receiptUrl: charge.receipt_url,
+            status: 'pending',
+            amount: createWizardRequestDto.paymentAmount,
           };
-
-          this.logger.log(`[Wizard] Pago procesado exitosamente: ${charge.id}`);
-        } catch (error: any) {
-          this.logger.error(`[Wizard] Error al procesar pago: ${error.message}`);
-          await queryRunner.rollbackTransaction();
-          throw new BadRequestException(`Error al procesar el pago: ${error.message}`);
         }
-      } else if (createWizardRequestDto.paymentMethod === 'transferencia') {
-        // Para transferencia, solo validamos que venga el comprobante
-        if (!createWizardRequestDto.paymentProofUrl) {
-          throw new BadRequestException('Se requiere comprobante de transferencia');
-        }
+      } else {
+        // No hay pago requerido (flujo sin pago)
+        this.logger.log(`[Wizard] Flujo sin pago para tipo: ${createWizardRequestDto.type}`);
         paymentResult = {
-          status: 'pending',
-          amount: createWizardRequestDto.paymentAmount,
+          status: 'not_required',
+          amount: 0,
         };
-      }
-
-      // Si el pago falló o no se procesó, no crear request
-      if (!paymentResult) {
-        throw new BadRequestException('No se pudo procesar el pago');
       }
 
       // PASO 3: Validar datos del servicio
@@ -1422,6 +1442,55 @@ export class WizardService {
             delete dataToSave.bankStatementsFileUrl;
           }
           
+          // Lista de campos numéricos que deben convertirse de string vacío a null
+          const numericFields = [
+            'llcOpeningCost',
+            'paidToFamilyMembers',
+            'paidToLocalCompanies',
+            'paidForLLCFormation',
+            'paidForLLCDissolution',
+            'bankAccountBalanceEndOfYear',
+            'totalRevenue2025',
+            'totalRevenue',
+          ];
+          
+          // Convertir campos numéricos vacíos a null
+          Object.keys(dataToSave).forEach((key) => {
+            if (numericFields.includes(key)) {
+              const value = dataToSave[key];
+              // Si es string vacío, null, undefined, o no es un número válido, convertir a null
+              if (value === '' || value === null || value === undefined || (typeof value === 'string' && isNaN(Number(value)))) {
+                dataToSave[key] = null;
+              } else if (typeof value === 'string') {
+                // Si es un string numérico, convertir a número
+                const numValue = Number(value);
+                dataToSave[key] = isNaN(numValue) ? null : numValue;
+              } else if (typeof value === 'number') {
+                // Ya es un número, mantenerlo
+                dataToSave[key] = value;
+              }
+            }
+          });
+          
+          // Convertir campos de fecha vacíos a null
+          const dateFields = ['llcCreationDate'];
+          dateFields.forEach((field) => {
+            if (dataToSave[field] !== undefined) {
+              const parsedDate = this.parseDate(dataToSave[field]);
+              dataToSave[field] = parsedDate;
+            }
+          });
+          
+          // Convertir cadenas vacías a null para campos de texto opcionales
+          Object.keys(dataToSave).forEach((key) => {
+            if (dataToSave[key] === '') {
+              // Solo convertir a null si no es un campo booleano o numérico ya procesado
+              if (typeof dataToSave[key] !== 'boolean' && !numericFields.includes(key) && !dateFields.includes(key)) {
+                dataToSave[key] = null;
+              }
+            }
+          });
+          
           Object.assign(renovacionRequest, dataToSave);
           
           // Actualizar miembros si están presentes (homologado: usar 'members' o 'owners')
@@ -1586,12 +1655,19 @@ export class WizardService {
               if (validatorData.validatorIncomeSource || validatorData.incomeSource) {
                 dataToSave.validatorIncomeSource = validatorData.validatorIncomeSource || validatorData.incomeSource || '';
               }
-              if (validatorData.validatorAnnualIncome || validatorData.annualIncome) {
-                const annualIncome = typeof (validatorData.validatorAnnualIncome || validatorData.annualIncome) === 'string'
-                  ? parseFloat(validatorData.validatorAnnualIncome || validatorData.annualIncome)
-                  : (validatorData.validatorAnnualIncome || validatorData.annualIncome);
-                if (!isNaN(annualIncome)) {
-                  dataToSave.validatorAnnualIncome = annualIncome;
+              if (validatorData.validatorAnnualIncome !== undefined || validatorData.annualIncome !== undefined) {
+                const annualIncomeValue = validatorData.validatorAnnualIncome || validatorData.annualIncome;
+                if (annualIncomeValue === '' || annualIncomeValue === null || annualIncomeValue === undefined) {
+                  dataToSave.validatorAnnualIncome = null;
+                } else {
+                  const annualIncome = typeof annualIncomeValue === 'string'
+                    ? parseFloat(annualIncomeValue)
+                    : annualIncomeValue;
+                  if (!isNaN(annualIncome) && annualIncome !== null && annualIncome !== undefined) {
+                    dataToSave.validatorAnnualIncome = annualIncome;
+                  } else {
+                    dataToSave.validatorAnnualIncome = null;
+                  }
                 }
               }
               
@@ -1614,6 +1690,37 @@ export class WizardService {
                 const parsedDate = this.parseDate(dateOfBirth);
                 if (parsedDate) {
                   dataToSave.validatorDateOfBirth = parsedDate;
+                } else {
+                  dataToSave.validatorDateOfBirth = null;
+                }
+              } else {
+                // Si viene como string vacío o no existe, establecer como null
+                dataToSave.validatorDateOfBirth = null;
+              }
+            } else {
+              // Si no hay validatorData pero los campos vienen en cuentaDataRaw, limpiarlos
+              if (cuentaDataRaw.validatorDateOfBirth !== undefined) {
+                const dateOfBirth = cuentaDataRaw.validatorDateOfBirth;
+                if (dateOfBirth && typeof dateOfBirth === 'string' && dateOfBirth.trim() !== '') {
+                  const parsedDate = this.parseDate(dateOfBirth);
+                  dataToSave.validatorDateOfBirth = parsedDate || null;
+                } else {
+                  dataToSave.validatorDateOfBirth = null;
+                }
+              }
+              if (cuentaDataRaw.validatorAnnualIncome !== undefined) {
+                const annualIncomeValue = cuentaDataRaw.validatorAnnualIncome;
+                if (annualIncomeValue === '' || annualIncomeValue === null || annualIncomeValue === undefined) {
+                  dataToSave.validatorAnnualIncome = null;
+                } else {
+                  const annualIncome = typeof annualIncomeValue === 'string'
+                    ? parseFloat(annualIncomeValue)
+                    : annualIncomeValue;
+                  if (!isNaN(annualIncome) && annualIncome !== null && annualIncome !== undefined) {
+                    dataToSave.validatorAnnualIncome = annualIncome;
+                  } else {
+                    dataToSave.validatorAnnualIncome = null;
+                  }
                 }
               }
             }
@@ -1637,12 +1744,29 @@ export class WizardService {
           }
           
           // Sección 5: Tipo de LLC
+          // Solo establecer llcType si estamos en la sección 5 o superior y hay un valor válido
           if (currentStep >= 5) {
             if (cuentaDataRaw.isMultiMember === 'yes') {
               dataToSave.llcType = 'multi';
             } else if (cuentaDataRaw.isMultiMember === 'no') {
               dataToSave.llcType = 'single';
+            } else {
+              // Si no hay valor válido, eliminar llcType para no violar el constraint
+              delete dataToSave.llcType;
             }
+          } else {
+            // Si no estamos en la sección 5, eliminar llcType si existe
+            delete dataToSave.llcType;
+          }
+          
+          // Asegurar que llcType no sea string vacío (violaría el constraint)
+          if (dataToSave.llcType === '' || (typeof dataToSave.llcType === 'string' && dataToSave.llcType.trim() === '')) {
+            delete dataToSave.llcType;
+          }
+          
+          // Si llcType es null o undefined, eliminarlo
+          if (dataToSave.llcType === null || dataToSave.llcType === undefined) {
+            delete dataToSave.llcType;
           }
           
           // Limpiar campos que no deben guardarse directamente
@@ -1664,13 +1788,63 @@ export class WizardService {
           delete dataToSave.isMultiMember;
           delete dataToSave.validatorPassportUrl;
           
+          // Lista de campos de fecha que deben convertirse de string vacío a null
+          const dateFields = ['validatorDateOfBirth', 'firstRegistrationDate', 'incorporationMonthYear'];
+          
+          // Lista de campos numéricos que deben convertirse de string vacío a null
+          const numericFields = ['validatorAnnualIncome', 'numberOfEmployees'];
+          
+          // Convertir campos de fecha y numéricos vacíos a null
+          Object.keys(dataToSave).forEach((key) => {
+            const value = dataToSave[key];
+            if (dateFields.includes(key)) {
+              // Si es un campo de fecha, parsearlo o establecer como null si está vacío
+              if (value === '' || value === null || value === undefined) {
+                dataToSave[key] = null;
+              } else if (value instanceof Date) {
+                // Si ya es un objeto Date, mantenerlo
+                dataToSave[key] = value;
+              } else if (typeof value === 'string') {
+                // Solo parsear si es un string
+                const parsedDate = this.parseDate(value);
+                dataToSave[key] = parsedDate || null;
+              } else {
+                // Para otros tipos, establecer como null
+                dataToSave[key] = null;
+              }
+            } else if (numericFields.includes(key)) {
+              // Si es un campo numérico, convertirlo o establecer como null si está vacío
+              if (value === '' || value === null || value === undefined || (typeof value === 'string' && isNaN(Number(value)))) {
+                dataToSave[key] = null;
+              } else if (typeof value === 'string') {
+                const numValue = Number(value);
+                dataToSave[key] = isNaN(numValue) ? null : numValue;
+              }
+            } else if (typeof value === 'string' && value.trim() === '') {
+              // Convertir strings vacíos a null para campos de fecha relacionados con validators
+              if (key === 'validatorDateOfBirth' || (key.startsWith('validator') && (key.includes('Date') || key.includes('date')))) {
+                dataToSave[key] = null;
+              }
+            }
+          });
+          
+          // Asegurar que validatorDateOfBirth sea null si viene como string vacío
+          if (dataToSave.validatorDateOfBirth === '' || (typeof dataToSave.validatorDateOfBirth === 'string' && dataToSave.validatorDateOfBirth.trim() === '')) {
+            dataToSave.validatorDateOfBirth = null;
+          }
+          
+          // Asegurar que validatorAnnualIncome sea null si viene como string vacío
+          if (dataToSave.validatorAnnualIncome === '' || (typeof dataToSave.validatorAnnualIncome === 'string' && dataToSave.validatorAnnualIncome.trim() === '')) {
+            dataToSave.validatorAnnualIncome = null;
+          }
+          
           // Parsear firstRegistrationDate si existe
           if (dataToSave.firstRegistrationDate) {
             const parsedDate = this.parseDate(dataToSave.firstRegistrationDate);
             if (parsedDate) {
               dataToSave.firstRegistrationDate = parsedDate;
             } else {
-              delete dataToSave.firstRegistrationDate;
+              dataToSave.firstRegistrationDate = null;
             }
           }
           
