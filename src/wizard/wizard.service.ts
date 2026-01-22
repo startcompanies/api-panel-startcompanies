@@ -150,9 +150,44 @@ export class WizardService {
           'El email ya está registrado y confirmado. Por favor, inicia sesión.',
         );
       } else {
-        throw new BadRequestException(
-          'El email ya está registrado pero no ha sido confirmado. Por favor, revisa tu correo para confirmar tu cuenta.',
-        );
+        // Si el email existe pero no está verificado, reenviar el código de verificación
+        // Actualizar contraseña si es diferente (por si el usuario olvidó su contraseña)
+        const hashedPassword = encodePassword(clientData.password);
+        existingUser.password = hashedPassword;
+        
+        // Actualizar datos del usuario si han cambiado
+        if (clientData.firstName) existingUser.first_name = clientData.firstName;
+        if (clientData.lastName) existingUser.last_name = clientData.lastName;
+        if (clientData.phone) existingUser.phone = clientData.phone;
+        
+        // Generar nuevo código de verificación
+        const emailVerificationToken = this.generateEmailVerificationCode();
+        existingUser.emailVerificationToken = emailVerificationToken;
+        
+        // Guardar cambios
+        await this.userRepo.save(existingUser);
+        this.logger.log(`Código de verificación reenviado para usuario existente: ${existingUser.id} - ${existingUser.email}`);
+        
+        // Enviar correo de confirmación con el nuevo código
+        try {
+          const userName = `${clientData.firstName} ${clientData.lastName}`.trim() || clientData.email;
+          await this.emailService.sendCodeEmailValidation(
+            clientData.email,
+            userName,
+            emailVerificationToken,
+          );
+          this.logger.log(`Correo de validación reenviado a: ${clientData.email}`);
+        } catch (emailError) {
+          this.logger.error(`Error al reenviar correo de validación: ${emailError}`);
+          // No fallar si el email falla, pero loguear el error
+        }
+        
+        // Retornar respuesta exitosa como si fuera un nuevo registro
+        return {
+          message: 'Código de verificación reenviado. Por favor, revisa tu correo para confirmar tu cuenta.',
+          email: existingUser.email,
+          id: existingUser.id,
+        };
       }
     }
 
