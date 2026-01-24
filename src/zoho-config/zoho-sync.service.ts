@@ -59,6 +59,29 @@ export class ZohoSyncService {
     return undefined;
   }
 
+  /**
+   * Convierte un valor de picklist de Zoho (Sí/No) a string para campos que aceptan string
+   * Usado para campos como hasPropertyInUSA, almacenaProductosDepositoUSA, etc. en RenovacionLlcRequest
+   */
+  private parseBooleanToPickListString(value: any): string | undefined {
+    if (value === null || value === undefined || value === '') {
+      return undefined;
+    }
+    if (typeof value === 'boolean') {
+      return value ? 'si' : 'no';
+    }
+    if (typeof value === 'string') {
+      const lower = value.toLowerCase().trim();
+      if (lower === 'true' || lower === 'yes' || lower === 'sí' || lower === 'si' || lower === '1') {
+        return 'si';
+      }
+      if (lower === 'false' || lower === 'no' || lower === '0') {
+        return 'no';
+      }
+    }
+    return undefined;
+  }
+
   private normalizePhoneNumber(phoneNumber: string | null | undefined): string | null {
     if (!phoneNumber) return null;
     const cleaned = phoneNumber.trim().replace(/[\s\-\(\)]/g, '');
@@ -246,10 +269,23 @@ export class ZohoSyncService {
     request: Request,
     members: Member[],
   ): Promise<Record<string, any>> {
+    // Determinar Empresa: si tiene partner = nombre del partner, si no = "Start Companies"
+    let empresa = 'Start Companies';
+    if (request.partner) {
+      // Priorizar company, luego username, luego first_name + last_name
+      empresa = request.partner.company || 
+                request.partner.username || 
+                `${request.partner.first_name || ''} ${request.partner.last_name || ''}`.trim() ||
+                'Start Companies';
+    } else if (request.company) {
+      // Si ya está guardado en BD, usarlo
+      empresa = request.company;
+    }
+
     let accountData: Record<string, any> = {
       Account_Name: '', // Se llenará según el tipo
       Tipo: this.mapRequestTypeToDealType(request.type),
-      Empresa: 'Start Companies',
+      Empresa: empresa,
       // Owner se asigna automáticamente por Zoho basado en el usuario que hace la petición
       // No incluir Owner si causa problemas de validación
     };
@@ -257,11 +293,9 @@ export class ZohoSyncService {
     // Mapear datos según el tipo de solicitud
     if (request.type === 'apertura-llc' && request.aperturaLlcRequest) {
       const apertura = request.aperturaLlcRequest;
-      // Usar Website si existe, sino P_gina_web_de_la_LLC (según data.md)
-      const website = apertura.website || '';
       accountData = {
         ...accountData,
-        // Mapeo según data.md - solo campos MANTENER
+        // Mapeo según CSV - campos del formulario
         Account_Name: apertura.llcName || '',
         Nombre_de_la_LLC_Opci_n_2: apertura.llcNameOption2 || '',
         Nombre_de_la_LLC_Opci_n_3: apertura.llcNameOption3 || '',
@@ -272,13 +306,12 @@ export class ZohoSyncService {
             ? 'LLC de un solo miembro (Single Member LLC)'
             : 'LLC multi-miembro (Multi-Member LLC)',
         LinkedIn: apertura.linkedin || '',
-        N_mero_de_EIN: apertura.einNumber || '',
-        Website: website,
-        P_gina_web_de_la_LLC: website,
+        Website: apertura.projectOrCompanyUrl || '', // Usar projectOrCompanyUrl según CSV
+        P_gina_web_de_la_LLC: apertura.projectOrCompanyUrl || '',
         Actividad_financiera_esperada: apertura.actividadFinancieraEsperada || '',
         Tendr_ingresos_peri_dicos_que_sumen_USD_10_000: this.mapBooleanToPickList(apertura.periodicIncome10k),
-        // Campos eliminados según data.md: Annual_Revenue, Account_Type, Estado_de_constituci_n,
-        // y campos booleanos obsoletos (almacenaProductosDepositoUSA, declaroImpuestosAntes, etc.)
+        Correo_Electr_nico_Vinculado_a_la_Cuenta_Bancaria: apertura.bankAccountLinkedEmail || '',
+        N_mero_de_Tel_fono_Vinculado_a_la_Cuenta_Bancaria: this.normalizePhoneNumber(apertura.bankAccountLinkedPhone) || '',
       };
     } else if (request.type === 'renovacion-llc' && request.renovacionLlcRequest) {
       const renovacion = request.renovacionLlcRequest;
@@ -305,52 +338,68 @@ export class ZohoSyncService {
         Posee_la_LLC_inversiones_o_activos_en_EE_UU: this.mapBooleanToPickList(renovacion.hasFinancialInvestmentsInUSA),
         La_LLC_declar_impuestos_anteriormente: this.mapBooleanToPickList(renovacion.hasFiledTaxesBefore),
         La_LLC_se_constituy_con_Start_Companies: this.mapBooleanToPickList(renovacion.wasConstitutedWithStartCompanies),
+        // Campos adicionales según CSV
+        A_o_de_la_Declaraci_n_Fiscal: renovacion.declaracionAnoCorriente ? '2025' : '',
+        Nuevo_nombre_de_la_LLC: renovacion.cambioNombre ? renovacion.llcName || '' : '',
+        Declaraciones_Juradas_Anteriores: this.mapBooleanToPickList(renovacion.declaracionAnosAnteriores),
+        Cu_nto_cost_abrir_la_LLC_en_Estados_Unidos: renovacion.llcOpeningCost ? String(renovacion.llcOpeningCost) : '',
+        Pagos_a_familiares_servicios: renovacion.paidToFamilyMembers ? String(renovacion.paidToFamilyMembers) : '',
+        Cu_nto_pag_la_LLC_a_empresas_locales_En_otro_Pa: renovacion.paidToLocalCompanies ? String(renovacion.paidToLocalCompanies) : '',
+        Pagos_formaci_n_LLC_tasas_estatales: renovacion.paidForLLCFormation ? String(renovacion.paidForLLCFormation) : '',
+        Pagos_disoluci_n_LLC: renovacion.paidForLLCDissolution ? String(renovacion.paidForLLCDissolution) : '',
+        Saldo_bancario_fin_de_a_o_LLC: renovacion.bankAccountBalanceEndOfYear ? String(renovacion.bankAccountBalanceEndOfYear) : '',
+        Facturaci_n_total_de_la_LLC: renovacion.totalRevenue ? String(renovacion.totalRevenue) : '',
       };
     } else if (request.type === 'cuenta-bancaria' && request.cuentaBancariaRequest) {
       const cuenta = request.cuentaBancariaRequest;
-      // Dirección comercial (Registered Agent) desde companyAddress
-      const companyAddr = cuenta.companyAddress || {
-        street: '',
-        unit: '',
-        city: '',
-        state: '',
-        postalCode: '',
-        country: '',
+      // Banco: usar bankService si existe, sino "Relay" por defecto
+      const banco = cuenta.bankService || 'Relay';
+      // Dirección comercial (Registered Agent) desde campos individuales
+      const companyAddr = {
+        street: cuenta.registeredAgentStreet || '',
+        unit: cuenta.registeredAgentUnit || '',
+        city: cuenta.registeredAgentCity || '',
+        state: cuenta.registeredAgentState || '',
+        postalCode: cuenta.registeredAgentZipCode || '',
+        country: cuenta.registeredAgentCountry || '',
       };
       
       accountData = {
         ...accountData,
-        // Campos MANTENER según data.md
-        Account_Name: cuenta.legalBusinessIdentifier || cuenta.applicantEmail || '',
+        // Mapeo según CSV - campos del formulario
+        Account_Name: cuenta.legalBusinessIdentifier || '',
         Tipo_de_negocio: cuenta.businessType || '',
         Industria_Rubro: cuenta.industry || '',
+        Cantidad_de_empleados: cuenta.numberOfEmployees || '',
         Descripci_n_breve: cuenta.economicActivity || '',
+        Sitio_web_o_Red_Social: cuenta.websiteOrSocialMedia || '',
+        N_mero_de_EIN: cuenta.ein || '',
         Estructura_Societaria:
           cuenta.llcType === 'single'
             ? 'LLC de un solo miembro (Single Member LLC)'
-            : 'LLC multi-miembro (Multi-Member LLC)',
-        N_mero_de_EIN: cuenta.ein || '',
-        Banco: cuenta.bankName || '',
-        Fecha_de_Constituci_n: this.formatDate(cuenta.firstRegistrationDate),
-        // Campos AGREGAR según data.md
-        Website: cuenta.websiteOrSocialMedia || '',
-        P_gina_web_de_la_LLC: cuenta.websiteOrSocialMedia || '',
-        // Dirección Comercial (Registered Agent) - priorizar Direcci_n_comercial_* según data.md
+            : cuenta.llcType === 'multi'
+            ? 'LLC multi-miembro (Multi-Member LLC)'
+            : 'LLC de un solo miembro (Single Member LLC)',
+        // Dirección Comercial (Registered Agent) - desde companyAddress (JSONB)
         Direcci_n_comercial_Calle_y_numero: companyAddr.street || '',
         Direcci_n_comercial_Suite: companyAddr.unit || '',
         Direcci_n_comercial_Ciudad: companyAddr.city || '',
         Direcci_n_comercial_Estado: companyAddr.state || '',
         Direcci_n_comercial_Postal: companyAddr.postalCode || '',
         Direcci_n_postal_Pais: companyAddr.country || '',
-        // También mapear a campos legacy (Calle_y_n_mero, etc.) para compatibilidad
-        Calle_y_n_mero: companyAddr.street || '',
-        Suite_Apto: companyAddr.unit || '',
-        Ciudad: companyAddr.city || '',
-        Estado_Provincia: companyAddr.state || '',
-        Postal_Zip_Code: companyAddr.postalCode || '',
-        Pais: companyAddr.country || '',
-        Estado_de_Registro: cuenta.incorporationState || '',
-        Pa_ses_donde_la_LLC_realiza_negocios: cuenta.countriesWhereBusiness || '',
+        Estado_de_constituci_n: cuenta.incorporationState || '',
+        Mes_y_A_o: cuenta.incorporationMonthYear || '',
+        Pa_ses_donde_la_LLC_realiza_negocios: Array.isArray(cuenta.countriesWhereBusiness)
+          ? cuenta.countriesWhereBusiness.join(', ')
+          : cuenta.countriesWhereBusiness || '',
+        Banco: banco,
+        // Dirección Personal del Propietario (desde ownerPersonalAddress JSONB)
+        Calle_y_n_mero: cuenta.ownerPersonalAddress?.street || '',
+        Suite_Apto: cuenta.ownerPersonalAddress?.unit || '',
+        Ciudad: cuenta.ownerPersonalAddress?.city || '',
+        Estado_Provincia: cuenta.ownerPersonalAddress?.state || '',
+        Postal_Zip_Code: cuenta.ownerPersonalAddress?.postalCode || '',
+        Pais: cuenta.ownerPersonalAddress?.country || '',
       };
     }
 
@@ -480,8 +529,8 @@ export class ZohoSyncService {
       dealData.Estado_de_Registro = renovacion.state || '';
     } else if (request.type === 'cuenta-bancaria' && request.cuentaBancariaRequest) {
       const cuenta = request.cuentaBancariaRequest;
-      dealData.Tiene_cuenta_bancaria = cuenta.bankName ? 'Sí' : 'No';
-      dealData.Banco = cuenta.bankName || '';
+      dealData.Tiene_cuenta_bancaria = cuenta.bankService ? 'Sí' : 'No';
+      dealData.Banco = cuenta.bankService || 'Relay';
     }
 
     return dealData;
@@ -580,14 +629,14 @@ export class ZohoSyncService {
       ...(member.profitDistributions && {
         Retiros_de_capital_realizados_en_2024_USD: member.profitDistributions,
       }),
-      ...(member.spentMoreThan31DaysInUS && {
-        Estuvo_en_EE_UU_m_s_de_31_d_as_en_2024: member.spentMoreThan31DaysInUS === 'Sí' ? 'Sí' : 'No',
+      ...(member.spentMoreThan31DaysInUS !== null && member.spentMoreThan31DaysInUS !== undefined && member.spentMoreThan31DaysInUS !== '' && {
+        Estuvo_en_EE_UU_m_s_de_31_d_as_en_2024: this.mapBooleanToPickList(member.spentMoreThan31DaysInUS),
       }),
-      ...(member.hasUSFinancialInvestments && {
-        Posee_inversiones_o_activos_en_EE_UU: member.hasUSFinancialInvestments === 'Sí' ? 'Sí' : 'No',
+      ...(member.hasUSFinancialInvestments !== null && member.hasUSFinancialInvestments !== undefined && member.hasUSFinancialInvestments !== '' && {
+        Posee_inversiones_o_activos_en_EE_UU: this.mapBooleanToPickList(member.hasUSFinancialInvestments),
       }),
-      ...(member.isUSCitizen && {
-        Es_ciudadano_de_EE_UU: member.isUSCitizen === 'Sí' ? 'Sí' : 'No',
+      ...(member.isUSCitizen !== null && member.isUSCitizen !== undefined && member.isUSCitizen !== '' && {
+        Es_ciudadano_de_EE_UU: this.mapBooleanToPickList(member.isUSCitizen),
       }),
     };
   }
@@ -905,20 +954,63 @@ export class ZohoSyncService {
         'N_mero_de_EIN',
         'Nombre_de_la_LLC_Opci_n_2',
         'Nombre_de_la_LLC_Opci_n_3',
-        'Annual_Revenue',
-        'Account_Type',
-        'Estado_de_constituci_n',
         'LinkedIn',
         'Actividad_financiera_esperada',
+        'Tendr_ingresos_peri_dicos_que_sumen_USD_10_000',
+        'Correo_Electr_nico_Vinculado_a_la_Cuenta_Bancaria',
+        'N_mero_de_Tel_fono_Vinculado_a_la_Cuenta_Bancaria',
+        // Campos para Renovación LLC
+        'Tu_empresa_posee_o_renta_una_propiedad_en_EE_UU',
         'Almacena_productos_en_un_dep_sito_en_EE_UU',
+        'Tu_empresa_contrata_servicios_en_EE_UU',
+        'Tu_LLC_tiene_cuentas_bancarias_a_su_nombre',
+        'Fecha_de_Constituci_n',
+        'Pa_ses_donde_la_LLC_realiza_negocios',
+        'Posee_la_LLC_inversiones_o_activos_en_EE_UU',
         'La_LLC_declar_impuestos_anteriormente',
         'La_LLC_se_constituy_con_Start_Companies',
-        'Los_ingresos_brutos_o_activos_superan_250_000',
-        'Posee_la_LLC_inversiones_o_activos_en_EE_UU',
-        'Tendr_ingresos_peri_dicos_que_sumen_USD_10_000',
-        'Tu_empresa_contrata_servicios_en_EE_UU',
-        'Tu_empresa_posee_o_renta_una_propiedad_en_EE_UU',
-        'Tu_LLC_tiene_cuentas_bancarias_a_su_nombre',
+        'A_o_de_la_Declaraci_n_Fiscal',
+        'Nuevo_nombre_de_la_LLC',
+        'Declaraciones_Juradas_Anteriores',
+        'Cu_nto_cost_abrir_la_LLC_en_Estados_Unidos',
+        'Pagos_a_familiares_servicios',
+        'Cu_nto_pag_la_LLC_a_empresas_locales_En_otro_Pa',
+        'Pagos_formaci_n_LLC_tasas_estatales',
+        'Pagos_disoluci_n_LLC',
+        'Saldo_bancario_fin_de_a_o_LLC',
+        'Facturaci_n_total_de_la_LLC',
+        // Campos para Cuenta Bancaria
+        'Tipo_de_negocio',
+        'Industria_Rubro',
+        'Cantidad_de_empleados',
+        'Descripci_n_breve',
+        'Sitio_web_o_Red_Social',
+        'Direcci_n_comercial_Calle_y_numero',
+        'Direcci_n_comercial_Suite',
+        'Direcci_n_comercial_Ciudad',
+        'Direcci_n_comercial_Estado',
+        'Direcci_n_comercial_Postal',
+        'Direcci_n_postal_Pais',
+        'Estado_de_constituci_n',
+        'Mes_y_A_o',
+        'Banco',
+        'Calle_y_n_mero',
+        'Suite_Apto',
+        'Ciudad',
+        'Estado_Provincia',
+        'Postal_Zip_Code',
+        'Pais',
+        // Campos de contacto del Account principal (para crear Member)
+        'Nombre_s',
+        'Apellidos',
+        'Email_Laboral',
+        'Correo_electr_nico',
+        'Phone',
+        'Fecha_de_nacimiento',
+        'Nacionalidad1',
+        'N_mero_de_pasaporte',
+        'Es_ciudadano_de_EE_UU',
+        // Campos necesarios para lógica
         'Tipo', // Necesario para determinar el tipo de request
         'Empresa', // Necesario para determinar si es Partner
         'Partner_Email', // Necesario si es Partner
@@ -1167,11 +1259,16 @@ export class ZohoSyncService {
       if (existingRequest) {
         request = existingRequest;
         request.zohoAccountId = account.id;
+        // Actualizar company desde Zoho si viene
+        if (account.Empresa) {
+          request.company = account.Empresa;
+        }
       } else {
         request = this.requestRepository.create({
           type: requestType,
           status: 'pendiente', // Se actualizará con el Deal
           zohoAccountId: account.id,
+          company: account.Empresa || 'Start Companies',
         });
       }
 
@@ -1476,24 +1573,14 @@ export class ZohoSyncService {
       businessDescription: account.Actividad_Principal_de_la_LLC || '',
       incorporationState: account.Estado_de_Registro || '',
       llcType: this.mapEstructuraToLLCType(account.Estructura_Societaria),
-      website: account.Website || account.P_gina_web_de_la_LLC || undefined,
-      einNumber: account.N_mero_de_EIN || '',
+      projectOrCompanyUrl: account.P_gina_web_de_la_LLC || account.Website || undefined, // Mapear a projectOrCompanyUrl según CSV
       llcNameOption2: account.Nombre_de_la_LLC_Opci_n_2 || undefined,
       llcNameOption3: account.Nombre_de_la_LLC_Opci_n_3 || undefined,
-      annualRevenue: account.Annual_Revenue ? parseFloat(account.Annual_Revenue) : undefined,
-      accountType: account.Account_Type || undefined,
-      estadoConstitucion: account.Estado_de_constituci_n || undefined,
       linkedin: account.LinkedIn || undefined,
       actividadFinancieraEsperada: account.Actividad_financiera_esperada || undefined,
-      almacenaProductosDepositoUSA: this.parseBoolean(account.Almacena_productos_en_un_dep_sito_en_EE_UU),
-      declaroImpuestosAntes: this.parseBoolean(account.La_LLC_declar_impuestos_anteriormente),
-      llcConStartCompanies: this.parseBoolean(account.La_LLC_se_constituy_con_Start_Companies),
-      ingresosMayor250k: this.parseBoolean(account.Los_ingresos_brutos_o_activos_superan_250_000),
-      activosEnUSA: this.parseBoolean(account.Posee_la_LLC_inversiones_o_activos_en_EE_UU),
+      bankAccountLinkedEmail: account.Correo_Electr_nico_Vinculado_a_la_Cuenta_Bancaria || undefined,
+      bankAccountLinkedPhone: account.N_mero_de_Tel_fono_Vinculado_a_la_Cuenta_Bancaria || undefined,
       periodicIncome10k: this.parseBoolean(account.Tendr_ingresos_peri_dicos_que_sumen_USD_10_000) ? 'si' : 'no',
-      contrataServiciosUSA: this.parseBoolean(account.Tu_empresa_contrata_servicios_en_EE_UU),
-      propiedadEnUSA: this.parseBoolean(account.Tu_empresa_posee_o_renta_una_propiedad_en_EE_UU),
-      tieneCuentasBancarias: this.parseBoolean(account.Tu_LLC_tiene_cuentas_bancarias_a_su_nombre),
     };
 
     if (apertura) {
@@ -1529,6 +1616,19 @@ export class ZohoSyncService {
       contactPhone = account.Phone || '';
     }
     
+    // Parsear countriesWhereLLCDoesBusiness desde string o array
+    let countriesWhereLLCDoesBusiness: string[] | undefined = undefined;
+    if (account.Pa_ses_donde_la_LLC_realiza_negocios) {
+      if (Array.isArray(account.Pa_ses_donde_la_LLC_realiza_negocios)) {
+        countriesWhereLLCDoesBusiness = account.Pa_ses_donde_la_LLC_realiza_negocios;
+      } else if (typeof account.Pa_ses_donde_la_LLC_realiza_negocios === 'string') {
+        countriesWhereLLCDoesBusiness = account.Pa_ses_donde_la_LLC_realiza_negocios
+          .split(',')
+          .map(c => c.trim())
+          .filter(c => c.length > 0);
+      }
+    }
+
     const renovacionData: Partial<RenovacionLlcRequest> = {
       requestId: request.id,
       currentStepNumber: 1,
@@ -1538,18 +1638,29 @@ export class ZohoSyncService {
       mainActivity: account.Actividad_Principal_de_la_LLC || '',
       einNumber: account.N_mero_de_EIN || '',
       llcType: this.mapEstructuraToLLCType(account.Estructura_Societaria),
-      // contactEmail y contactPhone no existen en RenovacionLlcRequest
-      // Nota: Los siguientes campos del mapeo no están en la entidad RenovacionLlcRequest actual:
-      // - Tu_empresa_posee_o_renta_una_propiedad_en_EE_UU (boolean)
-      // - Almacena_productos_en_un_dep_sito_en_EE_UU (boolean)
-      // - Tu_empresa_contrata_servicios_en_EE_UU (boolean)
-      // - Tu_LLC_tiene_cuentas_bancarias_a_su_nombre (boolean)
-      // - Pa_ses_donde_la_LLC_realiza_negocios (array)
-      // - Fecha_de_Constituci_n (date)
-      // - Tipo_de_Declaracion (array)
-      // - A_o_de_la_Declaraci_n_Fiscal (string)
-      // - Nuevo_nombre_de_la_LLC (string)
-      // Estos campos se pueden agregar a la entidad si son necesarios
+      // Campos booleanos - mapear desde picklist (Sí/No) a string
+      hasPropertyInUSA: this.parseBooleanToPickListString(account.Tu_empresa_posee_o_renta_una_propiedad_en_EE_UU),
+      almacenaProductosDepositoUSA: this.parseBooleanToPickListString(account.Almacena_productos_en_un_dep_sito_en_EE_UU),
+      contrataServiciosUSA: this.parseBooleanToPickListString(account.Tu_empresa_contrata_servicios_en_EE_UU),
+      tieneCuentasBancarias: this.parseBooleanToPickListString(account.Tu_LLC_tiene_cuentas_bancarias_a_su_nombre),
+      hasFinancialInvestmentsInUSA: this.parseBooleanToPickListString(account.Posee_la_LLC_inversiones_o_activos_en_EE_UU),
+      hasFiledTaxesBefore: this.parseBooleanToPickListString(account.La_LLC_declar_impuestos_anteriormente),
+      wasConstitutedWithStartCompanies: this.parseBooleanToPickListString(account.La_LLC_se_constituy_con_Start_Companies),
+      // Campos adicionales
+      llcCreationDate: account.Fecha_de_Constituci_n ? new Date(account.Fecha_de_Constituci_n) : undefined,
+      countriesWhereLLCDoesBusiness: countriesWhereLLCDoesBusiness,
+      // Campos de declaraciones
+      declaracionAnoCorriente: account.A_o_de_la_Declaraci_n_Fiscal === '2025' || account.A_o_de_la_Declaraci_n_Fiscal === '2025' ? true : undefined,
+      cambioNombre: account.Nuevo_nombre_de_la_LLC ? true : undefined,
+      declaracionAnosAnteriores: this.parseBoolean(account.Declaraciones_Juradas_Anteriores),
+      // Campos numéricos
+      llcOpeningCost: account.Cu_nto_cost_abrir_la_LLC_en_Estados_Unidos ? parseFloat(account.Cu_nto_cost_abrir_la_LLC_en_Estados_Unidos) : undefined,
+      paidToFamilyMembers: account.Pagos_a_familiares_servicios ? parseFloat(account.Pagos_a_familiares_servicios) : undefined,
+      paidToLocalCompanies: account.Cu_nto_pag_la_LLC_a_empresas_locales_En_otro_Pa ? parseFloat(account.Cu_nto_pag_la_LLC_a_empresas_locales_En_otro_Pa) : undefined,
+      paidForLLCFormation: account.Pagos_formaci_n_LLC_tasas_estatales ? parseFloat(account.Pagos_formaci_n_LLC_tasas_estatales) : undefined,
+      paidForLLCDissolution: account.Pagos_disoluci_n_LLC ? parseFloat(account.Pagos_disoluci_n_LLC) : undefined,
+      bankAccountBalanceEndOfYear: account.Saldo_bancario_fin_de_a_o_LLC ? parseFloat(account.Saldo_bancario_fin_de_a_o_LLC) : undefined,
+      totalRevenue: account.Facturaci_n_total_de_la_LLC ? parseFloat(account.Facturaci_n_total_de_la_LLC) : undefined,
     };
 
     if (renovacion) {
@@ -1594,6 +1705,16 @@ export class ZohoSyncService {
       contactPhone = account.Phone || '';
     }
     
+    // Parsear countriesWhereBusiness desde string o array
+    let countriesWhereBusiness: string | undefined = undefined;
+    if (account.Pa_ses_donde_la_LLC_realiza_negocios) {
+      if (Array.isArray(account.Pa_ses_donde_la_LLC_realiza_negocios)) {
+        countriesWhereBusiness = account.Pa_ses_donde_la_LLC_realiza_negocios.join(', ');
+      } else if (typeof account.Pa_ses_donde_la_LLC_realiza_negocios === 'string') {
+        countriesWhereBusiness = account.Pa_ses_donde_la_LLC_realiza_negocios;
+      }
+    }
+
     const cuentaData: Partial<CuentaBancariaRequest> = {
       requestId: request.id,
       currentStepNumber: 1,
@@ -1601,29 +1722,34 @@ export class ZohoSyncService {
       legalBusinessIdentifier: account.Account_Name || '',
       businessType: account.Tipo_de_negocio || undefined,
       industry: account.Industria_Rubro || undefined,
-      accountType: account.Tipo || undefined,
+      numberOfEmployees: account.Cantidad_de_empleados || undefined,
       economicActivity: account.Descripci_n_breve || undefined,
+      websiteOrSocialMedia: account.Sitio_web_o_Red_Social || undefined,
       llcType: this.mapEstructuraToLLCType(account.Estructura_Societaria),
-      // Datos del solicitante (desde Account principal o subform)
-      applicantFirstName: contactFirstName,
-      applicantPaternalLastName: contactLastName.split(' ')[0] || '',
-      applicantMaternalLastName: contactLastName.split(' ').slice(1).join(' ') || undefined,
-      applicantEmail: contactEmail,
-      applicantPhone: this.normalizePhoneNumber(contactPhone) || undefined,
-      // Dirección comercial
-      companyAddress: (account.Calle_y_n_mero || account.Direcci_n_comercial_Calle_y_numero) ? {
-        street: account.Calle_y_n_mero || account.Direcci_n_comercial_Calle_y_numero || '',
-        unit: account.Suite_Apto || account.Direcci_n_comercial_Suite || undefined,
-        city: account.Ciudad || account.Direcci_n_comercial_Ciudad || '',
-        state: account.Estado_Provincia || account.Direcci_n_comercial_Estado || '',
-        postalCode: account.Postal_Zip_Code || account.Direcci_n_comercial_Postal || '',
-        country: account.Pais || account.Direcci_n_postal_Pais || '',
-      } : undefined,
+      // Dirección comercial (Registered Agent) - campos individuales
+      registeredAgentStreet: account.Direcci_n_comercial_Calle_y_numero || account.Calle_y_n_mero || undefined,
+      registeredAgentUnit: account.Direcci_n_comercial_Suite || account.Suite_Apto || undefined,
+      registeredAgentCity: account.Direcci_n_comercial_Ciudad || account.Ciudad || undefined,
+      registeredAgentState: account.Direcci_n_comercial_Estado || account.Estado_Provincia || undefined,
+      registeredAgentZipCode: account.Direcci_n_comercial_Postal || account.Postal_Zip_Code || undefined,
+      registeredAgentCountry: account.Direcci_n_postal_Pais || account.Pais || undefined,
       // Información adicional
       ein: account.N_mero_de_EIN || undefined,
-      bankName: account.Banco || undefined,
-      // Fecha de constitución
-      firstRegistrationDate: account.Fecha_de_Constituci_n ? new Date(account.Fecha_de_Constituci_n) : undefined,
+      bankService: account.Banco || 'Relay', // Banco: Relay o Mercury, por defecto Relay
+      incorporationState: account.Estado_de_constituci_n || account.Estado_de_Registro || undefined,
+      incorporationMonthYear: account.Mes_y_A_o || undefined,
+      countriesWhereBusiness: countriesWhereBusiness,
+      // Dirección personal del propietario (desde campos del Account principal)
+      // Nota: Estos campos también se usan para la dirección comercial, pero según el CSV
+      // la dirección personal del propietario se mapea a estos mismos campos en Zoho
+      ownerPersonalAddress: (account.Calle_y_n_mero || account.Ciudad) && !account.Direcci_n_comercial_Calle_y_numero ? {
+        street: account.Calle_y_n_mero || '',
+        unit: account.Suite_Apto || undefined,
+        city: account.Ciudad || '',
+        state: account.Estado_Provincia || '',
+        postalCode: account.Postal_Zip_Code || '',
+        country: account.Pais || '',
+      } : undefined,
     };
 
     if (cuenta) {

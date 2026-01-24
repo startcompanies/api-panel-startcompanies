@@ -126,5 +126,13 @@ export class UpdateRequestDto {
   @IsOptional()
   @IsString()
   paymentProofUrl?: string; // URL del comprobante de transferencia
+
+  @ApiPropertyOptional({
+    description: 'URL de la firma del cliente en el paso de revisión final',
+    example: 'https://example.com/signature.png',
+  })
+  @IsOptional()
+  @IsString()
+  signatureUrl?: string; // URL de la firma del cliente
 }
 

@@ -70,6 +70,9 @@ export class Request {
   @Column({ name: 'work_drive_url_external', nullable: true, type: 'text' })
   workDriveUrlExternal?: string; // URL externa de Zoho WorkDrive desde Account
 
+  @Column({ name: 'company', nullable: true, length: 255 })
+  company?: string; // Empresa: "Start Companies" o nombre del partner
+
   // Información de pago
   @Column({ name: 'payment_method', nullable: true, type: 'varchar', length: 50 })
   paymentMethod?: 'transferencia' | 'stripe';
@@ -85,6 +88,9 @@ export class Request {
 
   @Column({ name: 'payment_proof_url', nullable: true, type: 'text' })
   paymentProofUrl?: string; // URL del comprobante de transferencia
+
+  @Column({ name: 'signature_url', nullable: true, type: 'text' })
+  signatureUrl?: string; // URL de la firma del cliente en el paso de revisión final
 
   // Origen de creación del request (panel vs wizard) para interpretar pasos correctamente
   @Column({

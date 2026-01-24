@@ -89,26 +89,14 @@ export class RenovacionLlcRequest {
   bankStatementsFileUrl?: string;
 
   // Campos adicionales de declaraciones
-  @Column({ name: 'declaracion_inicial', nullable: true, type: 'boolean' })
-  declaracionInicial?: boolean;
-
   @Column({ name: 'declaracion_ano_corriente', nullable: true, type: 'boolean' })
   declaracionAnoCorriente?: boolean;
-
-  @Column({ name: 'cambio_direccion_ra', nullable: true, type: 'boolean' })
-  cambioDireccionRA?: boolean;
 
   @Column({ name: 'cambio_nombre', nullable: true, type: 'boolean' })
   cambioNombre?: boolean;
 
   @Column({ name: 'declaracion_anos_anteriores', nullable: true, type: 'boolean' })
   declaracionAnosAnteriores?: boolean;
-
-  @Column({ name: 'agregar_cambiar_socio', nullable: true, type: 'boolean' })
-  agregarCambiarSocio?: boolean;
-
-  @Column({ name: 'declaracion_cierre', nullable: true, type: 'boolean' })
-  declaracionCierre?: boolean;
 
   @Column({ name: 'countries_where_llc_does_business', nullable: true, type: 'jsonb' })
   countriesWhereLLCDoesBusiness?: string[];

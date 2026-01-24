@@ -494,6 +494,8 @@ export class WizardService {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
+    let transactionCommitted = false;
+    let paymentResult: any = null; // Declarar fuera del try para que esté disponible en el catch
 
     try {
       // Validar que NO venga partnerId (wizard no tiene partners)
@@ -555,7 +557,7 @@ export class WizardService {
       }
 
       // PASO 2: Procesar pago PRIMERO (antes de crear request)
-      let paymentResult: any = null;
+      // paymentResult ya está declarado fuera del try
 
       // Verificar si hay pago requerido
       const hasPayment = createWizardRequestDto.paymentAmount > 0 && 
@@ -852,21 +854,29 @@ export class WizardService {
         
         // Sección 2: Dirección del Registered Agent
         if (currentStep >= 2) {
-          // Construir registeredAgentAddress desde campos individuales
-          const raStreet = cuentaDataRaw.registeredAgentStreet || '';
-          const raUnit = cuentaDataRaw.registeredAgentUnit || '';
-          const raCity = cuentaDataRaw.registeredAgentCity || '';
-          const raState = cuentaDataRaw.registeredAgentState || '';
-          const raZip = cuentaDataRaw.registeredAgentZipCode || '';
-          const raCountry = cuentaDataRaw.registeredAgentCountry || 'United States';
-          
-          if (raStreet || raCity || raState) {
-            dataToSave.registeredAgentAddress = [raStreet, raUnit, raCity, raState, raCountry].filter(Boolean).join(', ');
+          // Guardar campos individuales de registeredAgent directamente (no como JSONB o string concatenado)
+          if (cuentaDataRaw.registeredAgentStreet !== undefined) {
+            dataToSave.registeredAgentStreet = cuentaDataRaw.registeredAgentStreet;
+          }
+          if (cuentaDataRaw.registeredAgentUnit !== undefined) {
+            dataToSave.registeredAgentUnit = cuentaDataRaw.registeredAgentUnit;
+          }
+          if (cuentaDataRaw.registeredAgentCity !== undefined) {
+            dataToSave.registeredAgentCity = cuentaDataRaw.registeredAgentCity;
+          }
+          if (cuentaDataRaw.registeredAgentState !== undefined) {
+            dataToSave.registeredAgentState = cuentaDataRaw.registeredAgentState;
+          }
+          if (cuentaDataRaw.registeredAgentZipCode !== undefined) {
+            dataToSave.registeredAgentZipCode = cuentaDataRaw.registeredAgentZipCode;
+          }
+          if (cuentaDataRaw.registeredAgentCountry !== undefined) {
+            dataToSave.registeredAgentCountry = cuentaDataRaw.registeredAgentCountry;
           }
           
-          // Guardar estado del registered agent
-          if (cuentaDataRaw.registeredAgentState) {
-            dataToSave.registeredAgentState = cuentaDataRaw.registeredAgentState;
+          // incorporationMonthYear se guarda como string (no como fecha)
+          if (cuentaDataRaw.incorporationMonthYear !== undefined) {
+            dataToSave.incorporationMonthYear = cuentaDataRaw.incorporationMonthYear;
           }
           
           // Guardar countriesWhereBusiness como string
@@ -876,16 +886,34 @@ export class WizardService {
               : cuentaDataRaw.countriesWhereBusiness;
           }
         } else {
-          delete dataToSave.registeredAgentStreet;
-          delete dataToSave.registeredAgentUnit;
-          delete dataToSave.registeredAgentCity;
-          delete dataToSave.registeredAgentState;
-          delete dataToSave.registeredAgentZipCode;
-          delete dataToSave.registeredAgentCountry;
-          delete dataToSave.registeredAgentAddress;
-          delete dataToSave.incorporationState;
-          delete dataToSave.incorporationMonthYear;
-          delete dataToSave.countriesWhereBusiness;
+          // Si currentStep < 2, eliminar estos campos solo si no están presentes en el payload
+          if (cuentaDataRaw.registeredAgentStreet === undefined) {
+            delete dataToSave.registeredAgentStreet;
+          }
+          if (cuentaDataRaw.registeredAgentUnit === undefined) {
+            delete dataToSave.registeredAgentUnit;
+          }
+          if (cuentaDataRaw.registeredAgentCity === undefined) {
+            delete dataToSave.registeredAgentCity;
+          }
+          if (cuentaDataRaw.registeredAgentState === undefined) {
+            delete dataToSave.registeredAgentState;
+          }
+          if (cuentaDataRaw.registeredAgentZipCode === undefined) {
+            delete dataToSave.registeredAgentZipCode;
+          }
+          if (cuentaDataRaw.registeredAgentCountry === undefined) {
+            delete dataToSave.registeredAgentCountry;
+          }
+          if (cuentaDataRaw.incorporationState === undefined) {
+            delete dataToSave.incorporationState;
+          }
+          if (cuentaDataRaw.incorporationMonthYear === undefined) {
+            delete dataToSave.incorporationMonthYear;
+          }
+          if (cuentaDataRaw.countriesWhereBusiness === undefined) {
+            delete dataToSave.countriesWhereBusiness;
+          }
         }
         
         // Sección 3: Información del validador
@@ -1054,15 +1082,6 @@ export class WizardService {
           ...dataToSave,
         };
         
-        // Parsear firstRegistrationDate si existe
-        if (dataToSave.firstRegistrationDate) {
-          const parsedDate = this.parseDate(dataToSave.firstRegistrationDate);
-          if (parsedDate) {
-            cuentaDataToCreate.firstRegistrationDate = parsedDate;
-          } else {
-            delete cuentaDataToCreate.firstRegistrationDate;
-          }
-        }
         
         // Solo incluir llcType si tiene un valor válido
         if (dataToSave.llcType !== 'single' && dataToSave.llcType !== 'multi') {
@@ -1126,6 +1145,7 @@ export class WizardService {
       }
 
       await queryRunner.commitTransaction();
+      transactionCommitted = true;
 
       // Retornar la solicitud completa
       const result = await this.requestRepository.findOne({
@@ -1151,7 +1171,35 @@ export class WizardService {
         },
       };
     } catch (error) {
-      await queryRunner.rollbackTransaction();
+      // Si el pago fue procesado pero falló la creación del request (y la transacción no fue commiteada),
+      // reembolsar el pago para evitar cobrar al cliente por un servicio que no se completó
+      if (
+        paymentResult?.chargeId &&
+        paymentResult?.status === 'succeeded' &&
+        !transactionCommitted
+      ) {
+        try {
+          this.logger.warn(
+            `[Wizard] Reembolsando pago ${paymentResult.chargeId} debido a error en creación del request (transacción no commiteada)`,
+          );
+          await this.stripeService.refundCharge(paymentResult.chargeId);
+          this.logger.log(
+            `[Wizard] Pago ${paymentResult.chargeId} reembolsado exitosamente`,
+          );
+        } catch (refundError: any) {
+          this.logger.error(
+            `[Wizard] Error al reembolsar pago ${paymentResult.chargeId}: ${refundError.message}`,
+            refundError.stack,
+          );
+          // No lanzar error aquí, solo loguear. El error principal es más importante.
+          // El reembolso puede fallar si el cargo ya fue reembolsado o si hay un problema con Stripe.
+        }
+      }
+
+      // Solo hacer rollback si la transacción no fue commiteada
+      if (!transactionCommitted) {
+        await queryRunner.rollbackTransaction();
+      }
       if (
         error instanceof NotFoundException ||
         error instanceof BadRequestException
@@ -1251,6 +1299,7 @@ export class WizardService {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
+    let transactionCommitted = false;
 
     try {
       // Buscar la solicitud existente
@@ -1584,20 +1633,31 @@ export class WizardService {
           }
           
           // Sección 2: Dirección del Registered Agent
+          // Los campos se guardan como columnas individuales, no como JSONB o string concatenado
           if (currentStep >= 2) {
-            const raStreet = cuentaDataRaw.registeredAgentStreet || '';
-            const raUnit = cuentaDataRaw.registeredAgentUnit || '';
-            const raCity = cuentaDataRaw.registeredAgentCity || '';
-            const raState = cuentaDataRaw.registeredAgentState || '';
-            const raZip = cuentaDataRaw.registeredAgentZipCode || '';
-            const raCountry = cuentaDataRaw.registeredAgentCountry || 'United States';
-            
-            if (raStreet || raCity || raState) {
-              dataToSave.registeredAgentAddress = [raStreet, raUnit, raCity, raState, raCountry].filter(Boolean).join(', ');
+            // Guardar campos individuales de registeredAgent directamente
+            if (cuentaDataRaw.registeredAgentStreet !== undefined) {
+              dataToSave.registeredAgentStreet = cuentaDataRaw.registeredAgentStreet;
+            }
+            if (cuentaDataRaw.registeredAgentUnit !== undefined) {
+              dataToSave.registeredAgentUnit = cuentaDataRaw.registeredAgentUnit;
+            }
+            if (cuentaDataRaw.registeredAgentCity !== undefined) {
+              dataToSave.registeredAgentCity = cuentaDataRaw.registeredAgentCity;
+            }
+            if (cuentaDataRaw.registeredAgentState !== undefined) {
+              dataToSave.registeredAgentState = cuentaDataRaw.registeredAgentState;
+            }
+            if (cuentaDataRaw.registeredAgentZipCode !== undefined) {
+              dataToSave.registeredAgentZipCode = cuentaDataRaw.registeredAgentZipCode;
+            }
+            if (cuentaDataRaw.registeredAgentCountry !== undefined) {
+              dataToSave.registeredAgentCountry = cuentaDataRaw.registeredAgentCountry;
             }
             
-            if (cuentaDataRaw.registeredAgentState) {
-              dataToSave.registeredAgentState = cuentaDataRaw.registeredAgentState;
+            // incorporationMonthYear se guarda como string (no como fecha)
+            if (cuentaDataRaw.incorporationMonthYear !== undefined) {
+              dataToSave.incorporationMonthYear = cuentaDataRaw.incorporationMonthYear;
             }
             
             if (cuentaDataRaw.countriesWhereBusiness) {
@@ -1774,11 +1834,12 @@ export class WizardService {
           delete dataToSave.briefDescription;
           delete dataToSave.einNumber;
           delete dataToSave.articlesOrCertificateUrl;
-          delete dataToSave.registeredAgentStreet;
-          delete dataToSave.registeredAgentUnit;
-          delete dataToSave.registeredAgentCity;
-          delete dataToSave.registeredAgentZipCode;
-          delete dataToSave.registeredAgentCountry;
+          // NO eliminar los campos individuales de registeredAgent - se guardan como columnas individuales
+          // delete dataToSave.registeredAgentStreet;
+          // delete dataToSave.registeredAgentUnit;
+          // delete dataToSave.registeredAgentCity;
+          // delete dataToSave.registeredAgentZipCode;
+          // delete dataToSave.registeredAgentCountry;
           delete dataToSave.ownerPersonalStreet;
           delete dataToSave.ownerPersonalUnit;
           delete dataToSave.ownerPersonalCity;
@@ -1787,9 +1848,12 @@ export class WizardService {
           delete dataToSave.ownerPersonalPostalCode;
           delete dataToSave.isMultiMember;
           delete dataToSave.validatorPassportUrl;
+          // NO eliminar incorporationMonthYear - se guarda como string
+          // delete dataToSave.incorporationMonthYear;
           
           // Lista de campos de fecha que deben convertirse de string vacío a null
-          const dateFields = ['validatorDateOfBirth', 'firstRegistrationDate', 'incorporationMonthYear'];
+          // Nota: incorporationMonthYear NO es una fecha, es un string como "Jan-2023"
+          const dateFields = ['validatorDateOfBirth'];
           
           // Lista de campos numéricos que deben convertirse de string vacío a null
           const numericFields = ['validatorAnnualIncome', 'numberOfEmployees'];
@@ -1838,15 +1902,6 @@ export class WizardService {
             dataToSave.validatorAnnualIncome = null;
           }
           
-          // Parsear firstRegistrationDate si existe
-          if (dataToSave.firstRegistrationDate) {
-            const parsedDate = this.parseDate(dataToSave.firstRegistrationDate);
-            if (parsedDate) {
-              dataToSave.firstRegistrationDate = parsedDate;
-            } else {
-              dataToSave.firstRegistrationDate = null;
-            }
-          }
           
           Object.assign(cuentaRequest, dataToSave);
           
@@ -1910,6 +1965,7 @@ export class WizardService {
       }
 
       await queryRunner.commitTransaction();
+      transactionCommitted = true;
 
       // Retornar la solicitud actualizada
       const updatedRequest = await this.requestRepository.findOne({
@@ -1952,7 +2008,10 @@ export class WizardService {
 
       return updatedRequest;
     } catch (error) {
-      await queryRunner.rollbackTransaction();
+      // Solo hacer rollback si la transacción no fue commiteada
+      if (!transactionCommitted) {
+        await queryRunner.rollbackTransaction();
+      }
       if (
         error instanceof NotFoundException ||
         error instanceof BadRequestException

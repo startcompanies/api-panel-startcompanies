@@ -22,24 +22,6 @@ export class CuentaBancariaRequest {
   currentStepNumber: number;
 
   // Paso 1: Información del Solicitante
-  @Column({ name: 'applicant_email', nullable: true, length: 255 })
-  applicantEmail?: string;
-
-  @Column({ name: 'applicant_first_name', nullable: true, length: 255 })
-  applicantFirstName?: string;
-
-  @Column({ name: 'applicant_paternal_last_name', nullable: true, length: 255 })
-  applicantPaternalLastName?: string;
-
-  @Column({ name: 'applicant_maternal_last_name', nullable: true, length: 255 })
-  applicantMaternalLastName?: string;
-
-  @Column({ name: 'applicant_phone', nullable: true, length: 50 })
-  applicantPhone?: string;
-
-  @Column({ name: 'account_type', nullable: true, length: 50 })
-  accountType?: string;
-
   @Column({ name: 'business_type', nullable: true, length: 255 })
   businessType?: string;
 
@@ -71,27 +53,23 @@ export class CuentaBancariaRequest {
   operatingAgreementUrl?: string;
 
   // Paso 2: Dirección del Registro
-  @Column({ name: 'company_address', nullable: true, type: 'jsonb' })
-  companyAddress?: {
-    street: string;
-    unit?: string;
-    city: string;
-    state: string;
-    postalCode: string;
-    country: string;
-  };
+  @Column({ name: 'registered_agent_street', nullable: true, length: 255 })
+  registeredAgentStreet?: string;
 
-  @Column({ name: 'is_registered_agent_in_usa', nullable: true, type: 'boolean' })
-  isRegisteredAgentInUSA?: boolean;
+  @Column({ name: 'registered_agent_unit', nullable: true, length: 255 })
+  registeredAgentUnit?: string;
 
-  @Column({ name: 'registered_agent_name', nullable: true, length: 255 })
-  registeredAgentName?: string;
-
-  @Column({ name: 'registered_agent_address', nullable: true, type: 'text' })
-  registeredAgentAddress?: string;
+  @Column({ name: 'registered_agent_city', nullable: true, length: 255 })
+  registeredAgentCity?: string;
 
   @Column({ name: 'registered_agent_state', nullable: true, length: 255 })
   registeredAgentState?: string;
+
+  @Column({ name: 'registered_agent_zip_code', nullable: true, length: 50 })
+  registeredAgentZipCode?: string;
+
+  @Column({ name: 'registered_agent_country', nullable: true, length: 255 })
+  registeredAgentCountry?: string;
 
   @Column({ name: 'incorporation_state', nullable: true, length: 255 })
   incorporationState?: string;
@@ -103,30 +81,8 @@ export class CuentaBancariaRequest {
   countriesWhereBusiness?: string;
 
   // Paso 3: Información de la cuenta bancaria
-  @Column({ name: 'bank_name', nullable: true, length: 255 })
-  bankName?: string;
-
-  @Column({ name: 'swift_bic_aba', nullable: true, length: 50 })
-  swiftBicAba?: string;
-
-  @Column({ name: 'account_number', nullable: true, length: 100 })
-  accountNumber?: string;
-
-  @Column({ name: 'bank_account_type', nullable: true, length: 50 })
-  bankAccountType?: string;
-
-  @Column({ name: 'first_registration_date', nullable: true, type: 'date' })
-  firstRegistrationDate?: Date;
-
-  @Column({ name: 'has_litigated_current_fiscal_year', nullable: true, type: 'boolean' })
-  hasLitigatedCurrentFiscalYear?: boolean;
-
-  @Column({ name: 'litigation_details', nullable: true, type: 'text' })
-  litigationDetails?: string;
-
-  // Paso 4: Dirección Personal del Propietario
-  @Column({ name: 'is_same_address_as_business', nullable: true, type: 'boolean' })
-  isSameAddressAsBusiness?: boolean;
+  @Column({ name: 'bank_service', nullable: true, length: 50 })
+  bankService?: string; // Servicio bancario: "Relay" o "Mercury"
 
   @Column({ name: 'owner_personal_address', nullable: true, type: 'jsonb' })
   ownerPersonalAddress?: {
@@ -144,59 +100,6 @@ export class CuentaBancariaRequest {
   // Paso 5: Tipo de LLC
   @Column({ name: 'llc_type', nullable: true, length: 20 })
   llcType?: 'single' | 'multi';
-
-  // Paso 3: Información del Validador (movido desde BankAccountValidator)
-  @Column({ name: 'validator_first_name', nullable: true, length: 255 })
-  validatorFirstName?: string;
-
-  @Column({ name: 'validator_last_name', nullable: true, length: 255 })
-  validatorLastName?: string;
-
-  @Column({ name: 'validator_date_of_birth', nullable: true, type: 'date' })
-  validatorDateOfBirth?: Date | null;
-
-  @Column({ name: 'validator_nationality', nullable: true, length: 100 })
-  validatorNationality?: string;
-
-  @Column({ name: 'validator_citizenship', nullable: true, length: 100 })
-  validatorCitizenship?: string;
-
-  @Column({ name: 'validator_passport_number', nullable: true, length: 100 })
-  validatorPassportNumber?: string;
-
-  @Column({ name: 'validator_scanned_passport_url', nullable: true, type: 'text' })
-  validatorScannedPassportUrl?: string;
-
-  @Column({ name: 'validator_work_email', nullable: true, length: 255 })
-  validatorWorkEmail?: string;
-
-  @Column({ name: 'validator_use_email_for_relay_login', default: false, type: 'boolean' })
-  validatorUseEmailForRelayLogin?: boolean;
-
-  @Column({ name: 'validator_phone', nullable: true, length: 50 })
-  validatorPhone?: string;
-
-  @Column({ name: 'validator_can_receive_sms', default: false, type: 'boolean' })
-  validatorCanReceiveSMS?: boolean;
-
-  @Column({ name: 'validator_is_us_resident', nullable: true, type: 'boolean' })
-  validatorIsUSResident?: boolean;
-
-  @Column({ name: 'validator_title', nullable: true, length: 255 })
-  validatorTitle?: string;
-
-  @Column({ name: 'validator_income_source', nullable: true, length: 255 })
-  validatorIncomeSource?: string;
-
-  @Column({ name: 'validator_annual_income', nullable: true, type: 'numeric', precision: 15, scale: 2 })
-  validatorAnnualIncome?: number;
-
-  // Paso 7: Confirmación y Firma Electrónica
-  @Column({ name: 'document_certification', nullable: true, type: 'text' })
-  documentCertification?: string;
-
-  @Column({ name: 'accepts_terms_and_conditions', nullable: true, type: 'boolean' })
-  acceptsTermsAndConditions?: boolean;
 
   @CreateDateColumn({
     name: 'created_at',

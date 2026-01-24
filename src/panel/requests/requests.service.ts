@@ -296,7 +296,6 @@ export class RequestsService {
       llcName: request.aperturaLlcRequest?.llcName || 'Sin nombre',
       incorporationState: request.aperturaLlcRequest?.incorporationState || '',
       llcType: request.aperturaLlcRequest?.llcType || 'single',
-      einNumber: request.aperturaLlcRequest?.einNumber || '',
       createdAt: request.createdAt,
       // Incluir todos los datos de apertura para precargar
       aperturaData: request.aperturaLlcRequest,
@@ -457,21 +456,19 @@ export class RequestsService {
           cuentaData.incorporationMonthYear = '';
         }
         
-        // Mapear campos del validador desde CuentaBancariaRequest (ya no hay BankAccountValidator separado)
-        if (cuentaData.validatorFirstName || cuentaData.validatorLastName) {
+        // Mapear campos del validador desde Members (con validatesBankAccount = true)
+        const validator = members.find((m: any) => m.validatesBankAccount === true);
+        if (validator) {
           (request as any).bankAccountValidator = {
-            firstName: cuentaData.validatorFirstName || '',
-            lastName: cuentaData.validatorLastName || '',
-            dateOfBirth: cuentaData.validatorDateOfBirth || null,
-            nationality: cuentaData.validatorNationality || '',
-            citizenship: cuentaData.validatorCitizenship || '',
-            passportNumber: cuentaData.validatorPassportNumber || '',
-            scannedPassportUrl: cuentaData.validatorScannedPassportUrl || '',
-            workEmail: cuentaData.validatorWorkEmail || '',
-            useEmailForRelayLogin: cuentaData.validatorUseEmailForRelayLogin || false,
-            phone: cuentaData.validatorPhone || '',
-            canReceiveSMS: cuentaData.validatorCanReceiveSMS || false,
-            isUSResident: cuentaData.validatorIsUSResident || false,
+            firstName: validator.firstName || '',
+            lastName: validator.lastName || '',
+            dateOfBirth: validator.dateOfBirth || null,
+            nationality: validator.nationality || '',
+            passportNumber: validator.passportNumber || '',
+            scannedPassportUrl: validator.scannedPassportUrl || '',
+            workEmail: validator.email || '',
+            phone: validator.phoneNumber || '',
+            isUSResident: validator.isUSCitizen === 'si',
           };
         }
       }
@@ -639,21 +636,19 @@ export class RequestsService {
           cuentaData.incorporationMonthYear = '';
         }
         
-        // Mapear campos del validador desde CuentaBancariaRequest (ya no hay BankAccountValidator separado)
-        if (cuentaData.validatorFirstName || cuentaData.validatorLastName) {
+        // Mapear campos del validador desde Members (con validatesBankAccount = true)
+        const validator = members.find((m: any) => m.validatesBankAccount === true);
+        if (validator) {
           (request as any).bankAccountValidator = {
-            firstName: cuentaData.validatorFirstName || '',
-            lastName: cuentaData.validatorLastName || '',
-            dateOfBirth: cuentaData.validatorDateOfBirth || null,
-            nationality: cuentaData.validatorNationality || '',
-            citizenship: cuentaData.validatorCitizenship || '',
-            passportNumber: cuentaData.validatorPassportNumber || '',
-            scannedPassportUrl: cuentaData.validatorScannedPassportUrl || '',
-            workEmail: cuentaData.validatorWorkEmail || '',
-            useEmailForRelayLogin: cuentaData.validatorUseEmailForRelayLogin || false,
-            phone: cuentaData.validatorPhone || '',
-            canReceiveSMS: cuentaData.validatorCanReceiveSMS || false,
-            isUSResident: cuentaData.validatorIsUSResident || false,
+            firstName: validator.firstName || '',
+            lastName: validator.lastName || '',
+            dateOfBirth: validator.dateOfBirth || null,
+            nationality: validator.nationality || '',
+            passportNumber: validator.passportNumber || '',
+            scannedPassportUrl: validator.scannedPassportUrl || '',
+            workEmail: validator.email || '',
+            phone: validator.phoneNumber || '',
+            isUSResident: validator.isUSCitizen === 'si',
           };
         }
       }
@@ -946,16 +941,59 @@ export class RequestsService {
           delete aperturaDataToCreate.linkedin;
         }
         
-        // Sección 3 - solo procesar si currentStepNumber >= 3
+        // Sección 3 - Si los datos están presentes, guardarlos independientemente del currentStep
+        // Solo eliminar si currentStep < 3 Y los campos no están presentes en el payload
+        // (Si están presentes, significa que el usuario los está enviando y deben guardarse)
+        const aperturaDataFieldsAny = aperturaDataFields as any;
         if (currentStep < 3) {
-          delete aperturaDataToCreate.serviceBillUrl;
-          delete aperturaDataToCreate.bankStatementUrl;
-          delete aperturaDataToCreate.periodicIncome10k;
-          delete aperturaDataToCreate.bankAccountLinkedEmail;
-          delete aperturaDataToCreate.bankAccountLinkedPhone;
-          delete aperturaDataToCreate.actividadFinancieraEsperada;
-          delete aperturaDataToCreate.projectOrCompanyUrl;
+          // Solo eliminar si no están presentes (permitir guardar si vienen en el payload)
+          if (aperturaDataFieldsAny.serviceBillUrl === undefined) delete aperturaDataToCreate.serviceBillUrl;
+          if (aperturaDataFieldsAny.bankStatementUrl === undefined) delete aperturaDataToCreate.bankStatementUrl;
+          if (aperturaDataFieldsAny.periodicIncome10k === undefined) delete aperturaDataToCreate.periodicIncome10k;
+          if (aperturaDataFieldsAny.bankAccountLinkedEmail === undefined) delete aperturaDataToCreate.bankAccountLinkedEmail;
+          if (aperturaDataFieldsAny.bankAccountLinkedPhone === undefined) delete aperturaDataToCreate.bankAccountLinkedPhone;
+          if (aperturaDataFieldsAny.actividadFinancieraEsperada === undefined) delete aperturaDataToCreate.actividadFinancieraEsperada;
+          if (aperturaDataFieldsAny.projectOrCompanyUrl === undefined) delete aperturaDataToCreate.projectOrCompanyUrl;
         }
+        
+        // Eliminar campos que no existen en el formulario (EIN relacionados)
+        delete aperturaDataToCreate.hasEin;
+        delete aperturaDataToCreate.einNumber;
+        delete aperturaDataToCreate.einDocumentUrl;
+        delete aperturaDataToCreate.noEinReason;
+        delete aperturaDataToCreate.incorporationDate;
+        delete aperturaDataToCreate.certificateOfFormationUrl;
+        delete aperturaDataToCreate.accountType;
+        delete aperturaDataToCreate.estadoConstitucion;
+        delete aperturaDataToCreate.annualRevenue;
+        delete aperturaDataToCreate.llcPhoneNumber;
+        delete aperturaDataToCreate.website;
+        delete aperturaDataToCreate.llcEmail;
+        delete aperturaDataToCreate.registeredAgentAddress;
+        delete aperturaDataToCreate.registeredAgentName;
+        delete aperturaDataToCreate.registeredAgentEmail;
+        delete aperturaDataToCreate.registeredAgentPhone;
+        delete aperturaDataToCreate.registeredAgentType;
+        delete aperturaDataToCreate.needsBankVerificationHelp;
+        delete aperturaDataToCreate.bankAccountType;
+        delete aperturaDataToCreate.bankName;
+        delete aperturaDataToCreate.bankAccountNumber;
+        delete aperturaDataToCreate.bankRoutingNumber;
+        delete aperturaDataToCreate.veracityConfirmation;
+        delete aperturaDataToCreate.ownerNationality;
+        delete aperturaDataToCreate.ownerCountryOfResidence;
+        delete aperturaDataToCreate.ownerPersonalAddress;
+        delete aperturaDataToCreate.ownerPhoneNumber;
+        delete aperturaDataToCreate.ownerEmail;
+        delete aperturaDataToCreate.almacenaProductosDepositoUSA;
+        delete aperturaDataToCreate.declaroImpuestosAntes;
+        delete aperturaDataToCreate.llcConStartCompanies;
+        delete aperturaDataToCreate.ingresosMayor250k;
+        delete aperturaDataToCreate.activosEnUSA;
+        delete aperturaDataToCreate.ingresosPeriodicos10k;
+        delete aperturaDataToCreate.contrataServiciosUSA;
+        delete aperturaDataToCreate.propiedadEnUSA;
+        delete aperturaDataToCreate.tieneCuentasBancarias;
         
         // Solo incluir llcType si tiene un valor válido ('single' o 'multi')
         if (aperturaDataToCreate.llcType !== 'single' && aperturaDataToCreate.llcType !== 'multi') {
@@ -1021,11 +1059,39 @@ export class RequestsService {
           }
         }
 
-        const renovacionData = this.renovacionRepo.create({
+        // Eliminar campos que no existen en el formulario (campos obsoletos o no usados)
+        const renovacionDataToCreate: any = {
           requestId: savedRequest.id,
           currentStepNumber: createRequestDto.currentStepNumber,
           ...renovacionDataFields,
-        });
+        };
+        
+        // Eliminar campos obsoletos
+        delete renovacionDataToCreate.declaracionInicial;
+        delete renovacionDataToCreate.cambioDireccionRA;
+        delete renovacionDataToCreate.agregarCambiarSocio;
+        delete renovacionDataToCreate.declaracionCierre;
+        delete renovacionDataToCreate.owners; // Ya se procesa por separado como members
+        delete renovacionDataToCreate.members; // Se procesa por separado
+        // Eliminar campos obsoletos que existen en BD pero no en la entidad
+        delete renovacionDataToCreate.data_is_correct;
+        delete renovacionDataToCreate.dataIsCorrect;
+        delete renovacionDataToCreate.observations;
+        delete renovacionDataToCreate.payment_method;
+        delete renovacionDataToCreate.paymentMethod;
+        delete renovacionDataToCreate.amount_to_pay;
+        delete renovacionDataToCreate.amountToPay;
+        delete renovacionDataToCreate.wants_invoice;
+        delete renovacionDataToCreate.wantsInvoice;
+        delete renovacionDataToCreate.payment_proof_url;
+        delete renovacionDataToCreate.paymentProofUrl;
+        // Mapear totalRevenue2025 a totalRevenue si existe
+        if (renovacionDataToCreate.totalRevenue2025 !== undefined) {
+          renovacionDataToCreate.totalRevenue = renovacionDataToCreate.totalRevenue2025;
+          delete renovacionDataToCreate.totalRevenue2025;
+        }
+        
+        const renovacionData = this.renovacionRepo.create(renovacionDataToCreate);
         await queryRunner.manager.save(RenovacionLlcRequest, renovacionData);
 
         // Crear miembros solo si estamos en la sección 2 o superior (donde se capturan los miembros)
@@ -1089,30 +1155,11 @@ export class RequestsService {
           delete cuentaDataRaw.briefDescription;
         }
         
-        // Construir registeredAgentAddress desde campos individuales (sección 2)
-        // Guardar registeredAgentState por separado además de la dirección completa
-        if (cuentaDataRaw.registeredAgentState !== undefined) {
-          cuentaDataRaw.registeredAgentState = cuentaDataRaw.registeredAgentState || '';
-        }
-        
-        if (cuentaDataRaw.registeredAgentStreet || cuentaDataRaw.registeredAgentCity || cuentaDataRaw.registeredAgentState) {
-          cuentaDataRaw.registeredAgentAddress = [
-            cuentaDataRaw.registeredAgentStreet || '',
-            cuentaDataRaw.registeredAgentUnit || '',
-            cuentaDataRaw.registeredAgentCity || '',
-            cuentaDataRaw.registeredAgentState || '',
-            cuentaDataRaw.registeredAgentZipCode || '',
-            cuentaDataRaw.registeredAgentCountry || ''
-          ].filter(Boolean).join(', ');
-          
-          // Eliminar campos individuales después de construir la dirección (excepto registeredAgentState que se guarda por separado)
-          delete cuentaDataRaw.registeredAgentStreet;
-          delete cuentaDataRaw.registeredAgentUnit;
-          delete cuentaDataRaw.registeredAgentCity;
-          // NO eliminar registeredAgentState - se guarda por separado
-          delete cuentaDataRaw.registeredAgentZipCode;
-          delete cuentaDataRaw.registeredAgentCountry;
-        }
+        // Guardar campos individuales de registeredAgent (sección 2)
+        // Los campos se guardan directamente como columnas individuales, no como JSONB
+        // No es necesario construir companyAddress, los campos se guardan directamente
+        // registeredAgentStreet, registeredAgentUnit, registeredAgentCity, registeredAgentState,
+        // registeredAgentZipCode, registeredAgentCountry se guardan como columnas individuales
         
         // Construir ownerPersonalAddress desde campos individuales (sección 4)
         if (cuentaDataRaw.ownerPersonalStreet || cuentaDataRaw.ownerPersonalCity || cuentaDataRaw.ownerPersonalState) {
@@ -1170,10 +1217,11 @@ export class RequestsService {
         
         if (isSection5OrHigher && cuentaDataRaw.isMultiMember !== undefined && cuentaDataRaw.isMultiMember !== '' && cuentaDataRaw.isMultiMember !== null) {
           // Solo mapear si estamos en la sección 5 o superior y hay un valor válido
-          if (cuentaDataRaw.isMultiMember === 'yes') {
-            cuentaDataRaw.llcType = 'multi';
-          } else if (cuentaDataRaw.isMultiMember === 'no') {
+          // 'no' -> 'single', 'yes' -> 'multi'
+          if (cuentaDataRaw.isMultiMember === 'no') {
             cuentaDataRaw.llcType = 'single';
+          } else if (cuentaDataRaw.isMultiMember === 'yes') {
+            cuentaDataRaw.llcType = 'multi';
           }
           delete cuentaDataRaw.isMultiMember;
         } else {
@@ -1194,28 +1242,6 @@ export class RequestsService {
         const owners = cuentaBancariaData?.owners || [];
         const validators = cuentaBancariaData?.validators || [];
         
-        // Eliminar campos de secciones que aún no se han completado
-        // Sección 3 (validador) - solo procesar si currentStepNumber >= 3
-        if (currentStep < 3) {
-          // Eliminar todos los campos del validador si estamos antes de la sección 3
-          delete cuentaDataRaw.validatorFirstName;
-          delete cuentaDataRaw.validatorLastName;
-          delete cuentaDataRaw.validatorDateOfBirth;
-          delete cuentaDataRaw.validatorNationality;
-          delete cuentaDataRaw.validatorCitizenship;
-          delete cuentaDataRaw.validatorPassportNumber;
-          delete cuentaDataRaw.validatorPassportUrl;
-          delete cuentaDataRaw.validatorScannedPassportUrl;
-          delete cuentaDataRaw.validatorWorkEmail;
-          delete cuentaDataRaw.validatorUseEmailForRelayLogin;
-          delete cuentaDataRaw.validatorPhone;
-          delete cuentaDataRaw.validatorCanReceiveSMS;
-          delete cuentaDataRaw.validatorIsUSResident;
-          delete cuentaDataRaw.validatorTitle;
-          delete cuentaDataRaw.validatorIncomeSource;
-          delete cuentaDataRaw.validatorAnnualIncome;
-        }
-        
         // Sección 4 (dirección personal) - solo procesar si currentStepNumber >= 4
         if (currentStep < 4) {
           delete cuentaDataRaw.ownerPersonalStreet;
@@ -1229,116 +1255,12 @@ export class RequestsService {
           delete cuentaDataRaw.proofOfAddressUrl;
         }
         
-        // Procesar validator: guardar directamente en CuentaBancariaRequest
-        // Solo procesar si estamos en la sección 3 o superior
-        if (currentStep >= 3) {
-          // Los campos del validador pueden venir en validators[] o directamente en cuentaDataRaw
-          // Priorizar validators[] si existe, sino usar cuentaDataRaw directamente
-          let validatorData: any = null;
-          
-          if (validators && validators.length > 0) {
-            validatorData = validators[0]; // Solo hay un validador
-          } else {
-            // Si no hay validators[], verificar si los campos vienen directamente en cuentaDataRaw
-            if (cuentaDataRaw.validatorFirstName || cuentaDataRaw.validatorLastName || 
-                cuentaDataRaw.validatorDateOfBirth || cuentaDataRaw.validatorPassportNumber ||
-                cuentaDataRaw.validatorPassportUrl || cuentaDataRaw.validatorScannedPassportUrl ||
-                cuentaDataRaw.isUSResident || cuentaDataRaw.validatorIsUSResident) {
-              validatorData = cuentaDataRaw;
-            }
-          }
-          
-          if (validatorData) {
-            // Mapear campos del frontend a campos del validador en cuentaDataRaw
-            // Solo asignar si el campo tiene un valor válido (no cadena vacía)
-            if (validatorData.validatorFirstName !== undefined && validatorData.validatorFirstName !== '') {
-              cuentaDataRaw.validatorFirstName = validatorData.validatorFirstName || validatorData.firstName || '';
-            }
-            if (validatorData.validatorLastName !== undefined && validatorData.validatorLastName !== '') {
-              cuentaDataRaw.validatorLastName = validatorData.validatorLastName || validatorData.lastName || '';
-            }
-            if (validatorData.validatorNationality !== undefined && validatorData.validatorNationality !== '') {
-              cuentaDataRaw.validatorNationality = validatorData.validatorNationality || validatorData.nationality || '';
-            }
-            if (validatorData.validatorCitizenship !== undefined && validatorData.validatorCitizenship !== '') {
-              cuentaDataRaw.validatorCitizenship = validatorData.validatorCitizenship || validatorData.citizenship || '';
-            }
-            if (validatorData.validatorPassportNumber !== undefined && validatorData.validatorPassportNumber !== '') {
-              cuentaDataRaw.validatorPassportNumber = validatorData.validatorPassportNumber || validatorData.passportNumber || '';
-            }
-            // Guardar URL del pasaporte - puede venir como validatorPassportUrl o validatorScannedPassportUrl
-            // Priorizar validatorData, pero si está vacío, verificar en cuentaDataRaw
-            const passportUrl = (validatorData.validatorPassportUrl && validatorData.validatorPassportUrl !== '') 
-              ? validatorData.validatorPassportUrl 
-              : (validatorData.scannedPassportUrl && validatorData.scannedPassportUrl !== '')
-                ? validatorData.scannedPassportUrl
-                : (cuentaDataRaw.validatorPassportUrl && cuentaDataRaw.validatorPassportUrl !== '')
-                  ? cuentaDataRaw.validatorPassportUrl
-                  : (cuentaDataRaw.validatorScannedPassportUrl && cuentaDataRaw.validatorScannedPassportUrl !== '')
-                    ? cuentaDataRaw.validatorScannedPassportUrl
-                    : '';
-            
-            if (passportUrl !== '') {
-              cuentaDataRaw.validatorScannedPassportUrl = passportUrl;
-            }
-            if (validatorData.validatorWorkEmail !== undefined && validatorData.validatorWorkEmail !== '') {
-              cuentaDataRaw.validatorWorkEmail = validatorData.validatorWorkEmail || validatorData.workEmail || '';
-            }
-            if (validatorData.validatorPhone !== undefined && validatorData.validatorPhone !== '') {
-              cuentaDataRaw.validatorPhone = validatorData.validatorPhone || validatorData.phone || '';
-            }
-            
-            // Campos adicionales del validador
-            if (validatorData.validatorTitle !== undefined && validatorData.validatorTitle !== '') {
-              cuentaDataRaw.validatorTitle = validatorData.validatorTitle || '';
-            }
-            if (validatorData.validatorIncomeSource !== undefined && validatorData.validatorIncomeSource !== '') {
-              cuentaDataRaw.validatorIncomeSource = validatorData.validatorIncomeSource || '';
-            }
-            if (validatorData.validatorAnnualIncome !== undefined && validatorData.validatorAnnualIncome !== '') {
-              // Convertir a número si viene como string
-              const annualIncome = typeof validatorData.validatorAnnualIncome === 'string' 
-                ? parseFloat(validatorData.validatorAnnualIncome) 
-                : validatorData.validatorAnnualIncome;
-              if (!isNaN(annualIncome)) {
-                cuentaDataRaw.validatorAnnualIncome = annualIncome;
-              }
-            }
-            
-            // Campos booleanos
-            if (validatorData.useEmailForRelayLogin !== undefined) {
-              cuentaDataRaw.validatorUseEmailForRelayLogin = validatorData.useEmailForRelayLogin || false;
-            }
-            if (validatorData.canReceiveSMS !== undefined) {
-              cuentaDataRaw.validatorCanReceiveSMS = validatorData.canReceiveSMS || false;
-            }
-            // Guardar isUSResident - puede venir como 'yes'/'no' o boolean
-            // Priorizar validatorData, pero si no está definido, verificar en cuentaDataRaw
-            const isUSResidentValue = validatorData.isUSResident !== undefined && validatorData.isUSResident !== ''
-              ? validatorData.isUSResident 
-              : cuentaDataRaw.isUSResident !== undefined && cuentaDataRaw.isUSResident !== ''
-                ? cuentaDataRaw.isUSResident
-                : undefined;
-            
-            if (isUSResidentValue !== undefined && isUSResidentValue !== '') {
-              cuentaDataRaw.validatorIsUSResident = isUSResidentValue === 'yes' || isUSResidentValue === true;
-            }
-            
-            // Parsear fecha de nacimiento - solo si tiene un valor válido (no cadena vacía)
-            const dateOfBirth = validatorData.validatorDateOfBirth || validatorData.dateOfBirth;
-            if (dateOfBirth && dateOfBirth.trim() !== '') {
-              const parsedDate = this.parseDate(dateOfBirth);
-              if (parsedDate) {
-                cuentaDataRaw.validatorDateOfBirth = parsedDate;
-              } else {
-                // Si no se puede parsear, no asignar (no incluir en cuentaDataRaw)
-                delete cuentaDataRaw.validatorDateOfBirth;
-              }
-            } else {
-              // Si viene como cadena vacía, no incluir en cuentaDataRaw
-              delete cuentaDataRaw.validatorDateOfBirth;
-            }
-          }
+        // El validator ahora se guarda como un member con validatesBankAccount = true
+        // No se guarda en cuenta_bancaria_requests
+        
+        // Establecer bankService por defecto a "Relay" si no viene
+        if (cuentaDataRaw.bankService === undefined || cuentaDataRaw.bankService === null || cuentaDataRaw.bankService === '') {
+          cuentaDataRaw.bankService = 'Relay';
         }
         
         // Preparar datos para crear, excluyendo llcType si no tiene un valor válido
@@ -1346,9 +1268,6 @@ export class RequestsService {
           requestId: savedRequest.id,
           currentStepNumber: createRequestDto.currentStepNumber,
           ...cuentaDataRaw,
-          firstRegistrationDate: cuentaDataRaw.firstRegistrationDate
-            ? new Date(cuentaDataRaw.firstRegistrationDate)
-            : undefined,
         };
         
         // Solo incluir llcType si tiene un valor válido ('single' o 'multi')
@@ -1360,8 +1279,8 @@ export class RequestsService {
         await queryRunner.manager.save(CuentaBancariaRequest, cuentaData);
         
         // Procesar owners (ahora como Members) si hay datos en el payload
-        // Si hay owners en el payload, significa que el usuario está en la sección 6 y quiere guardarlos
-        // Independientemente del currentStepNumber (puede ser que se haya reseteado después de avanzar al paso de pago)
+        // El validator también viene en el array owners con validatesBankAccount: true
+        // Si hay owners en el payload, significa que el usuario está en la sección 3 o superior
         if (owners.length > 0) {
           // Filtrar owners que tengan al menos algún dato válido
           const validOwners = owners.filter((o: any) => 
@@ -1402,7 +1321,7 @@ export class RequestsService {
                 // Campos opcionales que pueden venir del frontend
                 ssnOrItin: ssnItin || ownerDto.ssnItin || null,
                 nationalTaxId: cuit || ownerDto.cuit || null,
-                percentageOfParticipation: participationPercentage || ownerDto.participationPercentage || 0,
+                percentageOfParticipation: participationPercentage || ownerDto.participationPercentage || ownerDto.percentageOfParticipation || 0,
                 // Campos requeridos de Member (valores por defecto si no vienen)
                 email: ownerDto.email || '',
                 phoneNumber: ownerDto.phoneNumber || '',
@@ -1413,7 +1332,8 @@ export class RequestsService {
                   postalCode: '',
                   country: ''
                 },
-                validatesBankAccount: false,
+                // El validator tiene validatesBankAccount: true, los owners tienen false
+                validatesBankAccount: ownerDto.validatesBankAccount || false,
                 ...(parsedDate ? { dateOfBirth: parsedDate } : {}),
               };
               
@@ -1668,6 +1588,10 @@ export class RequestsService {
         request.notes = updateRequestDto.notes;
       }
       
+      if (updateRequestDto.signatureUrl !== undefined) {
+        request.signatureUrl = updateRequestDto.signatureUrl;
+      }
+      
       this.logger.log(`[Update Request ${id}] Guardando request con datos:`, {
         status: request.status,
         paymentMethod: request.paymentMethod,
@@ -1675,6 +1599,7 @@ export class RequestsService {
         paymentStatus: request.paymentStatus,
         stripeChargeId: request.stripeChargeId,
         paymentProofUrl: request.paymentProofUrl,
+        signatureUrl: request.signatureUrl,
         currentStep: request.currentStep,
       });
       
@@ -1704,6 +1629,7 @@ export class RequestsService {
         if (updateRequestDto.aperturaLlcData) {
           const { members, ...aperturaDataFields } = updateRequestDto.aperturaLlcData as any;
           const aperturaData: any = { ...aperturaDataFields };
+          const aperturaDataFieldsAny = aperturaDataFields as any; // Declarar una sola vez
           
           // Eliminar campos de secciones que aún no se han completado
           // Sección 1: llcName, llcNameOption2, llcNameOption3, incorporationState, businessDescription, llcType, linkedin
@@ -1721,16 +1647,9 @@ export class RequestsService {
             delete aperturaData.linkedin;
           }
           
-          // Sección 3 - solo procesar si currentStepNumber >= 3
-          if (currentStep < 3) {
-            delete aperturaData.serviceBillUrl;
-            delete aperturaData.bankStatementUrl;
-            delete aperturaData.periodicIncome10k;
-            delete aperturaData.bankAccountLinkedEmail;
-            delete aperturaData.bankAccountLinkedPhone;
-            delete aperturaData.actividadFinancieraEsperada;
-            delete aperturaData.projectOrCompanyUrl;
-          }
+          // Sección 3 - Si los datos están presentes, guardarlos independientemente del currentStep
+          // Solo eliminar si currentStep < 3 Y los campos no están presentes en el payload
+          // (Si están presentes, significa que el usuario los está enviando y deben guardarse)
           
           // Sección 2 (members) - se procesa por separado, no debe estar en aperturaData
           // (ya se eliminó en la desestructuración)
@@ -1741,25 +1660,68 @@ export class RequestsService {
             delete dataToAssign.llcType;
           }
           
-          // Asegurarse de que los campos de secciones no completadas no estén en dataToAssign
+          // Eliminar campos de sección 1 solo si currentStep < 1 Y no están presentes en el payload
           if (currentStep < 1) {
-            delete dataToAssign.llcName;
-            delete dataToAssign.llcNameOption2;
-            delete dataToAssign.llcNameOption3;
-            delete dataToAssign.incorporationState;
-            delete dataToAssign.businessDescription;
-            delete dataToAssign.linkedin;
+            // Solo eliminar si no están presentes (no sobrescribir datos existentes si no vienen en el payload)
+            if (!(aperturaDataFieldsAny.llcName !== undefined)) delete dataToAssign.llcName;
+            if (!(aperturaDataFieldsAny.llcNameOption2 !== undefined)) delete dataToAssign.llcNameOption2;
+            if (!(aperturaDataFieldsAny.llcNameOption3 !== undefined)) delete dataToAssign.llcNameOption3;
+            if (!(aperturaDataFieldsAny.incorporationState !== undefined)) delete dataToAssign.incorporationState;
+            if (!(aperturaDataFieldsAny.businessDescription !== undefined)) delete dataToAssign.businessDescription;
+            if (!(aperturaDataFieldsAny.linkedin !== undefined)) delete dataToAssign.linkedin;
           }
           
+          // Eliminar campos de sección 3 solo si currentStep < 3 Y no están presentes en el payload
+          // Si están presentes, guardarlos (el usuario los está enviando)
           if (currentStep < 3) {
-            delete dataToAssign.serviceBillUrl;
-            delete dataToAssign.bankStatementUrl;
-            delete dataToAssign.periodicIncome10k;
-            delete dataToAssign.bankAccountLinkedEmail;
-            delete dataToAssign.bankAccountLinkedPhone;
-            delete dataToAssign.actividadFinancieraEsperada;
-            delete dataToAssign.projectOrCompanyUrl;
+            // Solo eliminar si no están presentes en el payload
+            if (!(aperturaDataFieldsAny.serviceBillUrl !== undefined)) delete dataToAssign.serviceBillUrl;
+            if (!(aperturaDataFieldsAny.bankStatementUrl !== undefined)) delete dataToAssign.bankStatementUrl;
+            if (!(aperturaDataFieldsAny.periodicIncome10k !== undefined)) delete dataToAssign.periodicIncome10k;
+            if (!(aperturaDataFieldsAny.bankAccountLinkedEmail !== undefined)) delete dataToAssign.bankAccountLinkedEmail;
+            if (!(aperturaDataFieldsAny.bankAccountLinkedPhone !== undefined)) delete dataToAssign.bankAccountLinkedPhone;
+            if (!(aperturaDataFieldsAny.actividadFinancieraEsperada !== undefined)) delete dataToAssign.actividadFinancieraEsperada;
+            if (!(aperturaDataFieldsAny.projectOrCompanyUrl !== undefined)) delete dataToAssign.projectOrCompanyUrl;
           }
+          
+          // Eliminar campos que no existen en el formulario (EIN relacionados y otros campos no usados)
+          delete dataToAssign.hasEin;
+          delete dataToAssign.einNumber;
+          delete dataToAssign.einDocumentUrl;
+          delete dataToAssign.noEinReason;
+          delete dataToAssign.incorporationDate;
+          delete dataToAssign.certificateOfFormationUrl;
+          delete dataToAssign.accountType;
+          delete dataToAssign.estadoConstitucion;
+          delete dataToAssign.annualRevenue;
+          delete dataToAssign.llcPhoneNumber;
+          delete dataToAssign.website;
+          delete dataToAssign.llcEmail;
+          delete dataToAssign.registeredAgentAddress;
+          delete dataToAssign.registeredAgentName;
+          delete dataToAssign.registeredAgentEmail;
+          delete dataToAssign.registeredAgentPhone;
+          delete dataToAssign.registeredAgentType;
+          delete dataToAssign.needsBankVerificationHelp;
+          delete dataToAssign.bankAccountType;
+          delete dataToAssign.bankName;
+          delete dataToAssign.bankAccountNumber;
+          delete dataToAssign.bankRoutingNumber;
+          delete dataToAssign.veracityConfirmation;
+          delete dataToAssign.ownerNationality;
+          delete dataToAssign.ownerCountryOfResidence;
+          delete dataToAssign.ownerPersonalAddress;
+          delete dataToAssign.ownerPhoneNumber;
+          delete dataToAssign.ownerEmail;
+          delete dataToAssign.almacenaProductosDepositoUSA;
+          delete dataToAssign.declaroImpuestosAntes;
+          delete dataToAssign.llcConStartCompanies;
+          delete dataToAssign.ingresosMayor250k;
+          delete dataToAssign.activosEnUSA;
+          delete dataToAssign.ingresosPeriodicos10k;
+          delete dataToAssign.contrataServiciosUSA;
+          delete dataToAssign.propiedadEnUSA;
+          delete dataToAssign.tieneCuentasBancarias;
           
           Object.assign(aperturaRequest, dataToAssign);
         }
@@ -1848,22 +1810,44 @@ export class RequestsService {
             'totalRevenue',
           ];
           
-          Object.keys(mappedData).forEach(key => {
-            if (key !== 'owners' && key !== 'members' && key !== 'currentStepNumber' && key !== 'requestId' && key !== 'totalRevenue2025') {
-              let value = mappedData[key];
-              
-              // Convertir strings vacíos a null para campos numéricos
-              if (numericFields.includes(key) && value === '') {
-                value = null;
-              }
-              
-              // Convertir strings vacíos a null para fechas
-              if (key === 'llcCreationDate' && value === '') {
-                value = null;
-              }
-              
-              (renovacionRequest as any)[key] = value;
+          // Eliminar campos que no existen en el formulario (campos obsoletos o no usados)
+          const dataToAssign: any = { ...mappedData };
+          delete dataToAssign.owners; // Ya se procesa por separado como members
+          delete dataToAssign.members; // Se procesa por separado
+          delete dataToAssign.currentStepNumber;
+          delete dataToAssign.requestId;
+          delete dataToAssign.totalRevenue2025; // Ya se mapeó a totalRevenue
+          delete dataToAssign.declaracionInicial; // Campo eliminado
+          delete dataToAssign.cambioDireccionRA; // Campo eliminado
+          delete dataToAssign.agregarCambiarSocio; // Campo eliminado
+          delete dataToAssign.declaracionCierre; // Campo eliminado
+          // Eliminar campos obsoletos que existen en BD pero no en la entidad
+          delete dataToAssign.data_is_correct;
+          delete dataToAssign.dataIsCorrect;
+          delete dataToAssign.observations;
+          delete dataToAssign.payment_method;
+          delete dataToAssign.paymentMethod;
+          delete dataToAssign.amount_to_pay;
+          delete dataToAssign.amountToPay;
+          delete dataToAssign.wants_invoice;
+          delete dataToAssign.wantsInvoice;
+          delete dataToAssign.payment_proof_url;
+          delete dataToAssign.paymentProofUrl;
+          
+          Object.keys(dataToAssign).forEach(key => {
+            let value = dataToAssign[key];
+            
+            // Convertir strings vacíos a null para campos numéricos
+            if (numericFields.includes(key) && value === '') {
+              value = null;
             }
+            
+            // Convertir strings vacíos a null para fechas
+            if (key === 'llcCreationDate' && value === '') {
+              value = null;
+            }
+            
+            (renovacionRequest as any)[key] = value;
           });
         }
 
@@ -1970,27 +1954,8 @@ export class RequestsService {
           const { owners, validators, ...cuentaDataFields } = updateRequestDto.cuentaBancariaData as any;
           const cuentaData: any = { ...cuentaDataFields };
           
-          // Eliminar campos de secciones que aún no se han completado
-          // Sección 3 (validador) - solo procesar si currentStepNumber >= 3
-          if (currentStep < 3) {
-            // Eliminar todos los campos del validador si estamos antes de la sección 3
-            delete cuentaData.validatorFirstName;
-            delete cuentaData.validatorLastName;
-            delete cuentaData.validatorDateOfBirth;
-            delete cuentaData.validatorNationality;
-            delete cuentaData.validatorCitizenship;
-            delete cuentaData.validatorPassportNumber;
-            delete cuentaData.validatorPassportUrl;
-            delete cuentaData.validatorScannedPassportUrl;
-            delete cuentaData.validatorWorkEmail;
-            delete cuentaData.validatorUseEmailForRelayLogin;
-            delete cuentaData.validatorPhone;
-            delete cuentaData.validatorCanReceiveSMS;
-            delete cuentaData.validatorIsUSResident;
-            delete cuentaData.validatorTitle;
-            delete cuentaData.validatorIncomeSource;
-            delete cuentaData.validatorAnnualIncome;
-          }
+          // El validator ahora se guarda como un member con validatesBankAccount = true
+          // No se guarda en cuenta_bancaria_requests
           
           // Sección 4 (dirección personal) - solo procesar si currentStepNumber >= 4
           if (currentStep < 4) {
@@ -2006,6 +1971,11 @@ export class RequestsService {
           }
           
           // Sección 5 (tipo de LLC) - solo procesar si currentStepNumber >= 5
+          // Eliminar llcType si viene como cadena vacía (no es válido)
+          if (cuentaData.llcType === '') {
+            delete cuentaData.llcType;
+          }
+          
           if (currentStep < 5) {
             delete cuentaData.isMultiMember;
             delete cuentaData.llcType;
@@ -2013,22 +1983,6 @@ export class RequestsService {
           
           // Sección 6 (owners) - se procesa por separado, no debe estar en cuentaData
           // (ya se eliminó en la desestructuración)
-          
-          // Convertir fecha si viene, o eliminar si está vacía
-          if (cuentaData.firstRegistrationDate !== undefined) {
-            if (cuentaData.firstRegistrationDate && cuentaData.firstRegistrationDate.trim() !== '') {
-              const parsedDate = this.parseDate(cuentaData.firstRegistrationDate);
-              if (parsedDate) {
-                cuentaData.firstRegistrationDate = parsedDate;
-              } else {
-                // Si no se puede parsear, eliminar el campo para no intentar guardar un valor inválido
-                delete cuentaData.firstRegistrationDate;
-              }
-            } else {
-              // Si está vacío o es cadena vacía, eliminar el campo (no actualizar)
-              delete cuentaData.firstRegistrationDate;
-            }
-          }
           
           // Mapear campos del frontend a nombres de la entidad
           // articlesOrCertificateUrl -> certificateOfConstitutionOrArticlesUrl
@@ -2061,30 +2015,11 @@ export class RequestsService {
             delete cuentaData.briefDescription;
           }
           
-          // Construir registeredAgentAddress desde campos individuales (sección 2)
-          // Guardar registeredAgentState por separado además de la dirección completa
-          if (cuentaData.registeredAgentState !== undefined) {
-            cuentaData.registeredAgentState = cuentaData.registeredAgentState || '';
-          }
-          
-          if (cuentaData.registeredAgentStreet !== undefined || cuentaData.registeredAgentCity !== undefined || cuentaData.registeredAgentState !== undefined) {
-            cuentaData.registeredAgentAddress = [
-              cuentaData.registeredAgentStreet || '',
-              cuentaData.registeredAgentUnit || '',
-              cuentaData.registeredAgentCity || '',
-              cuentaData.registeredAgentState || '',
-              cuentaData.registeredAgentZipCode || '',
-              cuentaData.registeredAgentCountry || ''
-            ].filter(Boolean).join(', ');
-            
-            // Eliminar campos individuales después de construir la dirección (excepto registeredAgentState que se guarda por separado)
-            delete cuentaData.registeredAgentStreet;
-            delete cuentaData.registeredAgentUnit;
-            delete cuentaData.registeredAgentCity;
-            // NO eliminar registeredAgentState - se guarda por separado
-            delete cuentaData.registeredAgentZipCode;
-            delete cuentaData.registeredAgentCountry;
-          }
+          // Guardar campos individuales de registeredAgent (sección 2)
+          // Los campos se guardan directamente como columnas individuales, no como JSONB
+          // No es necesario construir companyAddress, los campos se guardan directamente
+          // registeredAgentStreet, registeredAgentUnit, registeredAgentCity, registeredAgentState,
+          // registeredAgentZipCode, registeredAgentCountry se guardan como columnas individuales
           
           // Construir ownerPersonalAddress desde campos individuales (sección 4)
           if (cuentaData.ownerPersonalStreet !== undefined || cuentaData.ownerPersonalCity !== undefined || cuentaData.ownerPersonalState !== undefined) {
@@ -2120,11 +2055,13 @@ export class RequestsService {
           }
           
           // Guardar incorporationState e incorporationMonthYear si vienen
+          // incorporationMonthYear debe guardarse como string (ej: "Jan-2023"), no como fecha
           if (cuentaData.incorporationState !== undefined) {
             cuentaData.incorporationState = cuentaData.incorporationState || '';
           }
           
           if (cuentaData.incorporationMonthYear !== undefined) {
+            // Guardar como string sin conversión a fecha
             cuentaData.incorporationMonthYear = cuentaData.incorporationMonthYear || '';
           }
           
@@ -2133,234 +2070,182 @@ export class RequestsService {
           // Solo mapear si isMultiMember tiene un valor válido Y estamos en la sección 5 o superior
           // El campo isMultiMember solo se completa en la sección 5, antes de eso no debe incluirse llcType
           // El constraint check_cuenta_llc_type solo permite 'single' o 'multi', no NULL ni cadena vacía
-          // Reutilizar currentStep ya declarado arriba (línea 1755)
+          // Reutilizar currentStep ya declarado arriba (línea 1991)
           const isSection5OrHigher = currentStep >= 5;
+          
+          // Eliminar llcType si viene como cadena vacía (no es válido)
+          if (cuentaData.llcType === '') {
+            delete cuentaData.llcType;
+          }
           
           if (isSection5OrHigher && cuentaData.isMultiMember !== undefined && cuentaData.isMultiMember !== '' && cuentaData.isMultiMember !== null) {
             // Solo mapear si estamos en la sección 5 o superior y hay un valor válido
-            if (cuentaData.isMultiMember === 'yes') {
-              cuentaData.llcType = 'multi';
-            } else if (cuentaData.isMultiMember === 'no') {
+            // 'no' -> 'single', 'yes' -> 'multi'
+            if (cuentaData.isMultiMember === 'no') {
               cuentaData.llcType = 'single';
+            } else if (cuentaData.isMultiMember === 'yes') {
+              cuentaData.llcType = 'multi';
             }
             delete cuentaData.isMultiMember;
-          } else {
-            // Si no estamos en la sección 5 o superior, o isMultiMember no tiene valor válido,
-            // eliminar llcType si existe para que no se intente actualizar con un valor inválido
+          } else if (!isSection5OrHigher) {
+            // Si no estamos en la sección 5 o superior, eliminar ambos campos
+            delete cuentaData.llcType;
+            delete cuentaData.isMultiMember;
+          } else if (cuentaData.isMultiMember === undefined || cuentaData.isMultiMember === '' || cuentaData.isMultiMember === null) {
+            // Si estamos en la sección 5 pero isMultiMember no tiene valor válido, eliminar ambos
             delete cuentaData.llcType;
             delete cuentaData.isMultiMember;
           }
           
-          // Si llcType viene como null o undefined, eliminarlo (no se ha completado la sección 5)
+          // Si llcType viene como null o undefined después del mapeo, eliminarlo (no se ha completado la sección 5)
           // Nota: llcType no puede ser cadena vacía según el tipo, solo 'single' | 'multi' | undefined
-          if (cuentaData.llcType === null || cuentaData.llcType === undefined) {
+          if (cuentaData.llcType === null || cuentaData.llcType === undefined || cuentaData.llcType === '') {
             delete cuentaData.llcType;
           }
+          
+          // Establecer bankService por defecto a "Relay" si no viene
+          // Esto debe hacerse ANTES de crear dataToAssign para que se incluya en el spread
+          if (cuentaData.bankService === undefined || cuentaData.bankService === null || cuentaData.bankService === '') {
+            cuentaData.bankService = 'Relay';
+          }
+          
+          // Asegurar que operatingAgreementUrl no se elimine (es un campo válido)
+          // No hacer nada, solo asegurar que no se elimine
           
           // Solo asignar llcType si tiene un valor válido ('single' o 'multi')
           // Esto evita que se intente actualizar con un valor inválido
-          const dataToAssign = { ...cuentaData };
+          const dataToAssign: any = { ...cuentaData };
           if (dataToAssign.llcType !== 'single' && dataToAssign.llcType !== 'multi') {
             delete dataToAssign.llcType;
           }
           
-          // Asegurarse de que los campos del validador no estén en dataToAssign si currentStep < 3
-          // Esto previene que se asignen cadenas vacías a campos de tipo date
-          if (currentStep < 3) {
-            delete dataToAssign.validatorFirstName;
-            delete dataToAssign.validatorLastName;
-            delete dataToAssign.validatorDateOfBirth;
-            delete dataToAssign.validatorNationality;
-            delete dataToAssign.validatorCitizenship;
-            delete dataToAssign.validatorPassportNumber;
-            delete dataToAssign.validatorPassportUrl;
-            delete dataToAssign.validatorScannedPassportUrl;
-            delete dataToAssign.validatorWorkEmail;
-            delete dataToAssign.validatorUseEmailForRelayLogin;
-            delete dataToAssign.validatorPhone;
-            delete dataToAssign.validatorCanReceiveSMS;
-            delete dataToAssign.validatorIsUSResident;
-            delete dataToAssign.validatorTitle;
-            delete dataToAssign.validatorIncomeSource;
-            delete dataToAssign.validatorAnnualIncome;
+          // Asegurar que llcType se incluya explícitamente en dataToAssign si tiene un valor válido
+          if (cuentaData.llcType === 'single' || cuentaData.llcType === 'multi') {
+            dataToAssign.llcType = cuentaData.llcType;
           }
           
+          // Asegurar que los campos de registeredAgent se incluyan explícitamente en dataToAssign
+          if (cuentaData.registeredAgentStreet !== undefined) {
+            dataToAssign.registeredAgentStreet = cuentaData.registeredAgentStreet;
+          }
+          if (cuentaData.registeredAgentUnit !== undefined) {
+            dataToAssign.registeredAgentUnit = cuentaData.registeredAgentUnit;
+          }
+          if (cuentaData.registeredAgentCity !== undefined) {
+            dataToAssign.registeredAgentCity = cuentaData.registeredAgentCity;
+          }
+          if (cuentaData.registeredAgentState !== undefined) {
+            dataToAssign.registeredAgentState = cuentaData.registeredAgentState;
+          }
+          if (cuentaData.registeredAgentZipCode !== undefined) {
+            dataToAssign.registeredAgentZipCode = cuentaData.registeredAgentZipCode;
+          }
+          if (cuentaData.registeredAgentCountry !== undefined) {
+            dataToAssign.registeredAgentCountry = cuentaData.registeredAgentCountry;
+          }
+          
+          // Asegurar que incorporationMonthYear se incluya como string (no como fecha)
+          if (cuentaData.incorporationMonthYear !== undefined) {
+            dataToAssign.incorporationMonthYear = cuentaData.incorporationMonthYear;
+          }
+          
+          // Asegurar que bankService se incluya en dataToAssign (ya debería estar establecido arriba)
+          if (cuentaData.bankService !== undefined && cuentaData.bankService !== null && cuentaData.bankService !== '') {
+            dataToAssign.bankService = cuentaData.bankService;
+            this.logger.debug(`bankService agregado a dataToAssign: ${cuentaData.bankService}`);
+          }
+          
+          // Log para depuración
+          this.logger.debug(`Campos de registeredAgent en dataToAssign: street=${dataToAssign.registeredAgentStreet}, unit=${dataToAssign.registeredAgentUnit}, city=${dataToAssign.registeredAgentCity}, state=${dataToAssign.registeredAgentState}, zipCode=${dataToAssign.registeredAgentZipCode}, country=${dataToAssign.registeredAgentCountry}`);
+          this.logger.debug(`incorporationMonthYear en dataToAssign: ${dataToAssign.incorporationMonthYear}`);
+          
+          // El validator ahora se guarda como un member con validatesBankAccount = true
+          // No se guarda en cuenta_bancaria_requests
+          
+          // Asignar todos los campos a la entidad
           Object.assign(cuentaRequest, dataToAssign);
-        }
-
-        await queryRunner.manager.save(CuentaBancariaRequest, cuentaRequest);
-
-        // Procesar validator: guardar directamente en CuentaBancariaRequest
-        // Solo procesar si estamos en la sección 3 o superior
-        if (updateRequestDto.cuentaBancariaData) {
-          const cuentaDataUpdate = updateRequestDto.cuentaBancariaData as any;
-          const validators = cuentaDataUpdate.validators || [];
-          // Reutilizar currentStep ya declarado arriba (línea 1755)
           
-          if (currentStep >= 3) {
-            // Los campos del validador pueden venir en validators[] o directamente en cuentaData
-            // Priorizar validators[] si existe, sino usar cuentaData directamente
-            let validatorData: any = null;
-            
-            if (validators && validators.length > 0) {
-              validatorData = validators[0]; // Solo hay un validador
-            } else {
-              // Si no hay validators[], verificar si los campos vienen directamente en cuentaData
-              // Verificar también si isUSResident tiene un valor válido ('yes' o 'no')
-              const hasIsUSResident = cuentaDataUpdate.isUSResident !== undefined && 
-                                      cuentaDataUpdate.isUSResident !== '' && 
-                                      cuentaDataUpdate.isUSResident !== null;
-              const hasValidatorIsUSResident = cuentaDataUpdate.validatorIsUSResident !== undefined;
-              const hasValidatorPassportUrl = cuentaDataUpdate.validatorPassportUrl !== undefined && 
-                                             cuentaDataUpdate.validatorPassportUrl !== '';
-              const hasValidatorScannedPassportUrl = cuentaDataUpdate.validatorScannedPassportUrl !== undefined && 
-                                                    cuentaDataUpdate.validatorScannedPassportUrl !== '';
-              
-              if (cuentaDataUpdate.validatorFirstName || cuentaDataUpdate.validatorLastName || 
-                  cuentaDataUpdate.validatorDateOfBirth || cuentaDataUpdate.validatorPassportNumber ||
-                  hasValidatorPassportUrl || hasValidatorScannedPassportUrl ||
-                  hasIsUSResident || hasValidatorIsUSResident) {
-                validatorData = cuentaDataUpdate;
-              }
-            }
-            
-            // Log para debugging
-            this.logger.log(`[Update Request ${id}] Procesando validador (currentStep: ${currentStep}):`, {
-              hasValidators: !!(validators && validators.length > 0),
-              hasValidatorData: !!validatorData,
-              validatorPassportUrl: cuentaDataUpdate.validatorPassportUrl,
-              validatorScannedPassportUrl: cuentaDataUpdate.validatorScannedPassportUrl,
-              isUSResident: cuentaDataUpdate.isUSResident,
-              validatorIsUSResident: cuentaDataUpdate.validatorIsUSResident
-            });
-            
-            if (validatorData) {
-              // Mapear campos del frontend a campos del validador en cuentaRequest
-              // Solo asignar si el campo tiene un valor válido (no cadena vacía)
-              if (validatorData.validatorFirstName !== undefined && validatorData.validatorFirstName !== '') {
-                cuentaRequest.validatorFirstName = validatorData.validatorFirstName || validatorData.firstName || '';
-              }
-              if (validatorData.validatorLastName !== undefined && validatorData.validatorLastName !== '') {
-                cuentaRequest.validatorLastName = validatorData.validatorLastName || validatorData.lastName || '';
-              }
-              if (validatorData.validatorNationality !== undefined && validatorData.validatorNationality !== '') {
-                cuentaRequest.validatorNationality = validatorData.validatorNationality || validatorData.nationality || '';
-              }
-              if (validatorData.validatorCitizenship !== undefined && validatorData.validatorCitizenship !== '') {
-                cuentaRequest.validatorCitizenship = validatorData.validatorCitizenship || validatorData.citizenship || '';
-              }
-              if (validatorData.validatorPassportNumber !== undefined && validatorData.validatorPassportNumber !== '') {
-                cuentaRequest.validatorPassportNumber = validatorData.validatorPassportNumber || validatorData.passportNumber || '';
-              }
-              // Guardar URL del pasaporte - puede venir como validatorPassportUrl o validatorScannedPassportUrl
-              // Priorizar validatorData, pero si está vacío, verificar en cuentaDataUpdate
-              const passportUrl = (validatorData.validatorPassportUrl && validatorData.validatorPassportUrl !== '') 
-                ? validatorData.validatorPassportUrl 
-                : (validatorData.scannedPassportUrl && validatorData.scannedPassportUrl !== '')
-                  ? validatorData.scannedPassportUrl
-                  : (cuentaDataUpdate.validatorPassportUrl && cuentaDataUpdate.validatorPassportUrl !== '')
-                    ? cuentaDataUpdate.validatorPassportUrl
-                    : (cuentaDataUpdate.validatorScannedPassportUrl && cuentaDataUpdate.validatorScannedPassportUrl !== '')
-                      ? cuentaDataUpdate.validatorScannedPassportUrl
-                      : '';
-              
-              if (passportUrl !== '') {
-                cuentaRequest.validatorScannedPassportUrl = passportUrl;
-              }
-              if (validatorData.validatorWorkEmail !== undefined && validatorData.validatorWorkEmail !== '') {
-                cuentaRequest.validatorWorkEmail = validatorData.validatorWorkEmail || validatorData.workEmail || '';
-              }
-              if (validatorData.validatorPhone !== undefined && validatorData.validatorPhone !== '') {
-                cuentaRequest.validatorPhone = validatorData.validatorPhone || validatorData.phone || '';
-              }
-              
-              // Campos adicionales del validador
-              if (validatorData.validatorTitle !== undefined && validatorData.validatorTitle !== '') {
-                cuentaRequest.validatorTitle = validatorData.validatorTitle || '';
-              }
-              if (validatorData.validatorIncomeSource !== undefined && validatorData.validatorIncomeSource !== '') {
-                cuentaRequest.validatorIncomeSource = validatorData.validatorIncomeSource || '';
-              }
-              if (validatorData.validatorAnnualIncome !== undefined && validatorData.validatorAnnualIncome !== '') {
-                // Convertir a número si viene como string
-                const annualIncome = typeof validatorData.validatorAnnualIncome === 'string' 
-                  ? parseFloat(validatorData.validatorAnnualIncome) 
-                  : validatorData.validatorAnnualIncome;
-                if (!isNaN(annualIncome)) {
-                  cuentaRequest.validatorAnnualIncome = annualIncome;
-                }
-              }
-              
-              // Campos booleanos
-              if (validatorData.useEmailForRelayLogin !== undefined) {
-                cuentaRequest.validatorUseEmailForRelayLogin = validatorData.useEmailForRelayLogin || false;
-              }
-              if (validatorData.canReceiveSMS !== undefined) {
-                cuentaRequest.validatorCanReceiveSMS = validatorData.canReceiveSMS || false;
-              }
-              // Guardar isUSResident - puede venir como 'yes'/'no' o boolean
-              // Priorizar validatorData, pero si no está definido, verificar en cuentaDataUpdate
-              const isUSResidentValue = validatorData.isUSResident !== undefined && validatorData.isUSResident !== ''
-                ? validatorData.isUSResident 
-                : cuentaDataUpdate.isUSResident !== undefined && cuentaDataUpdate.isUSResident !== ''
-                  ? cuentaDataUpdate.isUSResident
-                  : undefined;
-              
-              if (isUSResidentValue !== undefined && isUSResidentValue !== '') {
-                cuentaRequest.validatorIsUSResident = isUSResidentValue === 'yes' || isUSResidentValue === true;
-              }
-              
-              // Parsear fecha de nacimiento - solo si tiene un valor válido (no cadena vacía)
-              const dateOfBirth = validatorData.validatorDateOfBirth || validatorData.dateOfBirth;
-              if (dateOfBirth && dateOfBirth.trim() !== '') {
-                const parsedDate = this.parseDate(dateOfBirth);
-                if (parsedDate) {
-                  cuentaRequest.validatorDateOfBirth = parsedDate;
-                } else {
-                  // Si no se puede parsear, establecer a null en lugar de cadena vacía
-                  cuentaRequest.validatorDateOfBirth = null;
-                }
-              } else if (dateOfBirth === '' || dateOfBirth === null || dateOfBirth === undefined) {
-                // Si viene como cadena vacía, no actualizar (mantener el valor existente o null)
-                // No asignar nada para evitar que se intente guardar una cadena vacía
-              }
-            } else {
-              // Si no hay validatorData pero hay campos directamente en cuentaDataUpdate, guardarlos
-              // Esto asegura que los campos se guarden incluso si no se detecta validatorData
-              if (currentStep >= 3) {
-                // Procesar validatorPassportUrl / validatorScannedPassportUrl
-                const passportUrlDirect = (cuentaDataUpdate.validatorPassportUrl && cuentaDataUpdate.validatorPassportUrl !== '') 
-                  ? cuentaDataUpdate.validatorPassportUrl
-                  : (cuentaDataUpdate.validatorScannedPassportUrl && cuentaDataUpdate.validatorScannedPassportUrl !== '')
-                    ? cuentaDataUpdate.validatorScannedPassportUrl
-                    : '';
-                
-                if (passportUrlDirect !== '') {
-                  cuentaRequest.validatorScannedPassportUrl = passportUrlDirect;
-                }
-                
-                // Procesar isUSResident / validatorIsUSResident
-                // Verificar ambos campos: isUSResident y validatorIsUSResident
-                const isUSResidentFromIsUSResident = cuentaDataUpdate.isUSResident !== undefined && 
-                                                      cuentaDataUpdate.isUSResident !== '' && 
-                                                      cuentaDataUpdate.isUSResident !== null;
-                const isUSResidentFromValidator = cuentaDataUpdate.validatorIsUSResident !== undefined;
-                
-                if (isUSResidentFromIsUSResident) {
-                  cuentaRequest.validatorIsUSResident = cuentaDataUpdate.isUSResident === 'yes' || cuentaDataUpdate.isUSResident === true;
-                } else if (isUSResidentFromValidator) {
-                  cuentaRequest.validatorIsUSResident = cuentaDataUpdate.validatorIsUSResident === true || cuentaDataUpdate.validatorIsUSResident === 'yes';
-                }
-              }
-            }
-          } else {
-            // Si estamos antes de la sección 3, asegurarse de que los campos del validador no se actualicen
-            // (ya se eliminaron de cuentaData arriba)
+          // Asegurar que los campos de registeredAgent se asignen explícitamente después de Object.assign
+          // para que TypeORM detecte el cambio incluso si el valor previo era null
+          if (dataToAssign.registeredAgentStreet !== undefined) {
+            cuentaRequest.registeredAgentStreet = dataToAssign.registeredAgentStreet;
+          }
+          if (dataToAssign.registeredAgentUnit !== undefined) {
+            cuentaRequest.registeredAgentUnit = dataToAssign.registeredAgentUnit;
+          }
+          if (dataToAssign.registeredAgentCity !== undefined) {
+            cuentaRequest.registeredAgentCity = dataToAssign.registeredAgentCity;
+          }
+          if (dataToAssign.registeredAgentState !== undefined) {
+            cuentaRequest.registeredAgentState = dataToAssign.registeredAgentState;
+          }
+          if (dataToAssign.registeredAgentZipCode !== undefined) {
+            cuentaRequest.registeredAgentZipCode = dataToAssign.registeredAgentZipCode;
+          }
+          if (dataToAssign.registeredAgentCountry !== undefined) {
+            cuentaRequest.registeredAgentCountry = dataToAssign.registeredAgentCountry;
           }
           
-          // Guardar cuentaRequest después de actualizar los campos del validador
-          await queryRunner.manager.save(CuentaBancariaRequest, cuentaRequest);
+          // Asegurar que incorporationMonthYear se asigne explícitamente como string
+          if (dataToAssign.incorporationMonthYear !== undefined) {
+            cuentaRequest.incorporationMonthYear = dataToAssign.incorporationMonthYear;
+          }
+          
+          // Asegurar que bankService se asigne explícitamente después de Object.assign
+          // para que TypeORM detecte el cambio incluso si el valor previo era null
+          if (cuentaData.bankService !== undefined && cuentaData.bankService !== null && cuentaData.bankService !== '') {
+            cuentaRequest.bankService = cuentaData.bankService;
+            this.logger.debug(`bankService asignado explícitamente a cuentaRequest: ${cuentaData.bankService}`);
+          }
+          
+          // Log final para verificar qué se va a guardar
+          this.logger.debug(`Valores finales antes de guardar - registeredAgentStreet: ${cuentaRequest.registeredAgentStreet}, registeredAgentCity: ${cuentaRequest.registeredAgentCity}, incorporationMonthYear: ${cuentaRequest.incorporationMonthYear}`);
         }
+
+        // Guardar la entidad
+        await queryRunner.manager.save(CuentaBancariaRequest, cuentaRequest);
+        
+        // Si los campos de registeredAgent, incorporationMonthYear o bankService fueron asignados,
+        // actualizarlos explícitamente usando update para asegurar que TypeORM detecte el cambio
+        // incluso si el valor previo era null
+        const updateFields: any = {};
+        
+        if (cuentaRequest.registeredAgentStreet !== undefined) {
+          updateFields.registeredAgentStreet = cuentaRequest.registeredAgentStreet;
+        }
+        if (cuentaRequest.registeredAgentUnit !== undefined) {
+          updateFields.registeredAgentUnit = cuentaRequest.registeredAgentUnit;
+        }
+        if (cuentaRequest.registeredAgentCity !== undefined) {
+          updateFields.registeredAgentCity = cuentaRequest.registeredAgentCity;
+        }
+        if (cuentaRequest.registeredAgentState !== undefined) {
+          updateFields.registeredAgentState = cuentaRequest.registeredAgentState;
+        }
+        if (cuentaRequest.registeredAgentZipCode !== undefined) {
+          updateFields.registeredAgentZipCode = cuentaRequest.registeredAgentZipCode;
+        }
+        if (cuentaRequest.registeredAgentCountry !== undefined) {
+          updateFields.registeredAgentCountry = cuentaRequest.registeredAgentCountry;
+        }
+        if (cuentaRequest.incorporationMonthYear !== undefined) {
+          updateFields.incorporationMonthYear = cuentaRequest.incorporationMonthYear;
+        }
+        if (cuentaRequest.bankService !== undefined && cuentaRequest.bankService !== null && cuentaRequest.bankService !== '') {
+          updateFields.bankService = cuentaRequest.bankService;
+        }
+        
+        if (Object.keys(updateFields).length > 0) {
+          await queryRunner.manager.update(
+            CuentaBancariaRequest,
+            { requestId: id },
+            updateFields
+          );
+          this.logger.debug(`Campos actualizados explícitamente: ${JSON.stringify(updateFields)}`);
+        }
+
+        // El validator ahora se guarda como un member con validatesBankAccount = true
+        // No se guarda en cuenta_bancaria_requests
         
         // Procesar owners (ahora como Members) si se proporcionan
         if (updateRequestDto.cuentaBancariaData) {
@@ -3055,7 +2940,7 @@ export class RequestsService {
           'einLetterUrl',
           'certificateOfConstitutionOrArticlesUrl',
           'proofOfAddressUrl',
-          'validatorScannedPassportUrl', // Validador ahora está en CuentaBancariaRequest
+          // El validator ahora está en Members, no en CuentaBancariaRequest
         ];
         if (updateUrlsInObject(request.cuentaBancariaRequest, urlFields)) {
           await queryRunner.manager.save(CuentaBancariaRequest, request.cuentaBancariaRequest);

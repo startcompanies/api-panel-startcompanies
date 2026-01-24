@@ -126,11 +126,6 @@ export class CreateAperturaLlcRequestDto {
   @IsBoolean()
   hasEin?: boolean;
 
-  @ApiPropertyOptional({ example: '12-3456789', description: 'Número de EIN' })
-  @IsOptional()
-  @IsString()
-  einNumber?: string;
-
   @ApiPropertyOptional({ example: 'https://example.com/ein.pdf', description: 'URL del documento EIN' })
   @IsOptional()
   @IsString()
@@ -184,11 +179,6 @@ export class CreateAperturaLlcRequestDto {
   @IsOptional()
   @IsString()
   bankAccountType?: string;
-
-  @ApiPropertyOptional({ example: 'Chase Bank', description: 'Nombre del banco' })
-  @IsOptional()
-  @IsString()
-  bankName?: string;
 
   @ApiPropertyOptional({ example: '1234567890', description: 'Número de cuenta bancaria' })
   @IsOptional()
