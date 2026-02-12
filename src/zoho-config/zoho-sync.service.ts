@@ -332,16 +332,23 @@ export class ZohoSyncService {
         Tu_empresa_contrata_servicios_en_EE_UU: this.mapBooleanToPickList(renovacion.contrataServiciosUSA),
         Tu_LLC_tiene_cuentas_bancarias_a_su_nombre: this.mapBooleanToPickList(renovacion.tieneCuentasBancarias),
         Fecha_de_Constituci_n: this.formatDate(renovacion.llcCreationDate),
-        Pa_ses_donde_la_LLC_realiza_negocios: Array.isArray(renovacion.countriesWhereLLCDoesBusiness)
-          ? renovacion.countriesWhereLLCDoesBusiness.join(', ')
-          : renovacion.countriesWhereLLCDoesBusiness || '',
+        Pa_ses_donde_la_LLC_realiza_negocios: (() => {
+          const value: any = renovacion.countriesWhereLLCDoesBusiness;
+          if (Array.isArray(value)) {
+            return value;
+          }
+          if (value && typeof value === 'string' && value.trim()) {
+            return value.split(',').map((c: string) => c.trim()).filter((c: string) => c.length > 0);
+          }
+          return [];
+        })(),
         Posee_la_LLC_inversiones_o_activos_en_EE_UU: this.mapBooleanToPickList(renovacion.hasFinancialInvestmentsInUSA),
         La_LLC_declar_impuestos_anteriormente: this.mapBooleanToPickList(renovacion.hasFiledTaxesBefore),
         La_LLC_se_constituy_con_Start_Companies: this.mapBooleanToPickList(renovacion.wasConstitutedWithStartCompanies),
         // Campos adicionales según CSV
         A_o_de_la_Declaraci_n_Fiscal: renovacion.declaracionAnoCorriente ? '2025' : '',
         Nuevo_nombre_de_la_LLC: renovacion.cambioNombre ? renovacion.llcName || '' : '',
-        Declaraciones_Juradas_Anteriores: this.mapBooleanToPickList(renovacion.declaracionAnosAnteriores),
+        // Declaraciones_Juradas_Anteriores: this.mapBooleanToPickList(renovacion.declaracionAnosAnteriores), // Comentado temporalmente - error de validación en Zoho (maximum_length: 1)
         Cu_nto_cost_abrir_la_LLC_en_Estados_Unidos: renovacion.llcOpeningCost ? String(renovacion.llcOpeningCost) : '',
         Pagos_a_familiares_servicios: renovacion.paidToFamilyMembers ? String(renovacion.paidToFamilyMembers) : '',
         Cu_nto_pag_la_LLC_a_empresas_locales_En_otro_Pa: renovacion.paidToLocalCompanies ? String(renovacion.paidToLocalCompanies) : '',
@@ -389,9 +396,16 @@ export class ZohoSyncService {
         Direcci_n_postal_Pais: companyAddr.country || '',
         Estado_de_constituci_n: cuenta.incorporationState || '',
         Mes_y_A_o: cuenta.incorporationMonthYear || '',
-        Pa_ses_donde_la_LLC_realiza_negocios: Array.isArray(cuenta.countriesWhereBusiness)
-          ? cuenta.countriesWhereBusiness.join(', ')
-          : cuenta.countriesWhereBusiness || '',
+        Pa_ses_donde_la_LLC_realiza_negocios: (() => {
+          const value: any = cuenta.countriesWhereBusiness;
+          if (Array.isArray(value)) {
+            return value;
+          }
+          if (value && typeof value === 'string' && value.trim()) {
+            return value.split(',').map((c: string) => c.trim()).filter((c: string) => c.length > 0);
+          }
+          return [];
+        })(),
         Banco: banco,
         // Dirección Personal del Propietario (desde ownerPersonalAddress JSONB)
         Calle_y_n_mero: cuenta.ownerPersonalAddress?.street || '',

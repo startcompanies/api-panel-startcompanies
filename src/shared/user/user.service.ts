@@ -188,6 +188,38 @@ export class UserService {
   }
 
   /**
+   * Obtiene solo los usuarios con tipo 'admin'. Uso exclusivo del panel de administración.
+   */
+  async findAdmins(): Promise<User[]> {
+    try {
+      return await this.userRepository.find({
+        where: { type: 'admin' as const },
+      });
+    } catch (e) {
+      console.error('Error al obtener los administradores:', e);
+      throw new InternalServerErrorException(
+        'No se pudieron obtener los usuarios',
+      );
+    }
+  }
+
+  /**
+   * Obtiene solo los usuarios con tipo 'user' para el listado del panel (dashboard/usuarios).
+   */
+  async findPanelUsers(): Promise<User[]> {
+    try {
+      return await this.userRepository.find({
+        where: { type: 'user' as const },
+      });
+    } catch (e) {
+      console.error('Error al obtener los usuarios del panel:', e);
+      throw new InternalServerErrorException(
+        'No se pudieron obtener los usuarios',
+      );
+    }
+  }
+
+  /**
    * Actualiza la información de un usuario por id con campos opcionales.
    * @param {number} id El id del usuario a actualizar.
    * @param {Partial<UpdateUserDto>} updateData Los datos a actualizar (campos opcionales).

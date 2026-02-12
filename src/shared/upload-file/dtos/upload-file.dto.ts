@@ -23,4 +23,12 @@ export class UploadFileDto {
     example: '123e4567-e89b-12d3-a456-426614174000',
   })
   requestUuid?: string;
+
+  @ApiProperty({
+    type: 'string',
+    description: 'Carpeta destino (opcional). Ej: "blog" guarda en blog/{timestamp}-{filename}. Ignora servicio/requestUuid si se usa.',
+    required: false,
+    example: 'blog',
+  })
+  folder?: string;
 }
