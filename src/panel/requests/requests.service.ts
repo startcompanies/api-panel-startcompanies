@@ -317,6 +317,15 @@ export class RequestsService {
       throw new NotFoundException(`Request with UUID ${uuid} not found`);
     }
 
+    // Corregir paso cuando el pago ya está pero currentStep quedó en 3 (wizard no actualizó al crear)
+    const paymentDone =
+      request.paymentMethod &&
+      (request.paymentProofUrl || request.stripeChargeId || request.paymentStatus === 'succeeded');
+    if (paymentDone && request.currentStep === 3) {
+      request.currentStep = 4;
+      await this.requestRepository.update(request.id, { currentStep: 4 });
+    }
+
     // Cargar Members relacionados si es una solicitud de Apertura LLC o Renovación LLC
     if (request.aperturaLlcRequest || request.renovacionLlcRequest) {
       const members = await this.memberRepo.find({
@@ -877,6 +886,9 @@ export class RequestsService {
 
       // Crear la solicitud base
       // Si se procesó el pago, status es 'solicitud-recibida', sino 'pendiente' (borrador)
+      const plan = createRequestDto.type === 'apertura-llc' && createRequestDto.aperturaLlcData
+        ? (createRequestDto.aperturaLlcData as any).plan
+        : undefined;
       const request = this.requestRepository.create({
         type: createRequestDto.type,
         status: requestStatus, // Ya determinado arriba: 'pendiente' o 'solicitud-recibida'
@@ -884,6 +896,7 @@ export class RequestsService {
         clientId: clientId,
         partnerId: createRequestDto.partnerId,
         notes: createRequestDto.notes,
+        plan,
         // Información de pago
         paymentMethod: createRequestDto.paymentMethod,
         paymentAmount: createRequestDto.paymentAmount,
@@ -1590,6 +1603,13 @@ export class RequestsService {
       
       if (updateRequestDto.signatureUrl !== undefined) {
         request.signatureUrl = updateRequestDto.signatureUrl;
+      }
+
+      if (updateRequestDto.plan !== undefined) {
+        request.plan = updateRequestDto.plan;
+      }
+      if (request.type === 'apertura-llc' && updateRequestDto.aperturaLlcData?.plan !== undefined) {
+        request.plan = (updateRequestDto.aperturaLlcData as any).plan;
       }
       
       this.logger.log(`[Update Request ${id}] Guardando request con datos:`, {

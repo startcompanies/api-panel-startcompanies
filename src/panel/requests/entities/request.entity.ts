@@ -101,6 +101,10 @@ export class Request {
   })
   createdFrom: 'panel' | 'wizard';
 
+  // Plan del servicio (ej. apertura-llc: Entrepreneur, Elite, Premium) para validaciones al recargar
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  plan?: string;
+
   @CreateDateColumn({
     type: 'timestamp with time zone',
     default: () => 'CURRENT_TIMESTAMP',

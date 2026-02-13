@@ -116,6 +116,14 @@ export class CreateAperturaLlcRequestDto {
   @IsString()
   incorporationState?: string;
 
+  @ApiPropertyOptional({
+    example: 'Entrepreneur',
+    description: 'Plan del servicio (Entrepreneur, Elite, Premium). Se guarda en el request para validaciones al recargar.',
+  })
+  @IsOptional()
+  @IsString()
+  plan?: string;
+
   @ApiPropertyOptional({ example: '2024-01-15', description: 'Fecha de incorporación (YYYY-MM-DD)' })
   @IsOptional()
   @IsDateString()

@@ -630,6 +630,9 @@ export class WizardService {
       }*/
 
       // PASO 4: Crear la solicitud base con pago ya asociado
+      const plan = createWizardRequestDto.type === 'apertura-llc' && createWizardRequestDto.aperturaLlcData
+        ? (createWizardRequestDto.aperturaLlcData as any).plan
+        : undefined;
       const request = this.requestRepository.create({
         type: createWizardRequestDto.type,
         status: 'pendiente', // Siempre pendiente al crear desde wizard
@@ -638,6 +641,7 @@ export class WizardService {
         clientId: client.id,
         partnerId: undefined, // Wizard no tiene partners
         notes: createWizardRequestDto.notes,
+        plan,
         // Información de pago (ya procesado)
         paymentMethod: createWizardRequestDto.paymentMethod,
         paymentAmount: createWizardRequestDto.paymentAmount,

@@ -55,6 +55,14 @@ export class UpdateRequestDto {
   @Max(4)
   currentStep?: number; // Paso principal del wizard (1, 2, 3, 4)
 
+  @ApiPropertyOptional({
+    description: 'Plan del servicio (ej. Entrepreneur, Elite, Premium). Se usa para validaciones al recargar.',
+    example: 'Elite',
+  })
+  @IsOptional()
+  @IsString()
+  plan?: string;
+
   // Datos específicos según el tipo de solicitud (parciales)
   @ApiPropertyOptional({
     type: CreateAperturaLlcRequestDto,
