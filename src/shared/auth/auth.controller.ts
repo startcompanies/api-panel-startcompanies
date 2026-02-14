@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags, ApiBody, ApiResponse } from '@nestjs/swagger';
 import * as express from 'express';
+import { JwtService } from '@nestjs/jwt';
 import { authService } from './auth.service';
 import { SignUpDto } from './dtos/signup.dto';
 import { SignInDto } from './dtos/signin.dto';
@@ -9,6 +10,7 @@ import { ForgotPasswordDto } from './dtos/forgotPassword.dto';
 import { ResetPasswordDto } from './dtos/resetPassword.dto';
 import { RefreshTokenDto } from './dtos/refresh-token.dto';
 import { AuthGuard } from './auth.guard';
+import { jwtConstants } from '../common/constants/jwtConstants';
 
 const isProduction = process.env.NODE_ENV === 'production';
 // SameSite=None + Secure para que las cookies se envíen en peticiones cross-origin (frontend en otro dominio)
@@ -22,7 +24,10 @@ const cookieOptions = {
 @ApiTags('Common - Auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: authService) {}
+  constructor(
+    private readonly authService: authService,
+    private readonly jwtService: JwtService,
+  ) {}
 
   @Post('/signup')
   @ApiOperation({ summary: 'Sign Up' })
@@ -57,13 +62,30 @@ export class AuthController {
   }
 
   @Get('/me')
-  @UseGuards(AuthGuard)
-  @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Usuario actual', description: 'Devuelve el usuario desde el token (cookie o header).' })
-  @ApiResponse({ status: 200, description: 'Usuario actual' })
-  @ApiResponse({ status: 401, description: 'No autorizado' })
-  me(@Req() req: { user: any }) {
-    return req.user;
+  @ApiOperation({
+    summary: 'Usuario actual',
+    description: 'Devuelve el usuario desde el token (cookie o header). Si no hay token o es inválido, responde 200 con null (evita 401 en consola al cargar login).',
+  })
+  @ApiResponse({ status: 200, description: 'Usuario actual o null si no hay sesión' })
+  async me(
+    @Req() req: express.Request & { cookies?: { access_token?: string } },
+  ): Promise<unknown> {
+    const token =
+      req.cookies?.access_token ??
+      (req.headers.authorization?.startsWith('Bearer ')
+        ? req.headers.authorization.slice(7)
+        : undefined);
+    if (!token) {
+      return null;
+    }
+    try {
+      const payload = await this.jwtService.verifyAsync(token, {
+        secret: jwtConstants.secret,
+      });
+      return payload;
+    } catch {
+      return null;
+    }
   }
 
   @Post('/logout')
