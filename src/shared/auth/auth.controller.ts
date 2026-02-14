@@ -11,10 +11,11 @@ import { RefreshTokenDto } from './dtos/refresh-token.dto';
 import { AuthGuard } from './auth.guard';
 
 const isProduction = process.env.NODE_ENV === 'production';
+// SameSite=None + Secure para que las cookies se envíen en peticiones cross-origin (frontend en otro dominio)
 const cookieOptions = {
   httpOnly: true,
   secure: isProduction,
-  sameSite: 'lax' as const,
+  sameSite: (isProduction ? 'none' : 'lax') as 'none' | 'lax',
   path: '/',
 };
 
@@ -69,7 +70,12 @@ export class AuthController {
   @ApiOperation({ summary: 'Cerrar sesión', description: 'Borra las cookies de acceso y refresh.' })
   @ApiResponse({ status: 200, description: 'Sesión cerrada' })
   logout(@Res({ passthrough: true }) res: express.Response) {
-    const clearOpts = { path: '/', httpOnly: true, sameSite: 'lax' as const, secure: isProduction };
+    const clearOpts = {
+      path: '/',
+      httpOnly: true,
+      sameSite: (isProduction ? 'none' : 'lax') as 'none' | 'lax',
+      secure: isProduction,
+    };
     res.clearCookie('access_token', clearOpts);
     res.clearCookie('refresh_token', clearOpts);
     return { ok: true };
