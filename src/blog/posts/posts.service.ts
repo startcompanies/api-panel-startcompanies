@@ -17,6 +17,7 @@ export interface MigrationMetaItem {
   url_original: string;
   url_nueva: string;
   title: string;
+  post_title?: string;
   description: string;
 }
 
@@ -79,6 +80,7 @@ export class PostsService {
       newPost.slug = slug;
       newPost.excerpt = excerpt;
       newPost.description = postDto.description ?? null;
+      newPost.seo_title = postDto.seo_title ?? null;
       newPost.user = user!;
       newPost.categories = categories;
       newPost.tags = tags;
@@ -94,7 +96,7 @@ export class PostsService {
     try {
       return this.postsRepository.find({
         where: { is_published: true },
-        select: ['title', 'slug', 'excerpt', 'description', 'image_url', 'published_at'],
+        select: ['title', 'seo_title', 'slug', 'excerpt', 'description', 'image_url', 'published_at'],
         relations: ['user', 'categories', 'tags'],
         order: { published_at: 'DESC' },
       });
@@ -108,7 +110,7 @@ export class PostsService {
     try {
       return this.postsRepository.find({
         where: { sandbox: true },
-        select: ['title', 'slug', 'excerpt', 'description', 'image_url', 'published_at'],
+        select: ['title', 'seo_title', 'slug', 'excerpt', 'description', 'image_url', 'published_at'],
         relations: ['user', 'categories', 'tags'],
         order: { published_at: 'DESC' },
       });
@@ -149,6 +151,7 @@ export class PostsService {
         .andWhere('post.is_published = :isPublished', { isPublished: true })
         .select([
           'post.title',
+          'post.seo_title',
           'post.slug',
           'post.excerpt',
           'post.description',
@@ -183,6 +186,7 @@ export class PostsService {
         .andWhere('post.sandbox = :sandbox', { sandbox: true })
         .select([
           'post.title',
+          'post.seo_title',
           'post.slug',
           'post.excerpt',
           'post.description',
@@ -326,6 +330,9 @@ export class PostsService {
       if (postDto.description !== undefined) {
         post.description = postDto.description ?? null;
       }
+      if (postDto.seo_title !== undefined) {
+        post.seo_title = postDto.seo_title ?? null;
+      }
 
       // Actualiza las relaciones
       if (categories_ids?.length) {
@@ -382,7 +389,7 @@ export class PostsService {
     for (const item of items) {
       const post = await this.postsRepository.findOne({
         where: { slug: item.slug },
-        select: ['id', 'slug', 'description'],
+        select: ['id', 'slug', 'title', 'description', 'seo_title'],
       });
       if (!post) {
         result.notFound++;
@@ -390,6 +397,8 @@ export class PostsService {
         continue;
       }
       post.description = item.description;
+      if (item.post_title != null) post.title = item.post_title;
+      post.seo_title = item.title;
       await this.postsRepository.save(post);
       result.updated++;
       result.details.push({ slug: item.slug, status: 'updated' });

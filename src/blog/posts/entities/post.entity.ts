@@ -11,6 +11,9 @@ export class Post {
     @Column({ unique: true })
     title: string;
 
+    @Column({ type: 'varchar', length: 500, nullable: true })
+    seo_title: string | null;
+
     @Column({ unique: true })
     slug: string;
 

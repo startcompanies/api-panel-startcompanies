@@ -10,11 +10,20 @@ import { ApiProperty } from '@nestjs/swagger';
 export class PostDto {
   @ApiProperty({
     example: 'Mi Primer Artículo sobre NestJS',
-    description: 'El título del post.',
+    description: 'El título visible del post (H1).',
   })
   @IsString()
   @IsNotEmpty()
   title: string;
+
+  @ApiProperty({
+    example: 'Mi Primer Artículo sobre NestJS | StartCompanies',
+    description: 'Título para SEO / meta title.',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  seo_title?: string;
 
   @ApiProperty({
     example: 'Este es el contenido completo de mi primer artículo, donde explico los conceptos básicos de NestJS...',
