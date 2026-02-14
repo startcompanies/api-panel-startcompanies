@@ -246,6 +246,30 @@ export class PostsService {
     }
   }
 
+  /** Actualiza el estado de validación QA de un post */
+  async updateQaReviewedStatus(id: string, qaReviewed: boolean): Promise<Post | undefined> {
+    try {
+      const post: any = await this.postsRepository.findOne({
+        where: { id: Number(id) },
+      });
+
+      if (!post) {
+        this.exceptionsService.handleNotFoundExceptions(id);
+      }
+
+      post.qa_reviewed = qaReviewed;
+      return await this.postsRepository.save(post);
+    } catch (err) {
+      this.exceptionsService.handleDBExceptions(err);
+    }
+  }
+
+  /** Pone qa_reviewed en false para todos los posts (reiniciar QA) */
+  async resetAllQaReviewed(): Promise<{ affected: number }> {
+    const result = await this.postsRepository.update({}, { qa_reviewed: false });
+    return { affected: result.affected ?? 0 };
+  }
+
   //Actualizar post
   async updatePost(
     id: string,

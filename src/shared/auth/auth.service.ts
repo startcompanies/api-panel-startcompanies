@@ -60,12 +60,16 @@ export class authService {
       userName: user.username,
       email: user.email,
       status: user.status,
-      type: user.type
+      type: user.type,
     };
 
     const token = await this.jwtService.signAsync(infoUser);
+    const refreshToken = await this.jwtService.signAsync(
+      { ...infoUser, type: 'refresh' },
+      { expiresIn: '5d' },
+    );
 
-    return { token };
+    return { user: infoUser, token, refreshToken };
   }
 
   async changePassword(changePasswordDto: ChangePasswordDto) {
@@ -184,13 +188,19 @@ export class authService {
 
 
   /**
-   * Refresh token - Renueva el access token usando un refresh token
+   * Refresh token - Renueva el access token usando un refresh token (cookie o body)
    */
-  async refresh(refreshToken: string) {
+  async refresh(refreshToken: string | undefined) {
+    if (!refreshToken) {
+      throw new UnauthorizedException('Refresh token requerido');
+    }
     try {
       const payload = await this.jwtService.verifyAsync(refreshToken);
-      
-      // Verificar que el usuario existe y está activo
+
+      if (payload.type !== 'refresh') {
+        throw new UnauthorizedException('Token inválido');
+      }
+
       const user = await this.userRepository.findOne({
         where: { id: payload.id },
       });
@@ -199,17 +209,16 @@ export class authService {
         throw new UnauthorizedException('Usuario no encontrado o inactivo');
       }
 
-      // Generar nuevo access token
       const newPayload = {
         id: user.id,
-        username: user.username,
+        userName: user.username,
         email: user.email,
         status: user.status,
         type: user.type,
       };
-      const accessToken = this.jwtService.sign(newPayload, { expiresIn: '1h' });
+      const token = await this.jwtService.signAsync(newPayload);
 
-      return { accessToken };
+      return { token };
     } catch (error) {
       throw new UnauthorizedException('Token inválido o expirado');
     }

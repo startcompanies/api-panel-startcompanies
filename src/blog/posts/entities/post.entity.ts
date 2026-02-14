@@ -29,6 +29,9 @@ export class Post {
     @Column({ default: false })
     sandbox: boolean;
 
+    @Column({ default: false })
+    qa_reviewed: boolean;
+
     @CreateDateColumn({ type: 'timestamp'})
     published_at: Date
 
