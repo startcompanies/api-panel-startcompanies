@@ -1,6 +1,6 @@
 import { InjectRepository } from '@nestjs/typeorm';
 import { Post } from './entities/post.entity';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { User } from 'src/shared/user/entities/user.entity';
 import { Category } from '../categories/entities/category.entity';
 import { Tag } from '../tags/entities/tag.entity';
@@ -9,6 +9,22 @@ import { PostDto } from './dtos/post.dto';
 import slugify from 'slugify';
 import { PaginationDto } from 'src/shared/common/dtos/pagination.dto';
 import { GetPostsFilterDto } from './dtos/get-posts-filter.dto';
+import * as fs from 'fs';
+import * as path from 'path';
+
+export interface MigrationMetaItem {
+  slug: string;
+  url_original: string;
+  url_nueva: string;
+  title: string;
+  description: string;
+}
+
+export interface SyncDescriptionsResult {
+  updated: number;
+  notFound: number;
+  details: Array<{ slug: string; status: 'updated' | 'not_found' }>;
+}
 
 export class PostsService {
 
@@ -36,10 +52,14 @@ export class PostsService {
         this.exceptionsService.handleNotFoundExceptions(Number(userId));
       }
 
-      const categories = await this.categoriesRepository.findByIds(
-        categories_ids || [],
-      );
-      const tags = await this.categoriesRepository.findByIds(tags_ids || []);
+      const categories =
+        categories_ids && categories_ids.length > 0
+          ? await this.categoriesRepository.findBy({ id: In(categories_ids) })
+          : [];
+      const tags =
+        tags_ids && tags_ids.length > 0
+          ? await this.tagsRepository.findBy({ id: In(tags_ids) })
+          : [];
 
       const slug = slugify(postDto.title, {
         lower: true,
@@ -58,6 +78,7 @@ export class PostsService {
         : new Date();
       newPost.slug = slug;
       newPost.excerpt = excerpt;
+      newPost.description = postDto.description ?? null;
       newPost.user = user!;
       newPost.categories = categories;
       newPost.tags = tags;
@@ -73,7 +94,7 @@ export class PostsService {
     try {
       return this.postsRepository.find({
         where: { is_published: true },
-        select: ['title', 'slug', 'excerpt', 'image_url', 'published_at'],
+        select: ['title', 'slug', 'excerpt', 'description', 'image_url', 'published_at'],
         relations: ['user', 'categories', 'tags'],
         order: { published_at: 'DESC' },
       });
@@ -87,7 +108,7 @@ export class PostsService {
     try {
       return this.postsRepository.find({
         where: { sandbox: true },
-        select: ['title', 'slug', 'excerpt', 'image_url', 'published_at'],
+        select: ['title', 'slug', 'excerpt', 'description', 'image_url', 'published_at'],
         relations: ['user', 'categories', 'tags'],
         order: { published_at: 'DESC' },
       });
@@ -130,6 +151,7 @@ export class PostsService {
           'post.title',
           'post.slug',
           'post.excerpt',
+          'post.description',
           'post.image_url',
           'post.published_at',
           'user.id',
@@ -163,6 +185,7 @@ export class PostsService {
           'post.title',
           'post.slug',
           'post.excerpt',
+          'post.description',
           'post.image_url',
           'post.published_at',
           'user.id',
@@ -300,14 +323,18 @@ export class PostsService {
       });*/
       post.slug = postDto.slug;
       post.excerpt = postDto.content.substring(0, 150) + '...';
+      if (postDto.description !== undefined) {
+        post.description = postDto.description ?? null;
+      }
 
       // Actualiza las relaciones
-      if (categories_ids) {
-        post.categories =
-          await this.categoriesRepository.findByIds(categories_ids);
+      if (categories_ids?.length) {
+        post.categories = await this.categoriesRepository.findBy({
+          id: In(categories_ids),
+        });
       }
-      if (tags_ids) {
-        post.tags = await this.categoriesRepository.findByIds(tags_ids);
+      if (tags_ids?.length) {
+        post.tags = await this.tagsRepository.findBy({ id: In(tags_ids) });
       }
 
       // Guarda los cambios y retorna el post actualizado
@@ -330,5 +357,43 @@ export class PostsService {
       console.error('Error al obtener los posts:', error);
       this.exceptionsService.handleDBExceptions(error);
     }
+  }
+
+  /**
+   * Recorre businessenusa-migration-meta.json, busca posts por slug
+   * y actualiza el campo description. Si el slug no existe, no hace nada.
+   */
+  async syncDescriptionsFromMigrationMeta(
+    jsonPath?: string,
+  ): Promise<SyncDescriptionsResult> {
+    const filePath =
+      jsonPath ||
+      path.join(process.cwd(), 'businessenusa-migration-meta.json');
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`Archivo no encontrado: ${filePath}`);
+    }
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const items: MigrationMetaItem[] = JSON.parse(raw);
+    const result: SyncDescriptionsResult = {
+      updated: 0,
+      notFound: 0,
+      details: [],
+    };
+    for (const item of items) {
+      const post = await this.postsRepository.findOne({
+        where: { slug: item.slug },
+        select: ['id', 'slug', 'description'],
+      });
+      if (!post) {
+        result.notFound++;
+        result.details.push({ slug: item.slug, status: 'not_found' });
+        continue;
+      }
+      post.description = item.description;
+      await this.postsRepository.save(post);
+      result.updated++;
+      result.details.push({ slug: item.slug, status: 'updated' });
+    }
+    return result;
   }
 }

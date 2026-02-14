@@ -180,4 +180,17 @@ export class PostsController {
   async updatePost(@Param('id') id: string, @Body() postDto: PostDto) {
     return this.postsService.updatePost(id, postDto);
   }
+
+  @HttpPost('sync-descriptions-from-migration-meta')
+  @UseGuards(AuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Sincronizar descriptions desde businessenusa-migration-meta.json',
+    description:
+      'Recorre el JSON, busca cada post por slug, valida que el title coincida y actualiza el campo description.',
+  })
+  @ApiResponse({ status: 200, description: 'Resultado: updated, titleMismatch, notFound, details' })
+  async syncDescriptionsFromMigrationMeta() {
+    return this.postsService.syncDescriptionsFromMigrationMeta();
+  }
 }

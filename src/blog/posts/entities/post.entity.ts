@@ -1,7 +1,7 @@
 import { Category } from "../../categories/entities/category.entity";
 import { Tag } from "../../tags/entities/tag.entity";
 import { User } from "../../../shared/user/entities/user.entity";
-import { Column, CreateDateColumn, Entity, JoinColumn, JoinTable, ManyToMany, ManyToOne, PrimaryGeneratedColumn } from "typeorm";
+import { Column, CreateDateColumn, Entity, JoinColumn, JoinTable, ManyToMany, ManyToOne, PrimaryGeneratedColumn, UpdateDateColumn } from "typeorm";
 
 @Entity('posts')
 export class Post {
@@ -20,6 +20,9 @@ export class Post {
     @Column('text')
     excerpt: string;
 
+    @Column({ type: 'varchar', length: 500, nullable: true })
+    description: string | null;
+
     @Column({ nullable: true })
     image_url: string;
 
@@ -32,8 +35,14 @@ export class Post {
     @Column({ default: false })
     qa_reviewed: boolean;
 
-    @CreateDateColumn({ type: 'timestamp'})
-    published_at: Date
+    @CreateDateColumn({ type: 'timestamp' })
+    published_at: Date;
+
+    @CreateDateColumn({ type: 'timestamp', name: 'createdAt' })
+    createdAt: Date;
+
+    @UpdateDateColumn({ type: 'timestamp', name: 'updatedAt' })
+    updatedAt: Date;
 
     // Relación Many-To-One con User (un post tiene solo un autor)
     @ManyToOne(() => User, (user) => user.posts, {onDelete: 'CASCADE'})

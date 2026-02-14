@@ -24,6 +24,15 @@ export class PostDto {
   @IsNotEmpty()
   content: string;
 
+  @ApiProperty({
+    example: 'Resumen breve para SEO y meta description.',
+    description: 'Descripción del post (meta description, máx. ~500 caracteres).',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  description?: string;
+
   // Slug del post
   @ApiProperty({
     example: 'mi-primer-articulo-sobre-nestjs',
