@@ -38,6 +38,10 @@ export class Post {
     @Column({ default: false })
     qa_reviewed: boolean;
 
+    /** Notas de pendientes (solo editable desde el listado QA / listado de posts) */
+    @Column({ type: 'text', nullable: true })
+    qa_todo: string | null;
+
     @CreateDateColumn({ type: 'timestamp' })
     published_at: Date;
 

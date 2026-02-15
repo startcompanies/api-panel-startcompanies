@@ -297,6 +297,22 @@ export class PostsService {
     return { affected: result.affected ?? 0 };
   }
 
+  /** Actualiza las notas TODO del post (solo desde listado, no desde edición de post) */
+  async updateTodo(id: string, todo: string | null): Promise<Post | undefined> {
+    try {
+      const post: any = await this.postsRepository.findOne({
+        where: { id: Number(id) },
+      });
+      if (!post) {
+        this.exceptionsService.handleNotFoundExceptions(id);
+      }
+      post.qa_todo = todo ?? null;
+      return await this.postsRepository.save(post);
+    } catch (err) {
+      this.exceptionsService.handleDBExceptions(err);
+    }
+  }
+
   //Actualizar post
   async updatePost(
     id: string,

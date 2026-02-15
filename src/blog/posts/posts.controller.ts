@@ -19,6 +19,7 @@ import { PaginationDto } from 'src/shared/common/dtos/pagination.dto';
 import { GetPostsFilterDto } from './dtos/get-posts-filter.dto';
 import { UpdateSandboxStatusDto } from './dtos/update-sandbox-status.dto';
 import { UpdateQaReviewedStatusDto } from './dtos/update-qa-reviewed-status.dto';
+import { UpdateTodoDto } from './dtos/update-todo.dto';
 
 @ApiTags('Blog - Posts')
 @Controller('blog/posts')
@@ -166,6 +167,22 @@ export class PostsController {
   @ApiResponse({ status: 200, description: 'Cantidad de posts actualizados' })
   async resetAllQaReviewed() {
     return this.postsService.resetAllQaReviewed();
+  }
+
+  // Actualizar notas TODO del post (solo desde listado)
+  @Patch('todo/:id')
+  @UseGuards(AuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Actualizar notas TODO / pendientes del post',
+  })
+  @ApiParam({ name: 'id', description: 'ID del post' })
+  @ApiBody({ type: UpdateTodoDto })
+  async updateTodo(
+    @Param('id') id: string,
+    @Body() dto: UpdateTodoDto,
+  ) {
+    return this.postsService.updateTodo(id, dto.todo ?? null);
   }
 
   @Put(':id')
