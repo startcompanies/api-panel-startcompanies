@@ -3,11 +3,15 @@ import { AppModule } from './app.module';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { configService } from './config/config.service';
 import * as express from 'express';
+import cookieParser from 'cookie-parser';
 
-import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
+import { LoggingInterceptor } from './shared/common/interceptors/logging.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  
+  // Configurar cookie parser para SSO
+  app.use(cookieParser());
   
   // Configurar límite de tamaño de peticiones
   app.use(express.json({ limit: '10mb' }));
@@ -18,15 +22,28 @@ async function bootstrap() {
 
 
   // Habilitar CORS para permitir peticiones desde dominios especificos
+  const allowedOrigins = [
+    'http://localhost:4200',
+    'https://startcompanies.us',
+    'https://admin-blog.startcompanies.us',
+    'https://staging.startcompanies.io',
+    'https://startcompanies.io',
+  ];
+
+  // Agregar dominios de Zoho si están configurados
+  if (process.env.ZOHO_CRM_DOMAINS) {
+    const zohoDomains = process.env.ZOHO_CRM_DOMAINS.split(',').map(d => d.trim());
+    allowedOrigins.push(...zohoDomains);
+  }
+
   app.enableCors({
-    origin: [
-      'http://localhost:4200',
-      'http://localhost:4000',
-      'http://0.0.0.0:4000',
-      'https://startcompanies.us',
-      'https://admin-blog.startcompanies.us',
-      'https://staging.startcompanies.io',
-    ],
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
     exposedHeaders: ['Content-Type', 'Authorization'],
@@ -37,9 +54,9 @@ async function bootstrap() {
 
   // Configuración de Swagger
   const config = new DocumentBuilder()
-    .setTitle('API de Blog')
+    .setTitle('API Start Companies')
     .setDescription(
-      'Documentación de la API de blog para el sitio de Start Companies LLC',
+      'Documentación de la API para Start Companies LLC - Blog y Panel Administrativo',
     )
     .setVersion('1.0')
     .addBearerAuth(

@@ -1,0 +1,19 @@
+# Add directories or file patterns to ignore during indexing (e.g. foo/ or *.csv)
+node_modules
+dist
+build
+coverage
+.angular
+.ssr
+.prerendered
+.git
+*.log
+*.map
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.pdf
+package-lock.json
+pnpm-lock.yaml
+yarn.lock

@@ -33,6 +33,11 @@ class AwsConfigService {
   public getBucketName(): string {
     return this.getValue('AWS_S3_BUCKET_NAME');
   }
+
+  public getMediaDomain(): string {
+    // Si existe la variable de entorno, usarla; si no, usar el dominio por defecto
+    return this.getValue('MEDIA_DOMAIN', false) || 'https://media.startcompanies.us';
+  }
 }
 
 const awsConfigService = new AwsConfigService(process.env).ensureValues([
