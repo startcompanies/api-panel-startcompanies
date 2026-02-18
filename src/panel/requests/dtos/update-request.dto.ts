@@ -55,6 +55,14 @@ export class UpdateRequestDto {
   @Max(4)
   currentStep?: number; // Paso principal del wizard (1, 2, 3, 4)
 
+  @ApiPropertyOptional({
+    description: 'Plan del servicio (ej. Entrepreneur, Elite, Premium). Se usa para validaciones al recargar.',
+    example: 'Elite',
+  })
+  @IsOptional()
+  @IsString()
+  plan?: string;
+
   // Datos específicos según el tipo de solicitud (parciales)
   @ApiPropertyOptional({
     type: CreateAperturaLlcRequestDto,
@@ -126,5 +134,13 @@ export class UpdateRequestDto {
   @IsOptional()
   @IsString()
   paymentProofUrl?: string; // URL del comprobante de transferencia
+
+  @ApiPropertyOptional({
+    description: 'URL de la firma del cliente en el paso de revisión final',
+    example: 'https://example.com/signature.png',
+  })
+  @IsOptional()
+  @IsString()
+  signatureUrl?: string; // URL de la firma del cliente
 }
 

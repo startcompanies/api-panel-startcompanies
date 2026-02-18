@@ -1,7 +1,7 @@
 import { Category } from "../../categories/entities/category.entity";
 import { Tag } from "../../tags/entities/tag.entity";
 import { User } from "../../../shared/user/entities/user.entity";
-import { Column, CreateDateColumn, Entity, JoinColumn, JoinTable, ManyToMany, ManyToOne, PrimaryGeneratedColumn } from "typeorm";
+import { Column, CreateDateColumn, Entity, JoinColumn, JoinTable, ManyToMany, ManyToOne, PrimaryGeneratedColumn, UpdateDateColumn } from "typeorm";
 
 @Entity('posts')
 export class Post {
@@ -10,6 +10,9 @@ export class Post {
 
     @Column({ unique: true })
     title: string;
+
+    @Column({ type: 'varchar', length: 500, nullable: true })
+    seo_title: string | null;
 
     @Column({ unique: true })
     slug: string;
@@ -20,6 +23,9 @@ export class Post {
     @Column('text')
     excerpt: string;
 
+    @Column({ type: 'varchar', length: 500, nullable: true })
+    description: string | null;
+
     @Column({ nullable: true })
     image_url: string;
 
@@ -29,8 +35,21 @@ export class Post {
     @Column({ default: false })
     sandbox: boolean;
 
-    @CreateDateColumn({ type: 'timestamp'})
-    published_at: Date
+    @Column({ default: false })
+    qa_reviewed: boolean;
+
+    /** Notas de pendientes (solo editable desde el listado QA / listado de posts) */
+    @Column({ type: 'text', nullable: true })
+    qa_todo: string | null;
+
+    @CreateDateColumn({ type: 'timestamp' })
+    published_at: Date;
+
+    @CreateDateColumn({ type: 'timestamp', name: 'createdAt' })
+    createdAt: Date;
+
+    @UpdateDateColumn({ type: 'timestamp', name: 'updatedAt' })
+    updatedAt: Date;
 
     // Relación Many-To-One con User (un post tiene solo un autor)
     @ManyToOne(() => User, (user) => user.posts, {onDelete: 'CASCADE'})

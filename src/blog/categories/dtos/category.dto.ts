@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class CategoryDTO {
   @ApiProperty({
@@ -13,6 +13,16 @@ export class CategoryDTO {
     message: 'El nombre de la categoría no puede exceder los 50 caracteres',
   })
   name: string;
+
+  @ApiProperty({
+    example: 'Artículos sobre LLC en USA',
+    description: 'Descripción de la categoría (meta description, máx. 500 caracteres).',
+    required: false,
+  })
+  @IsString()
+  @IsOptional()
+  @MaxLength(500)
+  description?: string;
 
   /*@ApiProperty({
     example: 'llc',

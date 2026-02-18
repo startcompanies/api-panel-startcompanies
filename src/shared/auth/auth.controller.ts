@@ -1,19 +1,33 @@
-import { Body, Controller, Post, Get, Query, Res, UseGuards, HttpException, HttpStatus } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags, ApiQuery, ApiBody, ApiResponse } from '@nestjs/swagger';
+import { Body, Controller, Get, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags, ApiBody, ApiResponse } from '@nestjs/swagger';
+import * as express from 'express';
+import { JwtService } from '@nestjs/jwt';
 import { authService } from './auth.service';
 import { SignUpDto } from './dtos/signup.dto';
 import { SignInDto } from './dtos/signin.dto';
 import { ChangePasswordDto } from './dtos/changePassword.dto';
 import { ForgotPasswordDto } from './dtos/forgotPassword.dto';
 import { ResetPasswordDto } from './dtos/resetPassword.dto';
-import { RefreshSsoDto } from './dtos/sso.dto';
+import { RefreshTokenDto } from './dtos/refresh-token.dto';
 import { AuthGuard } from './auth.guard';
-import type { Response } from 'express';
+import { jwtConstants } from '../common/constants/jwtConstants';
+
+const isProduction = process.env.NODE_ENV === 'production';
+// SameSite=None + Secure para que las cookies se envíen en peticiones cross-origin (frontend en otro dominio)
+const cookieOptions = {
+  httpOnly: true,
+  secure: isProduction,
+  sameSite: (isProduction ? 'none' : 'lax') as 'none' | 'lax',
+  path: '/',
+};
 
 @ApiTags('Common - Auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: authService) {}
+  constructor(
+    private readonly authService: authService,
+    private readonly jwtService: JwtService,
+  ) {}
 
   @Post('/signup')
   @ApiOperation({ summary: 'Sign Up' })
@@ -22,15 +36,93 @@ export class AuthController {
   }
 
   @Post('/signin')
-  @ApiOperation({ 
+  @ApiOperation({
     summary: 'Iniciar sesión',
-    description: 'Autentica un usuario y retorna tokens de acceso y refresh.',
+    description: 'Autentica y devuelve user + tokens; además setea cookies HttpOnly (access_token, refresh_token).',
   })
   @ApiBody({ type: SignInDto })
   @ApiResponse({ status: 200, description: 'Inicio de sesión exitoso' })
   @ApiResponse({ status: 401, description: 'Credenciales inválidas' })
-  signIn(@Body() signInDto: SignInDto) {
-    return this.authService.signIn(signInDto);
+  async signIn(
+    @Body() signInDto: SignInDto,
+    @Res({ passthrough: true }) res: express.Response,
+  ) {
+    const result = await this.authService.signIn(signInDto);
+    if ('token' in result && result.token && result.refreshToken) {
+      res.cookie('access_token', result.token, {
+        ...cookieOptions,
+        maxAge: 60 * 60 * 1000,
+      });
+      res.cookie('refresh_token', result.refreshToken, {
+        ...cookieOptions,
+        maxAge: 5 * 24 * 60 * 60 * 1000,
+      });
+    }
+    return result;
+  }
+
+  @Get('/me')
+  @ApiOperation({
+    summary: 'Usuario actual',
+    description: 'Devuelve el usuario desde el token (cookie o header). Si no hay token o es inválido, responde 200 con null (evita 401 en consola al cargar login).',
+  })
+  @ApiResponse({ status: 200, description: 'Usuario actual o null si no hay sesión' })
+  async me(
+    @Req() req: express.Request & { cookies?: { access_token?: string } },
+  ): Promise<unknown> {
+    const token =
+      req.cookies?.access_token ??
+      (req.headers.authorization?.startsWith('Bearer ')
+        ? req.headers.authorization.slice(7)
+        : undefined);
+    if (!token) {
+      return null;
+    }
+    try {
+      const payload = await this.jwtService.verifyAsync(token, {
+        secret: jwtConstants.secret,
+      });
+      return payload;
+    } catch {
+      return null;
+    }
+  }
+
+  @Post('/logout')
+  @ApiOperation({ summary: 'Cerrar sesión', description: 'Borra las cookies de acceso y refresh.' })
+  @ApiResponse({ status: 200, description: 'Sesión cerrada' })
+  logout(@Res({ passthrough: true }) res: express.Response) {
+    const clearOpts = {
+      path: '/',
+      httpOnly: true,
+      sameSite: (isProduction ? 'none' : 'lax') as 'none' | 'lax',
+      secure: isProduction,
+    };
+    res.clearCookie('access_token', clearOpts);
+    res.clearCookie('refresh_token', clearOpts);
+    return { ok: true };
+  }
+
+  @Post('/refresh')
+  @ApiOperation({
+    summary: 'Refrescar token',
+    description: 'Nuevo access token; acepta refresh_token por cookie o body. Setea cookie access_token.',
+  })
+  @ApiBody({ type: RefreshTokenDto })
+  @ApiResponse({ status: 200, description: 'Nuevo token de acceso' })
+  @ApiResponse({ status: 401, description: 'Refresh token inválido o expirado' })
+  async refresh(
+    @Body() dto: RefreshTokenDto,
+    @Req() req: { cookies?: { refresh_token?: string } },
+    @Res({ passthrough: true }) res: express.Response,
+  ) {
+    const refreshToken = dto?.refreshToken ?? req.cookies?.refresh_token;
+    const result = await this.authService.refresh(refreshToken);
+    res.cookie('access_token', result.token, {
+      ...cookieOptions,
+      maxAge: 60 * 60 * 1000,
+    });
+    return result;
   }
 
   @Post('/change-password')
@@ -70,65 +162,5 @@ export class AuthController {
   @ApiResponse({ status: 400, description: 'Token inválido o expirado' })
   resetPassword(@Body() resetPasswordDto: ResetPasswordDto) {
     return this.authService.resetPassword(resetPasswordDto);
-  }
-
-  @Get('/sso')
-  @ApiOperation({ summary: 'SSO Sign In - Autenticación mediante parámetros de URL' })
-  @ApiQuery({ name: 'email', description: 'Email del usuario', required: true })
-  @ApiQuery({ name: 'token', description: 'Token de validación SSO', required: true })
-  @ApiQuery({ name: 'customerId', description: 'ID del cliente (opcional)', required: false })
-  @ApiQuery({ name: 'phone', description: 'Teléfono del cliente (opcional)', required: false })
-  async ssoSignIn(
-    @Query('email') email: string,
-    @Query('token') token: string,
-    @Res({ passthrough: true }) res: Response,
-    @Query('customerId') customerId?: string,
-    @Query('phone') phone?: string,
-  ) {
-    if (!email || !token) {
-      throw new HttpException('Email and token are required', HttpStatus.BAD_REQUEST);
-    }
-
-    const ssoDto = {
-      email,
-      token,
-      customerId,
-      phone,
-    };
-
-    const userData: any = await this.authService.ssoSignIn(ssoDto);
-
-    // Guardar refreshToken en cookie
-    res.cookie('refreshToken', userData.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax', // 'lax' para permitir embedding en iframes
-      maxAge: 5 * 24 * 60 * 60 * 1000, // 5 días
-    });
-
-    // Para SSO (iframe), también devolver refreshToken en la respuesta
-    // Esto permite guardarlo en localStorage como fallback cuando las cookies no funcionan
-    return {
-      id: userData.id,
-      username: userData.username,
-      email: userData.email,
-      status: userData.status,
-      type: userData.type,
-      accessToken: userData.accessToken,
-      refreshToken: userData.refreshToken, // Incluir para localStorage (fallback)
-    };
-  }
-
-  @Post('refresh-sso')
-  @ApiOperation({ 
-    summary: 'Refrescar token SSO',
-    description: 'Refresca el token de acceso para autenticación SSO/iframe.',
-  })
-  @ApiBody({ type: RefreshSsoDto })
-  @ApiResponse({ status: 200, description: 'Token refrescado exitosamente' })
-  @ApiResponse({ status: 401, description: 'Token de refresh inválido' })
-  async refreshSso(@Body() refreshSsoDto: RefreshSsoDto) {
-    const tokens = await this.authService.refresh(refreshSsoDto.refreshToken);
-    return { accessToken: tokens.accessToken };
   }
 }

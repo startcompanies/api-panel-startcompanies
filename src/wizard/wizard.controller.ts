@@ -2,12 +2,14 @@ import {
   Controller,
   Post,
   Patch,
+  Get,
   Body,
   Param,
   ParseIntPipe,
   Req,
   UseGuards,
   Logger,
+  Query,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -30,6 +32,31 @@ export class WizardController {
   private readonly logger = new Logger(WizardController.name);
 
   constructor(private readonly wizardService: WizardService) {}
+
+  @Get('check-email')
+  @ApiOperation({
+    summary: 'Verificar disponibilidad de email',
+    description: 'Verifica si un email está disponible para registro. NO requiere autenticación.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Información sobre la disponibilidad del email',
+    schema: {
+      type: 'object',
+      properties: {
+        available: { type: 'boolean' },
+        message: { type: 'string' },
+        emailVerified: { type: 'boolean' },
+      },
+      required: ['available', 'message'],
+    },
+  })
+  async checkEmail(@Query('email') email: string) {
+    if (!email) {
+      throw new Error('Email es requerido');
+    }
+    return this.wizardService.checkEmailAvailability(email);
+  }
 
   @Post('register')
   @ApiOperation({

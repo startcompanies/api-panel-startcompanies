@@ -1,13 +1,12 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import {
   S3Client,
-  PutObjectCommand,
-  ObjectCannedACL,
   CopyObjectCommand,
   DeleteObjectCommand,
   ListObjectsV2Command,
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
+import axios from 'axios';
 import { awsConfigService } from '../../config/aws.config.service';
 import { HandleExceptionsService } from 'src/shared/common/common.service';
 
@@ -36,10 +35,20 @@ export class UploadFileService {
     file: Express.Multer.File,
     servicio?: string,
     requestUuid?: string,
+    folder?: string,
   ): Promise<{ url: string; key: string } | undefined> {
-    // Construir la key según si se proporcionan servicio y requestUuid
+    // Si se especifica folder (ej: blog), usar key = folder/{timestamp}-{filename}
+    const folderNormalizado = folder && folder.trim()
+      ? folder.replace(/[^a-z0-9-_/]/gi, '').replace(/\/+/g, '/').replace(/^\/|\/$/g, '')
+      : null;
+
     let key: string;
-    
+
+    if (folderNormalizado) {
+      key = `${folderNormalizado}/${Date.now()}-${file.originalname}`;
+      this.logger.log(`Subiendo archivo a carpeta "${folderNormalizado}": ${key}`);
+    } else {
+    // Construir la key según si se proporcionan servicio y requestUuid
     // Normalizar el servicio (remover caracteres especiales, convertir a minúsculas, reemplazar espacios por guiones)
     const servicioNormalizado = servicio && servicio.trim()
       ? servicio
@@ -75,6 +84,7 @@ export class UploadFileService {
       key = `${Date.now()}-${file.originalname}`;
       this.logger.log(`Subiendo archivo a la raíz del bucket: ${key}`);
     }
+    }
 
     const params = {
       Bucket: this.bucketName,
@@ -102,6 +112,96 @@ export class UploadFileService {
       /*throw new Error('Error al subir el archivo a S3.');*/
       this.exceptionService.handleAwsS3Exception(error);
     }
+  }
+
+  /**
+   * Descarga una imagen desde una URL y la sube a S3.
+   * Si la URL ya es de media.startcompanies.us/blog/, se devuelve la misma URL sin re-subir.
+   * Así se evitan problemas de CORS al hacer la descarga en el servidor.
+   */
+  async uploadFromUrl(
+    imageUrl: string,
+    folder?: string,
+  ): Promise<{ url: string; key: string }> {
+    const url = (imageUrl || '').trim();
+    if (!url) {
+      this.exceptionService.handleBadRequestFileException();
+    }
+
+    const mediaDomain = this.mediaDomain.replace(/\/$/, '');
+    const blogPrefix = `${mediaDomain}/blog/`;
+    if (url.startsWith(blogPrefix)) {
+      this.logger.log(`URL ya está en blog/: ${url}`);
+      const key = url.slice(blogPrefix.length).split('?')[0];
+      return { url, key };
+    }
+
+    const targetFolder = (folder && folder.trim()) || 'blog';
+    this.logger.log(`Descargando imagen desde URL para subir a ${targetFolder}: ${url}`);
+
+    const isBufferOrArrayBuffer = (data: unknown): boolean =>
+      data != null &&
+      (Buffer.isBuffer(data) || data instanceof ArrayBuffer);
+
+    let response;
+    try {
+      response = await axios.get(url, {
+        responseType: 'arraybuffer',
+        timeout: 30000,
+        maxContentLength: 10 * 1024 * 1024, // 10 MB
+        validateStatus: () => true,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          Accept:
+            'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        },
+      });
+    } catch (err) {
+      this.logger.warn('Error al descargar imagen desde URL:', url, err?.message);
+      throw new BadRequestException('No se pudo descargar la imagen desde la URL');
+    }
+
+    if (response.status !== 200) {
+      this.logger.warn(
+        `URL devolvió status ${response.status}: ${url}`,
+      );
+      throw new BadRequestException('No se pudo descargar la imagen');
+    }
+    if (!response.data || !isBufferOrArrayBuffer(response.data)) {
+      this.logger.warn('Respuesta sin datos válidos (buffer):', url);
+      throw new BadRequestException('No se pudo descargar la imagen');
+    }
+
+    const buffer = Buffer.isBuffer(response.data)
+      ? response.data
+      : Buffer.from(response.data);
+    const contentType =
+      response.headers['content-type']?.split(';')[0]?.trim() || 'image/png';
+    const ext =
+      contentType.split('/')[1] || url.split('.').pop()?.split('?')[0] || 'png';
+    const safeExt = /^[a-z0-9]+$/i.test(ext) ? ext : 'png';
+    const filename = `image.${safeExt}`;
+
+    const file: Express.Multer.File = {
+      fieldname: 'file',
+      originalname: filename,
+      encoding: '7bit',
+      mimetype: contentType,
+      size: buffer.length,
+      buffer,
+    } as Express.Multer.File;
+
+    const result = await this.uploadFile(
+      file,
+      undefined,
+      undefined,
+      targetFolder,
+    );
+    if (!result) {
+      throw new BadRequestException('Error al subir la imagen a S3');
+    }
+    return result;
   }
 
   /**

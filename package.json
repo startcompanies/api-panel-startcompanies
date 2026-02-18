@@ -24,7 +24,10 @@
     "migration:run:prod": "node dist/scripts/run-migration.js run",
     "migration:revert": "ts-node --project tsconfig.json scripts/run-migration.ts revert",
     "migration:revert:prod": "node dist/scripts/run-migration.js revert",
-    "migration:show": "ts-node --project tsconfig.json scripts/run-migration.ts show"
+    "migration:show": "ts-node --project tsconfig.json scripts/run-migration.ts show",
+    "migrate:blog-images": "ts-node --project tsconfig.json -r tsconfig-paths/register scripts/migrate-blog-images.ts",
+    "sync:post-descriptions": "ts-node --project tsconfig.json -r tsconfig-paths/register scripts/sync-post-descriptions-from-migration-meta.ts",
+    "fetch:post-titles": "ts-node --project tsconfig.json -r tsconfig-paths/register scripts/fetch-post-titles-from-businessenusa.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.890.0",

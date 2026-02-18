@@ -41,14 +41,14 @@ export class UserController {
   }
 
   @Get()
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('admin', 'user')
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
-    summary: 'Obtener todos los usuarios excepto el autenticado',
+    summary: 'Obtener solo usuarios tipo user para el listado del panel',
   })
-  findAll(@Request() req) {
-    const userId = req.user.id;
-    return this.userService.findAllExceptCurrent(userId);
+  findAll() {
+    return this.userService.findPanelUsers();
   }
 
   // Rutas específicas deben ir ANTES de las rutas con parámetros dinámicos

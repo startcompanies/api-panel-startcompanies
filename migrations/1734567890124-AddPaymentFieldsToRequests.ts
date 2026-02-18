@@ -4,6 +4,14 @@ export class AddPaymentFieldsToRequests1734567890124
   implements MigrationInterface
 {
   public async up(queryRunner: QueryRunner): Promise<void> {
+    const tableExists = await queryRunner.hasTable('requests');
+    if (!tableExists) {
+      // Esta migración fue creada con un timestamp anterior a la creación de "requests".
+      // En instalaciones nuevas, "requests" todavía no existe en este punto.
+      // Los campos se añaden más adelante por una migración posterior (idempotente).
+      return;
+    }
+
     await queryRunner.addColumns('requests', [
       new TableColumn({
         name: 'payment_method',
@@ -39,6 +47,9 @@ export class AddPaymentFieldsToRequests1734567890124
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
+    const tableExists = await queryRunner.hasTable('requests');
+    if (!tableExists) return;
+
     await queryRunner.dropColumns('requests', [
       'payment_method',
       'payment_amount',

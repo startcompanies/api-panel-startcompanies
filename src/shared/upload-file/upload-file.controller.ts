@@ -11,6 +11,7 @@ import { UploadFileService } from './upload-file.service';
 import { HandleExceptionsService } from 'src/shared/common/common.service';
 import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UploadFileDto } from './dtos/upload-file.dto';
+import { UploadFromUrlDto } from './dtos/upload-from-url.dto';
 
 @ApiTags('Common - Upload Files')
 @Controller('upload-file')
@@ -38,14 +39,16 @@ export class UploadFileController {
     if (!file) {
       this.exceptionService.handleBadRequestFileException();
     } else {
-      // Extraer servicio y requestUuid del body (vienen como strings en multipart/form-data)
+      // Extraer servicio, requestUuid y folder del body (vienen como strings en multipart/form-data)
       const servicio = body.servicio && typeof body.servicio === 'string' ? body.servicio.trim() : undefined;
       const requestUuid = body.requestUuid && typeof body.requestUuid === 'string' ? body.requestUuid.trim() : undefined;
-      
+      const folder = body.folder && typeof body.folder === 'string' ? body.folder.trim() : undefined;
+
       const result = await this.uploadFileService.uploadFile(
         file,
         servicio,
         requestUuid,
+        folder,
       );
       return {
         url: result?.url,
@@ -53,6 +56,29 @@ export class UploadFileController {
         message: 'Archivo subido exitosamente',
       };
     }
+  }
+
+  @Post('from-url')
+  @ApiOperation({
+    summary: 'Subir imagen desde URL',
+    description:
+      'Descarga la imagen desde la URL (en el servidor, sin CORS) y la sube a S3. Si la URL ya es de media.startcompanies.us/blog/ devuelve la misma URL. Carpeta por defecto: blog.',
+  })
+  @ApiBody({ type: UploadFromUrlDto })
+  async uploadFromUrl(@Body() body: UploadFromUrlDto) {
+    const { url, folder } = body;
+    if (!url || typeof url !== 'string' || !url.trim()) {
+      throw new BadRequestException('url es requerida');
+    }
+    const result = await this.uploadFileService.uploadFromUrl(
+      url.trim(),
+      folder?.trim() || 'blog',
+    );
+    return {
+      url: result.url,
+      key: result.key,
+      message: 'Imagen procesada correctamente',
+    };
   }
 
   @Post('move-to-request')

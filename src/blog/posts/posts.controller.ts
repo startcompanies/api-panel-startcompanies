@@ -18,6 +18,8 @@ import { UpdatePublicationStatusDto } from './dtos/update-publication-status.dto
 import { PaginationDto } from 'src/shared/common/dtos/pagination.dto';
 import { GetPostsFilterDto } from './dtos/get-posts-filter.dto';
 import { UpdateSandboxStatusDto } from './dtos/update-sandbox-status.dto';
+import { UpdateQaReviewedStatusDto } from './dtos/update-qa-reviewed-status.dto';
+import { UpdateTodoDto } from './dtos/update-todo.dto';
 
 @ApiTags('Blog - Posts')
 @Controller('blog/posts')
@@ -139,6 +141,50 @@ export class PostsController {
     return this.postsService.updateSandboxStatus(id, updateSandboxStatusDto.sandbox);
   }
 
+  // Marcar post como validado / no validado en QA
+  @Patch('qa-reviewed/:id')
+  @UseGuards(AuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Marcar post como validado o no validado en QA',
+  })
+  @ApiParam({ name: 'id', description: 'ID del post' })
+  @ApiBody({ type: UpdateQaReviewedStatusDto })
+  async updateQaReviewedStatus(
+    @Param('id') id: string,
+    @Body() dto: UpdateQaReviewedStatusDto,
+  ) {
+    return this.postsService.updateQaReviewedStatus(id, dto.qa_reviewed);
+  }
+
+  // Reiniciar QA: quitar validación QA de todos los posts
+  @Patch('qa-reset')
+  @UseGuards(AuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Reiniciar QA: marcar todos los posts como no validados en QA',
+  })
+  @ApiResponse({ status: 200, description: 'Cantidad de posts actualizados' })
+  async resetAllQaReviewed() {
+    return this.postsService.resetAllQaReviewed();
+  }
+
+  // Actualizar notas TODO del post (solo desde listado)
+  @Patch('todo/:id')
+  @UseGuards(AuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Actualizar notas TODO / pendientes del post',
+  })
+  @ApiParam({ name: 'id', description: 'ID del post' })
+  @ApiBody({ type: UpdateTodoDto })
+  async updateTodo(
+    @Param('id') id: string,
+    @Body() dto: UpdateTodoDto,
+  ) {
+    return this.postsService.updateTodo(id, dto.todo ?? null);
+  }
+
   @Put(':id')
   @ApiOperation({
     summary: 'Actualizar un post por su ID',
@@ -150,5 +196,18 @@ export class PostsController {
   @ApiResponse({ status: 404, description: 'Post no encontrado' })
   async updatePost(@Param('id') id: string, @Body() postDto: PostDto) {
     return this.postsService.updatePost(id, postDto);
+  }
+
+  @HttpPost('sync-descriptions-from-migration-meta')
+  @UseGuards(AuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Sincronizar descriptions desde businessenusa-migration-meta.json',
+    description:
+      'Recorre el JSON, busca cada post por slug, valida que el title coincida y actualiza el campo description.',
+  })
+  @ApiResponse({ status: 200, description: 'Resultado: updated, titleMismatch, notFound, details' })
+  async syncDescriptionsFromMigrationMeta() {
+    return this.postsService.syncDescriptionsFromMigrationMeta();
   }
 }
