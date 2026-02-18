@@ -24,11 +24,10 @@ async function bootstrap() {
   // Habilitar CORS para permitir peticiones desde dominios especificos
   const allowedOrigins = [
     'http://localhost:4200',
-    'http://localhost:4000',
-    'http://localhost:55167',
     'https://startcompanies.us',
     'https://admin-blog.startcompanies.us',
     'https://staging.startcompanies.io',
+    'https://startcompanies.io',
   ];
 
   // Agregar dominios de Zoho si están configurados
