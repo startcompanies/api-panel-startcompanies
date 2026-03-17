@@ -4,8 +4,8 @@ import { Resend } from 'resend';
 
 /** Colores y assets de marca (alineados con portal-startcompanies) */
 const BRAND = {
-  logoWhite: 'https://media.startcompanies.us/logo-sc.webp',
-  logoDark: 'https://media.startcompanies.us/logo-sc-grey.webp',
+  logoWhite: 'https://media.startcompanies.us/logo.webp',
+  logoDark: 'https://media.startcompanies.us/logo-dark.webp',
   primary: '#0068BD',
   secondary: '#006AFE',
   dark: '#001627',
