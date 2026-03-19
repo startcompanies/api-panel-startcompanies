@@ -269,10 +269,12 @@ export class UploadFileService {
         const newKey = `${targetPrefix}${fileName}`;
 
         try {
-          // Copiar el archivo a la nueva ubicación
+          // Copiar el archivo a la nueva ubicación.
+          // CopySource debe llevar la key URL-encoded para que la firma S3 coincida (nombres con espacios/unicode).
+          const copySource = `${this.bucketName}/${encodeURIComponent(file.Key)}`;
           const copyCommand = new CopyObjectCommand({
             Bucket: this.bucketName,
-            CopySource: `${this.bucketName}/${file.Key}`,
+            CopySource: copySource,
             Key: newKey,
           });
 
