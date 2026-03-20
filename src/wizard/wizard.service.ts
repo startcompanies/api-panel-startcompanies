@@ -556,6 +556,16 @@ export class WizardService {
         this.logger.log(`Cliente creado para usuario wizard: ${client.id}`);
       }
 
+      // Datos mínimos de renovación antes de cobrar o crear solicitud
+      if (createWizardRequestDto.type === 'renovacion-llc') {
+        const rd = createWizardRequestDto.renovacionLlcData;
+        if (!rd?.state?.trim() || !rd?.llcType?.trim()) {
+          throw new BadRequestException(
+            'Para renovación LLC se requiere estado (state) y tipo de LLC (llcType).',
+          );
+        }
+      }
+
       // PASO 2: Procesar pago PRIMERO (antes de crear request)
       // paymentResult ya está declarado fuera del try
 
@@ -589,7 +599,8 @@ export class WizardService {
             this.logger.log(`[Wizard] Pago procesado exitosamente: ${charge.id}`);
           } catch (error: any) {
             this.logger.error(`[Wizard] Error al procesar pago: ${error.message}`);
-            await queryRunner.rollbackTransaction();
+            // No hacer rollback aquí: el catch externo ya revierte si !transactionCommitted.
+            // Un rollback doble provoca TransactionNotStartedError y enmascara el 400 de Stripe.
             throw new BadRequestException(`Error al procesar el pago: ${error.message}`);
           }
         } else if (createWizardRequestDto.paymentMethod === 'transferencia') {
