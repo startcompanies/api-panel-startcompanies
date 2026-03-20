@@ -40,6 +40,23 @@ export class SyncFromZohoDto {
   limit?: number;
 }
 
+/**
+ * Payload para webhook desde Zoho CRM (workflow / función Deluge) que dispara
+ * la actualización de Request en BD leyendo Deals + Account en Zoho.
+ */
+export class ZohoCrmRequestStageWebhookDto {
+  @IsString()
+  @ApiProperty({
+    description: 'ID del Account en Zoho CRM (mismo valor guardado en Request.zohoAccountId)',
+  })
+  zohoAccountId: string;
+
+  @IsOptional()
+  @IsString()
+  @ApiPropertyOptional({ description: 'Organización/cliente Zoho (por defecto: startcompanies)' })
+  org?: string;
+}
+
 
 
 

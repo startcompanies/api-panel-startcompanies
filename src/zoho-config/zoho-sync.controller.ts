@@ -7,7 +7,12 @@ import {
   Param,
   UseGuards,
   ParseIntPipe,
+  Headers,
+  UnauthorizedException,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ZohoSyncService } from './zoho-sync.service';
 import {
   ApiTags,
@@ -15,20 +20,28 @@ import {
   ApiBearerAuth,
   ApiQuery,
   ApiBody,
+  ApiHeader,
 } from '@nestjs/swagger';
 import {
   SyncRequestToZohoDto,
   SyncMultipleRequestsDto,
   SyncFromZohoDto,
+  ZohoCrmRequestStageWebhookDto,
 } from './zoho-sync.dto';
 import { AuthGuard } from 'src/shared/auth/auth.guard';
 import { RolesGuard } from 'src/shared/auth/roles.guard';
 import { Roles } from 'src/shared/auth/roles.decorator';
 
+/** Header enviado por Zoho (workflow) para autenticar el webhook sin JWT admin. */
+const ZOHO_SYNC_SECRET_HEADER = 'x-zoho-sync-secret';
+
 @ApiTags('Zoho Sync')
 @Controller('zoho-sync')
 export class ZohoSyncController {
-  constructor(private readonly zohoSyncService: ZohoSyncService) {}
+  constructor(
+    private readonly zohoSyncService: ZohoSyncService,
+    private readonly configService: ConfigService,
+  ) {}
 
   @Post('sync-request')
   @UseGuards(AuthGuard, RolesGuard)
@@ -102,6 +115,42 @@ export class ZohoSyncController {
     return this.zohoSyncService.syncStageStatusAndWorkdriveByAccountId(
       zohoAccountId,
       org,
+    );
+  }
+
+  /**
+   * Webhook pensado para ser llamado desde Zoho CRM (Workflow / función Deluge)
+   * cuando cambia el Stage del Deal u otro evento: actualiza Request en BD
+   * leyendo el estado actual en Zoho (misma lógica que stage-sync admin).
+   *
+   * Requiere env: ZOHOCRM_REQUEST_SYNC_WEBHOOK_SECRET y header X-Zoho-Sync-Secret.
+   */
+  @Post('webhooks/crm/request-stage-sync')
+  @ApiOperation({
+    summary:
+      'Webhook: Zoho CRM → actualizar Request (stage, status, workDrive) desde Deals + Account',
+    description:
+      'Sin JWT. Autenticación con header X-Zoho-Sync-Secret igual a ZOHOCRM_REQUEST_SYNC_WEBHOOK_SECRET. ' +
+      'Configurar en Zoho un workflow (p. ej. al editar Deal) que POSTee JSON con zohoAccountId del Account.',
+  })
+  @ApiHeader({
+    name: ZOHO_SYNC_SECRET_HEADER,
+    description: 'Debe coincidir con la variable de entorno ZOHOCRM_REQUEST_SYNC_WEBHOOK_SECRET',
+    required: true,
+  })
+  @ApiBody({ type: ZohoCrmRequestStageWebhookDto })
+  @UsePipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }))
+  webhookCrmRequestStageSync(
+    @Headers(ZOHO_SYNC_SECRET_HEADER) secret: string | undefined,
+    @Body() body: ZohoCrmRequestStageWebhookDto,
+  ) {
+    const expected = this.configService.get<string>('ZOHOCRM_REQUEST_SYNC_WEBHOOK_SECRET');
+    if (!expected || !secret || secret !== expected) {
+      throw new UnauthorizedException('Webhook: secreto inválido o no configurado');
+    }
+    return this.zohoSyncService.syncStageStatusAndWorkdriveByAccountId(
+      body.zohoAccountId,
+      body.org,
     );
   }
 
