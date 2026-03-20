@@ -86,6 +86,25 @@ export class ZohoSyncController {
     return this.zohoSyncService.importAccountById(accountId, org);
   }
 
+  @Post('import/account/:zohoAccountId/stage-sync')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary:
+      'Actualizar stage, status y workDriveUrlExternal desde Zoho (Deals + Account) por zohoAccountId (solo admin)',
+  })
+  @ApiQuery({ name: 'org', required: false, description: 'Organización/cliente' })
+  syncStageStatusAndWorkdriveByAccountId(
+    @Param('zohoAccountId') zohoAccountId: string,
+    @Query('org') org?: string,
+  ) {
+    return this.zohoSyncService.syncStageStatusAndWorkdriveByAccountId(
+      zohoAccountId,
+      org,
+    );
+  }
+
   @Get('import/deals')
   @UseGuards(AuthGuard, RolesGuard)
   @Roles('admin')
