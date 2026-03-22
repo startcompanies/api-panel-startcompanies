@@ -238,14 +238,21 @@ export class ZohoSyncService {
         );
       }
 
-      // Guardar zohoAccountId en Request usando update directo para asegurar que se guarde
+      // Mismo criterio que mapRequestToAccount (Empresa en Zoho)
+      const companyForBd =
+        request.partnerId != null || request.partner
+          ? 'Partner'
+          : 'Start Companies';
+
+      // Guardar zohoAccountId y company en Request (alineado con picklist Empresa enviado a Zoho)
       await this.requestRepository.update(
         { id: requestId },
-        { zohoAccountId: accountId },
+        { zohoAccountId: accountId, company: companyForBd },
       );
 
       // Actualizar también el objeto en memoria para consistencia
       request.zohoAccountId = accountId;
+      request.company = companyForBd;
 
       // Sincronizar también propietarios al módulo Propietarios_LLC (además de subforms en Account)
       if (members.length > 0) {
@@ -274,18 +281,11 @@ export class ZohoSyncService {
     request: Request,
     members: Member[],
   ): Promise<Record<string, any>> {
-    // Determinar Empresa: si tiene partner = nombre del partner, si no = "Start Companies"
-    let empresa = 'Start Companies';
-    if (request.partner) {
-      // Priorizar company, luego username, luego first_name + last_name
-      empresa = request.partner.company || 
-                request.partner.username || 
-                `${request.partner.first_name || ''} ${request.partner.last_name || ''}`.trim() ||
-                'Start Companies';
-    } else if (request.company) {
-      // Si ya está guardado en BD, usarlo
-      empresa = request.company;
-    }
+    // Picklist Zoho Empresa: "Partner" si la solicitud la gestiona un partner; si no, "Start Companies" (cliente)
+    const empresa =
+      request.partnerId != null || request.partner
+        ? 'Partner'
+        : 'Start Companies';
 
     let accountData: Record<string, any> = {
       Account_Name: '', // Se llenará según el tipo
