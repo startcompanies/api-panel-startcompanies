@@ -206,11 +206,16 @@ export class UploadFileService {
 
   /**
    * Mueve archivos de request/{servicio}/ a request/{servicio}/{uuid}/
-   * Se llama cuando se crea un request para organizar los archivos subidos previamente
+   * Se llama cuando se crea un request para organizar los archivos subidos previamente.
+   *
+   * @param keys Si se pasa un array, solo se mueven esas claves S3 (referenciadas en el payload).
+   *             Array vacío = no mover nada (sin listar el bucket).
+   *             undefined = compatibilidad: listar todo bajo request/{servicio}/ (p. ej. POST /upload-file/move-to-request).
    */
   async moveFilesToRequestFolder(
     servicio: string,
     requestUuid: string,
+    keys?: string[],
   ): Promise<{ moved: number; errors: number }> {
     if (!servicio || !requestUuid) {
       this.logger.warn('No se puede mover archivos: servicio o requestUuid faltante');
@@ -242,8 +247,60 @@ export class UploadFileService {
     let moved = 0;
     let errors = 0;
 
+    const moveOne = async (sourceKey: string): Promise<void> => {
+      if (
+        !sourceKey ||
+        sourceKey.endsWith('/') ||
+        !sourceKey.startsWith(sourcePrefix) ||
+        sourceKey.startsWith(targetPrefix)
+      ) {
+        return;
+      }
+
+      const fileName = sourceKey.replace(sourcePrefix, '');
+      const newKey = `${targetPrefix}${fileName}`;
+
+      const copySource = `${this.bucketName}/${encodeURIComponent(sourceKey)}`;
+      const copyCommand = new CopyObjectCommand({
+        Bucket: this.bucketName,
+        CopySource: copySource,
+        Key: newKey,
+      });
+
+      await this.s3Client.send(copyCommand);
+
+      const deleteCommand = new DeleteObjectCommand({
+        Bucket: this.bucketName,
+        Key: sourceKey,
+      });
+
+      await this.s3Client.send(deleteCommand);
+
+      moved++;
+      this.logger.log(`Archivo movido: ${sourceKey} -> ${newKey}`);
+    };
+
     try {
-      // Listar todos los archivos en request/{servicio}/
+      if (keys !== undefined) {
+        const unique = [...new Set(keys.map((k) => k.trim()).filter(Boolean))];
+        if (unique.length === 0) {
+          this.logger.log('Sin claves S3 en el payload; no se mueve ningún archivo');
+          return { moved: 0, errors: 0 };
+        }
+        this.logger.log(`Moviendo ${unique.length} archivo(s) referenciado(s) en el request`);
+        for (const key of unique) {
+          try {
+            await moveOne(key);
+          } catch (error) {
+            errors++;
+            this.logger.error(`Error al mover archivo ${key}:`, error);
+          }
+        }
+        this.logger.log(`Movidos ${moved} archivos, ${errors} errores`);
+        return { moved, errors };
+      }
+
+      // Compatibilidad: listar todos los objetos bajo request/{servicio}/
       const listCommand = new ListObjectsV2Command({
         Bucket: this.bucketName,
         Prefix: sourcePrefix,
@@ -252,44 +309,18 @@ export class UploadFileService {
       const listResponse = await this.s3Client.send(listCommand);
       const objects = listResponse.Contents || [];
 
-      // Filtrar solo archivos (no carpetas) y excluir los que ya están en la carpeta del UUID
       const filesToMove = objects.filter(
         (obj) => obj.Key && 
         !obj.Key.endsWith('/') && 
         !obj.Key.startsWith(targetPrefix)
       );
 
-      this.logger.log(`Encontrados ${filesToMove.length} archivos para mover`);
+      this.logger.log(`Encontrados ${filesToMove.length} archivos para mover (listado completo)`);
 
-      // Mover cada archivo
       for (const file of filesToMove) {
         if (!file.Key) continue;
-
-        const fileName = file.Key.replace(sourcePrefix, '');
-        const newKey = `${targetPrefix}${fileName}`;
-
         try {
-          // Copiar el archivo a la nueva ubicación.
-          // CopySource debe llevar la key URL-encoded para que la firma S3 coincida (nombres con espacios/unicode).
-          const copySource = `${this.bucketName}/${encodeURIComponent(file.Key)}`;
-          const copyCommand = new CopyObjectCommand({
-            Bucket: this.bucketName,
-            CopySource: copySource,
-            Key: newKey,
-          });
-
-          await this.s3Client.send(copyCommand);
-
-          // Eliminar el archivo original
-          const deleteCommand = new DeleteObjectCommand({
-            Bucket: this.bucketName,
-            Key: file.Key,
-          });
-
-          await this.s3Client.send(deleteCommand);
-
-          moved++;
-          this.logger.log(`Archivo movido: ${file.Key} -> ${newKey}`);
+          await moveOne(file.Key);
         } catch (error) {
           errors++;
           this.logger.error(`Error al mover archivo ${file.Key}:`, error);
@@ -299,7 +330,7 @@ export class UploadFileService {
       this.logger.log(`Movidos ${moved} archivos, ${errors} errores`);
       return { moved, errors };
     } catch (error) {
-      this.logger.error('Error al listar archivos para mover:', error);
+      this.logger.error('Error al mover archivos:', error);
       this.exceptionService.handleAwsS3Exception(error);
       return { moved, errors: errors + 1 };
     }
