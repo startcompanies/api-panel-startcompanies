@@ -1,4 +1,5 @@
 import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ZohoConfig } from './zoho-config.entity';
@@ -6,17 +7,26 @@ import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
 import { ZohoConfigDto, UpdateZohoConfigDto } from './zoho-config.dto';
 
+/** Callback OAuth Zoho: {API_PUBLIC_URL}/orgTk/callback (registrar exacto en consola Zoho). */
+function zohoRedirectUriFromApiPublic(config: ConfigService): string {
+  const base = (
+    config.get<string>('API_PUBLIC_URL') || 'http://localhost:3000'
+  ).replace(/\/+$/, '');
+  return `${base}/orgTk/callback`;
+}
+
 @Injectable()
 export class ZohoConfigService {
-  // URL de redirección después de OAuth (debe coincidir con la configurada en Zoho)
-  private readonly redirect_uri: string =
-    process.env.REDIRECT_URI || 'http://localhost:3000/orgTk/callback';
+  private readonly redirect_uri: string;
 
   constructor(
     @InjectRepository(ZohoConfig)
     private readonly zohoConfigRepository: Repository<ZohoConfig>,
     private readonly httpService: HttpService,
-  ) {}
+    private readonly configService: ConfigService,
+  ) {
+    this.redirect_uri = zohoRedirectUriFromApiPublic(this.configService);
+  }
 
   /**
    * Obtiene la URL base del servicio de tokens según la región

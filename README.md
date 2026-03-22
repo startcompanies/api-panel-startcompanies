@@ -142,6 +142,8 @@ Edita el archivo `.env` con tus credenciales y configuraciones.
 - `PORT` - Puerto del servidor (default: 3000)
 - `MODE` - Modo de ejecución (DEV o PROD)
 - `NODE_ENV` - Entorno de Node.js
+- `API_PUBLIC_URL` - URL pública de esta API (sin barra final), p. ej. `https://api-web.startcompanies.io`. El callback OAuth Zoho es `{API_PUBLIC_URL}/orgTk/callback` (registrar ese valor exacto en Zoho).
+- `FRONTEND_URL` - URL pública del portal/panel para enlaces en correos (Resend)
 
 ### Autenticación
 - `JWT_SECRET` - Secreto para firmar tokens JWT
@@ -160,12 +162,11 @@ Edita el archivo `.env` con tus credenciales y configuraciones.
 ### Zoho (Opcional)
 - `ZOHO_CLIENT_ID` - Client ID de Zoho
 - `ZOHO_CLIENT_SECRET` - Client Secret de Zoho
-- `ZOHO_REDIRECT_URI` - URI de redirección de Zoho
 - `ZOHO_CRM_DOMAINS` - Dominios permitidos para Zoho (separados por comas)
 
 ### Email (Opcional)
 - `RESEND_API_KEY` - API Key de Resend
-- `EMAIL_FROM` - Email remitente
+- `RESEND_FROM_EMAIL` - Remitente (ver `email.service.ts`)
 
 ## Scripts Disponibles
 
