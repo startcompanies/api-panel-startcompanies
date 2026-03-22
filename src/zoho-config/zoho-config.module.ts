@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { HttpModule } from '@nestjs/axios';
 import { ZohoConfigController } from './zoho-config.controller';
@@ -18,6 +19,7 @@ import { User } from '../shared/user/entities/user.entity';
 
 @Module({
   imports: [
+    ConfigModule,
     TypeOrmModule.forFeature([
       ZohoConfig,
       Request,

@@ -59,7 +59,7 @@ export class HandleExceptionsService {
     return {
       error: 'email',
       errorDetail: `User with email ${email} not found`,
-      message: 'Correo electrónico incorrecto',
+      message: 'Correo no registrado',
       code: 200,
     };
   }

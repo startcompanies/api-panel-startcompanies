@@ -74,6 +74,14 @@ export class CreateRequestDto {
 
   // Datos específicos según el tipo de solicitud
   @ApiPropertyOptional({
+    description: 'Plan del servicio (apertura-llc: Entrepreneur, Elite, Premium). Se puede enviar aquí o dentro de aperturaLlcData.',
+    example: 'Entrepreneur',
+  })
+  @IsOptional()
+  @IsString()
+  plan?: string;
+
+  @ApiPropertyOptional({
     type: CreateAperturaLlcRequestDto,
     description: 'Datos específicos para solicitud de apertura LLC',
   })

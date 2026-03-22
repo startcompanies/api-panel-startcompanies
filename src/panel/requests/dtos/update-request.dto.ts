@@ -44,16 +44,16 @@ export class UpdateRequestDto {
   currentStepNumber?: number;
 
   @ApiPropertyOptional({
-    description: 'Paso principal del wizard (1, 2, 3, 4)',
+    description: 'Paso principal del flujo (wizard o panel, 1-based)',
     example: 3,
     minimum: 1,
-    maximum: 4,
+    maximum: 7,
   })
   @IsOptional()
   @IsNumber()
   @Min(1)
-  @Max(4)
-  currentStep?: number; // Paso principal del wizard (1, 2, 3, 4)
+  @Max(7)
+  currentStep?: number; // Paso principal del flujo (1-based)
 
   @ApiPropertyOptional({
     description: 'Plan del servicio (ej. Entrepreneur, Elite, Premium). Se usa para validaciones al recargar.',

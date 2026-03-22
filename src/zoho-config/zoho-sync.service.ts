@@ -247,6 +247,11 @@ export class ZohoSyncService {
       // Actualizar también el objeto en memoria para consistencia
       request.zohoAccountId = accountId;
 
+      // Sincronizar también propietarios al módulo Propietarios_LLC (además de subforms en Account)
+      if (members.length > 0) {
+        await this.syncMembersToPropietariosLlc(accountId, members, org);
+      }
+
       this.logger.log(`Account sincronizado exitosamente: ${accountId}. zohoAccountId guardado en BD: ${accountId}`);
 
       return {
@@ -699,6 +704,149 @@ export class ZohoSyncService {
         Es_ciudadano_de_EE_UU: this.mapBooleanToPickList(member.isUSCitizen),
       }),
     };
+  }
+
+  /**
+   * Mapea un Member al módulo Propietarios_LLC
+   */
+  private mapMemberToPropietarioLlc(
+    member: Member,
+    accountId: string,
+    isPrimary: boolean,
+  ): Record<string, any> {
+    return {
+      Name: `${member.firstName || ''} ${member.lastName || ''}`.trim(),
+      Nombres: member.firstName || '',
+      Apellidos: member.lastName || '',
+      Email: member.email || '',
+      Secondary_Email: member.email || '',
+      Tel_fono: this.normalizePhoneNumber(member.phoneNumber) || '',
+      Fecha_de_nacimiento: this.formatDate(member.dateOfBirth),
+      N_mero_de_pasaporte: member.passportNumber || '',
+      Nacionalidad: member.nationality || '',
+      Ciudadania: member.nationality || '',
+      Ciudadano_EEUU: this.parseBoolean(member.isUSCitizen),
+      Mas_de_31_dias_en_EEUU: this.parseBoolean(member.spentMoreThan31DaysInUS),
+      Posee_Activos_en_EEUU: this.parseBoolean(member.hasUSFinancialInvestments),
+      SSN_ITIN: member.ssnOrItin || '',
+      ID_Fiscal_Nacional: member.nationalTaxId || '',
+      Pais_Declaracion_Impuestos: member.taxFilingCountry || '',
+      Pa_s_bajo_cuyas_leyes_el_propietario_presenta_impu: member.taxFilingCountry || '',
+      Aportes_de_Capital: member.ownerContributions ?? null,
+      Prestamos_a_LLC: member.ownerLoansToLLC ?? null,
+      Prestamos_Reembolsados: member.loansReimbursedByLLC ?? null,
+      Distribuciones_Retiros: member.profitDistributions ?? null,
+      Retiros_de_Capital: member.profitDistributions ?? null,
+      Porcentaje_Participacion: member.percentageOfParticipation ?? (isPrimary ? 100 : 0),
+      Calle_y_n_mero_exterior: member.memberAddress?.street || '',
+      Apartamento_Suite: member.memberAddress?.unit || '',
+      Ciudad: member.memberAddress?.city || '',
+      Estado: member.memberAddress?.stateRegion || '',
+      Codigo_postal: member.memberAddress?.postalCode || '',
+      Pa_s: member.memberAddress?.country || '',
+      Es_propietario_Primario: isPrimary,
+      Es_propietario_Secundario: !isPrimary,
+      Source_Subform: isPrimary ? 'Contacto_Principal_LLC' : 'Socios_LLC',
+      LLC: { id: accountId },
+    };
+  }
+
+  /**
+   * Sincroniza miembros al módulo Propietarios_LLC
+   * Usa LLC (lookup a Account) como vínculo principal.
+   */
+  private async syncMembersToPropietariosLlc(
+    accountId: string,
+    members: Member[],
+    org: string,
+  ): Promise<void> {
+    try {
+      const existingByKey = new Map<string, string>();
+      const selectQuery = [
+        'SELECT id, N_mero_de_pasaporte, Email, Nombres, Apellidos',
+        'FROM Propietarios_LLC',
+        `WHERE LLC.id = '${accountId}'`,
+        'ORDER BY Created_Time DESC',
+        'LIMIT 200',
+      ].join(' ');
+      const existingResponse = await this.zohoCrmService.queryWithCoql(selectQuery, undefined, org);
+      const existingRecords = existingResponse.data || [];
+      for (const rec of existingRecords) {
+        const key = `${(rec.Email || '').toLowerCase()}|${rec.N_mero_de_pasaporte || ''}|${(rec.Nombres || '').toLowerCase()}|${(rec.Apellidos || '').toLowerCase()}`;
+        if (!existingByKey.has(key)) {
+          existingByKey.set(key, rec.id);
+        }
+      }
+
+      const payload = members.map((member, index) => {
+        const base = this.mapMemberToPropietarioLlc(member, accountId, index === 0);
+        const key = `${(member.email || '').toLowerCase()}|${member.passportNumber || ''}|${(member.firstName || '').toLowerCase()}|${(member.lastName || '').toLowerCase()}`;
+        const existingId = existingByKey.get(key);
+        if (existingId) {
+          return { id: existingId, ...base };
+        }
+        return base;
+      });
+
+      if (payload.length === 0) {
+        return;
+      }
+
+      await this.zohoCrmService.upsertRecords('Propietarios_LLC', payload, ['Email', 'N_mero_de_pasaporte'], org);
+      this.logger.log(`Propietarios_LLC sincronizado: ${payload.length} registro(s) para Account ${accountId}`);
+    } catch (error: any) {
+      this.logger.warn(`Error al sincronizar Propietarios_LLC para Account ${accountId}: ${error.message}`);
+      // No bloquear el flujo principal de Account por errores en módulo adicional
+    }
+  }
+
+  private parseZohoBooleanToMemberValue(value: any): string | null {
+    const parsed = this.parseBooleanToPickListString(value);
+    return parsed ?? null;
+  }
+
+  private async getPropietariosLlcByAccountId(
+    accountId: string,
+    org: string,
+  ): Promise<any[]> {
+    const fields = [
+      'id',
+      'Nombres',
+      'Apellidos',
+      'Email',
+      'Secondary_Email',
+      'Tel_fono',
+      'Fecha_de_nacimiento',
+      'N_mero_de_pasaporte',
+      'Nacionalidad',
+      'Ciudadania',
+      'Ciudadano_EEUU',
+      'Mas_de_31_dias_en_EEUU',
+      'Posee_Activos_en_EEUU',
+      'SSN_ITIN',
+      'ID_Fiscal_Nacional',
+      'Pais_Declaracion_Impuestos',
+      'Pa_s_bajo_cuyas_leyes_el_propietario_presenta_impu',
+      'Aportes_de_Capital',
+      'Prestamos_a_LLC',
+      'Prestamos_Reembolsados',
+      'Distribuciones_Retiros',
+      'Retiros_de_Capital',
+      'Porcentaje_Participacion',
+      'Calle_y_n_mero_exterior',
+      'Apartamento_Suite',
+      'Ciudad',
+      'Estado',
+      'Codigo_postal',
+      'Pa_s',
+      'Es_propietario_Primario',
+      'Es_propietario_Secundario',
+      'Created_Time',
+    ];
+
+    const query = `SELECT ${fields.join(', ')} FROM Propietarios_LLC WHERE LLC.id = '${accountId}' ORDER BY Created_Time ASC LIMIT 200`;
+    const response = await this.zohoCrmService.queryWithCoql(query, undefined, org);
+    return response.data || [];
   }
 
   /**
@@ -1288,6 +1436,7 @@ export class ZohoSyncService {
 
       // PRIMERO: Obtener/crear usuario (cliente o partner) para asignar clientId
       // Esto debe hacerse ANTES de guardar el Request porque clientId es NOT NULL
+      // Nota: En este flujo de sync Zoho -> BD NO se envían correos de bienvenida.
       let clientId: number | undefined;
       
       if (account.Empresa === 'Partner') {
@@ -1558,6 +1707,47 @@ export class ZohoSyncService {
   }
 
   /**
+   * Sincroniza desde Zoho a BD: stage, status y workDriveUrlExternal para la Request
+   * vinculada al zohoAccountId (Account CRM). Reutiliza Deals + Account como en importación.
+   */
+  async syncStageStatusAndWorkdriveByAccountId(
+    zohoAccountId: string,
+    org: string = 'startcompanies',
+  ) {
+    const request = await this.requestRepository.findOne({
+      where: { zohoAccountId },
+    });
+    if (!request) {
+      throw new HttpException(
+        `No se encontró Request con zohoAccountId ${zohoAccountId}`,
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    await this.updateRequestStatusFromDeals(request, org);
+
+    const refreshed = await this.requestRepository.findOne({
+      where: { id: request.id },
+    });
+    if (!refreshed) {
+      throw new HttpException(
+        `Request ${request.id} no encontrada tras sincronización`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+
+    return {
+      success: true,
+      requestId: refreshed.id,
+      zohoAccountId: refreshed.zohoAccountId,
+      type: refreshed.type,
+      status: refreshed.status,
+      stage: refreshed.stage ?? null,
+      workDriveUrlExternal: refreshed.workDriveUrlExternal ?? null,
+    };
+  }
+
+  /**
    * Mapea el Tipo de Zoho al tipo de Request
    */
   private mapZohoTipoToRequestType(tipo: string): 'apertura-llc' | 'renovacion-llc' | 'cuenta-bancaria' | null {
@@ -1814,6 +2004,77 @@ export class ZohoSyncService {
       await queryRunner.manager.delete(Member, { requestId: request.id });
       
       const members: Member[] = [];
+
+      // Prioridad 1: Propietarios_LLC (nuevo módulo)
+      const accountId = account.id || request.zohoAccountId;
+      if (accountId) {
+        try {
+          const propietarios = await this.getPropietariosLlcByAccountId(accountId, org);
+          if (propietarios.length > 0) {
+            this.logger.log(`Propietarios_LLC encontrado para Account ${accountId}: ${propietarios.length} registro(s)`);
+
+            const sortedPropietarios = [...propietarios].sort((a, b) => {
+              const aPrimary = this.parseBoolean(a.Es_propietario_Primario) ? 1 : 0;
+              const bPrimary = this.parseBoolean(b.Es_propietario_Primario) ? 1 : 0;
+              return bPrimary - aPrimary;
+            });
+
+            for (const propietario of sortedPropietarios) {
+              const member = queryRunner.manager.create(Member, {
+                requestId: request.id,
+                firstName: propietario.Nombres || '',
+                lastName: propietario.Apellidos || '',
+                email: propietario.Email || propietario.Secondary_Email || '',
+                phoneNumber: this.normalizePhoneNumber(propietario.Tel_fono) || '',
+                passportNumber: propietario.N_mero_de_pasaporte || '',
+                nationality: propietario.Nacionalidad || propietario.Ciudadania || '',
+                dateOfBirth: propietario.Fecha_de_nacimiento
+                  ? new Date(propietario.Fecha_de_nacimiento)
+                  : new Date(),
+                percentageOfParticipation: propietario.Porcentaje_Participacion
+                  ? parseFloat(propietario.Porcentaje_Participacion)
+                  : (this.parseBoolean(propietario.Es_propietario_Primario) ? 100 : 0),
+                memberAddress: {
+                  street: propietario.Calle_y_n_mero_exterior || '',
+                  unit: propietario.Apartamento_Suite || '',
+                  city: propietario.Ciudad || '',
+                  stateRegion: propietario.Estado || '',
+                  postalCode: propietario.Codigo_postal || '',
+                  country: propietario.Pa_s || '',
+                },
+                ssnOrItin: propietario.SSN_ITIN || null,
+                nationalTaxId: propietario.ID_Fiscal_Nacional || null,
+                taxFilingCountry: propietario.Pais_Declaracion_Impuestos || propietario.Pa_s_bajo_cuyas_leyes_el_propietario_presenta_impu || null,
+                ownerContributions: propietario.Aportes_de_Capital
+                  ? parseFloat(propietario.Aportes_de_Capital)
+                  : null,
+                ownerLoansToLLC: propietario.Prestamos_a_LLC
+                  ? parseFloat(propietario.Prestamos_a_LLC)
+                  : null,
+                loansReimbursedByLLC: propietario.Prestamos_Reembolsados
+                  ? parseFloat(propietario.Prestamos_Reembolsados)
+                  : null,
+                profitDistributions: propietario.Distribuciones_Retiros || propietario.Retiros_de_Capital
+                  ? parseFloat(propietario.Distribuciones_Retiros || propietario.Retiros_de_Capital)
+                  : null,
+                spentMoreThan31DaysInUS: this.parseZohoBooleanToMemberValue(propietario.Mas_de_31_dias_en_EEUU),
+                hasUSFinancialInvestments: this.parseZohoBooleanToMemberValue(propietario.Posee_Activos_en_EEUU),
+                isUSCitizen: this.parseZohoBooleanToMemberValue(propietario.Ciudadano_EEUU),
+              });
+              members.push(member);
+            }
+
+            if (members.length > 0) {
+              await queryRunner.manager.save(Member, members);
+              this.logger.log(`Members creados desde Propietarios_LLC: ${members.length} (Request ${request.id})`);
+              return;
+            }
+          }
+          this.logger.log(`Sin registros en Propietarios_LLC para Account ${accountId}; se usará fallback a subforms`);
+        } catch (propError: any) {
+          this.logger.warn(`Error consultando Propietarios_LLC para Account ${accountId}: ${propError.message}. Se continuará con fallback.`);
+        }
+      }
 
     // Log para validar que se están obteniendo los subforms
     this.logger.log(`Procesando miembros para Request ${request.id} - Account ${account.id || account.Account_Name}`);

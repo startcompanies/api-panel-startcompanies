@@ -192,23 +192,69 @@ export class RequestsService {
   ) {}
 
   async findAllByUser(userId: number, role: 'client' | 'partner') {
-    const client = await this.clientRepo.findOne({
-      where: { userId },
-    });
-    
-    const where = role === 'client' ? { clientId: client?.id } : { partnerId: userId };
+    let requests: Request[];
 
-    const requests = await this.requestRepository.find({ 
-      where, 
-      order: { createdAt: 'DESC' },
-      relations: [
-        'client',
-        'partner',
-        'aperturaLlcRequest',
-        'renovacionLlcRequest',
-        'cuentaBancariaRequest',
-      ],
-    });
+    if (role === 'client') {
+      let client = await this.clientRepo.findOne({
+        where: { userId },
+      });
+      this.logger.log(`[findAllByUser] role=client userId=${userId} clientByUserId=${client?.id ?? 'null'}`);
+
+      if (client) {
+        requests = await this.requestRepository.find({
+          where: { clientId: client.id },
+          order: { createdAt: 'DESC' },
+          relations: [
+            'client',
+            'partner',
+            'aperturaLlcRequest',
+            'renovacionLlcRequest',
+            'cuentaBancariaRequest',
+          ],
+        });
+        this.logger.log(`[findAllByUser] requests by clientId=${client.id} count=${requests.length}`);
+      } else {
+        // Respaldo: solicitudes creadas desde wizard pueden tener Client por email sin userId; buscar por email del usuario
+        const user = await this.userRepo.findOne({
+          where: { id: userId },
+        });
+        this.logger.log(`[findAllByUser] fallback user id=${userId} email=${user?.email ?? 'null'}`);
+        if (!user?.email) {
+          requests = [];
+        } else {
+          const qb = this.requestRepository
+            .createQueryBuilder('request')
+            .innerJoinAndSelect('request.client', 'client')
+            .leftJoinAndSelect('request.partner', 'partner')
+            .leftJoinAndSelect('request.aperturaLlcRequest', 'aperturaLlcRequest')
+            .leftJoinAndSelect('request.renovacionLlcRequest', 'renovacionLlcRequest')
+            .leftJoinAndSelect('request.cuentaBancariaRequest', 'cuentaBancariaRequest')
+            .where('client.email = :email', { email: user.email })
+            .orderBy('request.createdAt', 'DESC');
+          requests = await qb.getMany();
+          this.logger.log(`[findAllByUser] fallback by client.email=${user.email} count=${requests.length}`);
+          // Actualizar Client.userId para que la próxima vez se encuentre por userId
+          const clientByEmail = await this.clientRepo.findOne({
+            where: { email: user.email },
+          });
+          if (clientByEmail && clientByEmail.userId == null) {
+            await this.clientRepo.update(clientByEmail.id, { userId });
+          }
+        }
+      }
+    } else {
+      requests = await this.requestRepository.find({
+        where: { partnerId: userId },
+        order: { createdAt: 'DESC' },
+        relations: [
+          'client',
+          'partner',
+          'aperturaLlcRequest',
+          'renovacionLlcRequest',
+          'cuentaBancariaRequest',
+        ],
+      });
+    }
 
     // Cargar Members para cada solicitud de Apertura LLC o Renovación LLC
     for (const request of requests) {
@@ -886,9 +932,13 @@ export class RequestsService {
 
       // Crear la solicitud base
       // Si se procesó el pago, status es 'solicitud-recibida', sino 'pendiente' (borrador)
-      const plan = createRequestDto.type === 'apertura-llc' && createRequestDto.aperturaLlcData
-        ? (createRequestDto.aperturaLlcData as any).plan
-        : undefined;
+      // Plan: aceptar desde createRequestDto.plan o desde aperturaLlcData.plan (apertura-llc)
+      const plan =
+        createRequestDto.type === 'apertura-llc'
+          ? (createRequestDto.plan ??
+              (createRequestDto.aperturaLlcData as any)?.plan ??
+              null)
+          : undefined;
       const request = this.requestRepository.create({
         type: createRequestDto.type,
         status: requestStatus, // Ya determinado arriba: 'pendiente' o 'solicitud-recibida'
