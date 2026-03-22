@@ -12,6 +12,7 @@ import { BlogModule } from './blog/blog.module';
 import { PanelModule } from './panel/panel.module';
 import { WizardModule } from './wizard/wizard.module';
 import { ZohoConfigModule } from './zoho-config/zoho-config.module';
+import { LiliModule } from './lili/lili.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { ZohoConfigModule } from './zoho-config/zoho-config.module';
     PanelModule, // Agrupa: RequestsModule, ProcessStepsModule, DocumentsModule, NotificationsModule, SettingsModule, ReportsModule
     WizardModule, // Módulo para flujo wizard (nuevos usuarios)
     ZohoConfigModule, // Configuración OAuth y SSO de Zoho
+    LiliModule,
   ],
   controllers: [],
   providers: [AppService],
