@@ -58,9 +58,12 @@ export class authService {
     const infoUser = {
       id: user.id,
       userName: user.username,
+      username: user.username,
       email: user.email,
       status: user.status,
       type: user.type,
+      first_name: user.first_name ?? undefined,
+      last_name: user.last_name ?? undefined,
     };
 
     const token = await this.jwtService.signAsync(infoUser);
@@ -212,9 +215,12 @@ export class authService {
       const newPayload = {
         id: user.id,
         userName: user.username,
+        username: user.username,
         email: user.email,
         status: user.status,
         type: user.type,
+        first_name: user.first_name ?? undefined,
+        last_name: user.last_name ?? undefined,
       };
       const token = await this.jwtService.signAsync(newPayload);
 
