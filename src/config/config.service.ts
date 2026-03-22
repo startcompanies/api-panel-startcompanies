@@ -12,7 +12,10 @@ class ConfigService {
     }
 
     if (value === undefined) {
-      throw new Error(`config error - missing env.${key}`);
+      if (throwOnMissing) {
+        throw new Error(`config error - missing env.${key}`);
+      }
+      return '';
     }
     return value;
   }
