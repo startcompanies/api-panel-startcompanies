@@ -1450,11 +1450,18 @@ export class RequestsService {
           cuentaDataRaw.bankService = 'Relay';
         }
         
+        // current_step_number es NOT NULL en BD; el panel a veces no envía currentStepNumber en el DTO raíz
+        const cuentaStepNumber =
+          [cuentaDataRaw.currentStepNumber, cuentaDataRaw.currentSection, createRequestDto.currentStepNumber, currentStep].find(
+            (v) => typeof v === 'number' && !Number.isNaN(v) && v >= 1,
+          ) ?? 1;
+        delete cuentaDataRaw.currentSection;
+
         // Preparar datos para crear, excluyendo llcType si no tiene un valor válido
         const cuentaDataToCreate: any = {
           requestId: savedRequest.id,
-          currentStepNumber: createRequestDto.currentStepNumber,
           ...cuentaDataRaw,
+          currentStepNumber: cuentaStepNumber,
         };
         
         // Solo incluir llcType si tiene un valor válido ('single' o 'multi')
