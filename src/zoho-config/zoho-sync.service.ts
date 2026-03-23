@@ -11,6 +11,13 @@ import { Member } from 'src/panel/requests/entities/member.entity';
 import { User } from 'src/shared/user/entities/user.entity';
 import { Client } from 'src/panel/clients/entities/client.entity';
 import { encodePassword } from 'src/shared/common/utils/bcrypt';
+import {
+  normalizeCountryForZoho,
+  normalizeCountriesArrayForZoho,
+  normalizeUsStateForZoho,
+  ZOHO_LLC_ESTRUCTURA_MULTI,
+  ZOHO_LLC_ESTRUCTURA_SINGLE,
+} from './zoho-location-normalization';
 
 @Injectable()
 export class ZohoSyncService {
@@ -304,12 +311,12 @@ export class ZohoSyncService {
         Account_Name: apertura.llcName || '',
         Nombre_de_la_LLC_Opci_n_2: apertura.llcNameOption2 || '',
         Nombre_de_la_LLC_Opci_n_3: apertura.llcNameOption3 || '',
-        Estado_de_Registro: apertura.incorporationState || '',
+        Estado_de_Registro: normalizeUsStateForZoho(apertura.incorporationState || ''),
         Actividad_Principal_de_la_LLC: apertura.businessDescription || '',
         Estructura_Societaria:
           apertura.llcType === 'single'
-            ? 'LLC de un solo miembro (Single Member LLC)'
-            : 'LLC multi-miembro (Multi-Member LLC)',
+            ? ZOHO_LLC_ESTRUCTURA_SINGLE
+            : ZOHO_LLC_ESTRUCTURA_MULTI,
         LinkedIn: apertura.linkedin || '',
         Website: apertura.projectOrCompanyUrl || '', // Usar projectOrCompanyUrl según CSV
         P_gina_web_de_la_LLC: apertura.projectOrCompanyUrl || '',
@@ -324,29 +331,22 @@ export class ZohoSyncService {
         ...accountData,
         // Campos MANTENER según data.md
         Account_Name: renovacion.llcName || '',
-        Estado_de_Registro: renovacion.state || '',
+        Estado_de_Registro: normalizeUsStateForZoho(renovacion.state || ''),
         Actividad_Principal_de_la_LLC: renovacion.mainActivity || '',
         N_mero_de_EIN: renovacion.einNumber || '',
         Estructura_Societaria:
           renovacion.llcType === 'single'
-            ? 'LLC de un solo miembro (Single Member LLC)'
-            : 'LLC multi-miembro (Multi-Member LLC)',
+            ? ZOHO_LLC_ESTRUCTURA_SINGLE
+            : ZOHO_LLC_ESTRUCTURA_MULTI,
         // Campos AGREGAR según data.md - usando Pick List (Sí/No)
         Tu_empresa_posee_o_renta_una_propiedad_en_EE_UU: this.mapBooleanToPickList(renovacion.hasPropertyInUSA),
         Almacena_productos_en_un_dep_sito_en_EE_UU: this.mapBooleanToPickList(renovacion.almacenaProductosDepositoUSA),
         Tu_empresa_contrata_servicios_en_EE_UU: this.mapBooleanToPickList(renovacion.contrataServiciosUSA),
         Tu_LLC_tiene_cuentas_bancarias_a_su_nombre: this.mapBooleanToPickList(renovacion.tieneCuentasBancarias),
         Fecha_de_Constituci_n: this.formatDate(renovacion.llcCreationDate),
-        Pa_ses_donde_la_LLC_realiza_negocios: (() => {
-          const value: any = renovacion.countriesWhereLLCDoesBusiness;
-          if (Array.isArray(value)) {
-            return value;
-          }
-          if (value && typeof value === 'string' && value.trim()) {
-            return value.split(',').map((c: string) => c.trim()).filter((c: string) => c.length > 0);
-          }
-          return [];
-        })(),
+        Pa_ses_donde_la_LLC_realiza_negocios: normalizeCountriesArrayForZoho(
+          renovacion.countriesWhereLLCDoesBusiness,
+        ),
         Posee_la_LLC_inversiones_o_activos_en_EE_UU: this.mapBooleanToPickList(renovacion.hasFinancialInvestmentsInUSA),
         La_LLC_declar_impuestos_anteriormente: this.mapBooleanToPickList(renovacion.hasFiledTaxesBefore),
         La_LLC_se_constituy_con_Start_Companies: this.mapBooleanToPickList(renovacion.wasConstitutedWithStartCompanies),
@@ -371,9 +371,9 @@ export class ZohoSyncService {
         street: cuenta.registeredAgentStreet || '',
         unit: cuenta.registeredAgentUnit || '',
         city: cuenta.registeredAgentCity || '',
-        state: cuenta.registeredAgentState || '',
+        state: normalizeUsStateForZoho(cuenta.registeredAgentState || ''),
         postalCode: cuenta.registeredAgentZipCode || '',
-        country: cuenta.registeredAgentCountry || '',
+        country: normalizeCountryForZoho(cuenta.registeredAgentCountry || ''),
       };
       
       accountData = {
@@ -388,10 +388,10 @@ export class ZohoSyncService {
         N_mero_de_EIN: cuenta.ein || '',
         Estructura_Societaria:
           cuenta.llcType === 'single'
-            ? 'LLC de un solo miembro (Single Member LLC)'
+            ? ZOHO_LLC_ESTRUCTURA_SINGLE
             : cuenta.llcType === 'multi'
-            ? 'LLC multi-miembro (Multi-Member LLC)'
-            : 'LLC de un solo miembro (Single Member LLC)',
+            ? ZOHO_LLC_ESTRUCTURA_MULTI
+            : ZOHO_LLC_ESTRUCTURA_SINGLE,
         // Dirección Comercial (Registered Agent) - desde companyAddress (JSONB)
         Direcci_n_comercial_Calle_y_numero: companyAddr.street || '',
         Direcci_n_comercial_Suite: companyAddr.unit || '',
@@ -399,26 +399,19 @@ export class ZohoSyncService {
         Direcci_n_comercial_Estado: companyAddr.state || '',
         Direcci_n_comercial_Postal: companyAddr.postalCode || '',
         Direcci_n_postal_Pais: companyAddr.country || '',
-        Estado_de_constituci_n: cuenta.incorporationState || '',
+        Estado_de_constituci_n: normalizeUsStateForZoho(cuenta.incorporationState || ''),
         Mes_y_A_o: cuenta.incorporationMonthYear || '',
-        Pa_ses_donde_la_LLC_realiza_negocios: (() => {
-          const value: any = cuenta.countriesWhereBusiness;
-          if (Array.isArray(value)) {
-            return value;
-          }
-          if (value && typeof value === 'string' && value.trim()) {
-            return value.split(',').map((c: string) => c.trim()).filter((c: string) => c.length > 0);
-          }
-          return [];
-        })(),
+        Pa_ses_donde_la_LLC_realiza_negocios: normalizeCountriesArrayForZoho(
+          cuenta.countriesWhereBusiness,
+        ),
         Banco: banco,
         // Dirección Personal del Propietario (desde ownerPersonalAddress JSONB)
         Calle_y_n_mero: cuenta.ownerPersonalAddress?.street || '',
         Suite_Apto: cuenta.ownerPersonalAddress?.unit || '',
         Ciudad: cuenta.ownerPersonalAddress?.city || '',
-        Estado_Provincia: cuenta.ownerPersonalAddress?.state || '',
+        Estado_Provincia: normalizeUsStateForZoho(cuenta.ownerPersonalAddress?.state || ''),
         Postal_Zip_Code: cuenta.ownerPersonalAddress?.postalCode || '',
-        Pais: cuenta.ownerPersonalAddress?.country || '',
+        Pais: normalizeCountryForZoho(cuenta.ownerPersonalAddress?.country || ''),
       };
     }
 
@@ -444,11 +437,13 @@ export class ZohoSyncService {
       },
       Mailing_Street: member.memberAddress?.street || '',
       Mailing_City: member.memberAddress?.city || '',
-      Mailing_State: member.memberAddress?.stateRegion || '',
+      Mailing_State: normalizeUsStateForZoho(member.memberAddress?.stateRegion || ''),
       Mailing_Zip: member.memberAddress?.postalCode || '',
-      Mailing_Country: member.memberAddress?.country || '',
-      // Campos adicionales si existen
-      ...(member.nationality && { Mailing_Country: member.nationality }),
+      Mailing_Country: normalizeCountryForZoho(
+        member.nationality?.trim()
+          ? member.nationality
+          : member.memberAddress?.country || '',
+      ),
     };
   }
 
@@ -536,16 +531,16 @@ export class ZohoSyncService {
       const apertura = request.aperturaLlcRequest;
       dealData.Estructura_Societaria =
         apertura.llcType === 'single'
-          ? 'LLC de un solo miembro (Single Member LLC)'
-          : 'LLC multi-miembro (Multi-Member LLC)';
-      dealData.Estado_de_Registro = apertura.incorporationState || '';
+          ? ZOHO_LLC_ESTRUCTURA_SINGLE
+          : ZOHO_LLC_ESTRUCTURA_MULTI;
+      dealData.Estado_de_Registro = normalizeUsStateForZoho(apertura.incorporationState || '');
     } else if (request.type === 'renovacion-llc' && request.renovacionLlcRequest) {
       const renovacion = request.renovacionLlcRequest;
       dealData.Estructura_Societaria =
         renovacion.llcType === 'single'
-          ? 'LLC de un solo miembro (Single Member LLC)'
-          : 'LLC multi-miembro (Multi-Member LLC)';
-      dealData.Estado_de_Registro = renovacion.state || '';
+          ? ZOHO_LLC_ESTRUCTURA_SINGLE
+          : ZOHO_LLC_ESTRUCTURA_MULTI;
+      dealData.Estado_de_Registro = normalizeUsStateForZoho(renovacion.state || '');
     } else if (request.type === 'cuenta-bancaria' && request.cuentaBancariaRequest) {
       const cuenta = request.cuentaBancariaRequest;
       dealData.Tiene_cuenta_bancaria = cuenta.bankService ? 'Sí' : 'No';
@@ -622,20 +617,22 @@ export class ZohoSyncService {
       Nombres_del_propietario: member.firstName,
       Apellidos_del_propietario: member.lastName,
       Nro_de_pasaporte_Propietario: member.passportNumber,
-      Nacionalidad_Propietario: member.nationality,
+      Nacionalidad_Propietario: normalizeCountryForZoho(member.nationality || ''),
       Fecha_Nacimiento_Propietario: this.formatDate(member.dateOfBirth),
       Correo_electr_nico_Propietario: member.email,
       Tel_fono_Contacto_Propietario: this.normalizePhoneNumber(member.phoneNumber),
       Calle_y_n_mero_exterior_altura: member.memberAddress?.street || '',
       N_mero_interior_departamento_P: member.memberAddress?.unit || '',
       Ciudad_Propietario: member.memberAddress?.city || '',
-      Estado_Regi_n_Provincia_Prop: member.memberAddress?.stateRegion || '',
+      Estado_Regi_n_Provincia_Prop: normalizeUsStateForZoho(member.memberAddress?.stateRegion || ''),
       C_digo_postal_Propietario: member.memberAddress?.postalCode || '',
-      Pa_s_de_Residencia_Propietario: member.memberAddress?.country || '',
+      Pa_s_de_Residencia_Propietario: normalizeCountryForZoho(member.memberAddress?.country || ''),
       Porcentaje_Participaci_n_Princ: member.percentageOfParticipation || 100,
       ...(member.ssnOrItin && { N_mero_de_SSN_ITIN: member.ssnOrItin }),
       ...(member.nationalTaxId && { ID_Fiscal_Nacional_CUIT: member.nationalTaxId }),
-      ...(member.taxFilingCountry && { Pa_s_donde_paga_impuestos: member.taxFilingCountry }),
+      ...(member.taxFilingCountry && {
+        Pa_s_donde_paga_impuestos: normalizeCountryForZoho(member.taxFilingCountry),
+      }),
       ...(member.ownerContributions && {
         Contribuciones_de_capital_realizadas_en_2024_USD: member.ownerContributions,
       }),
@@ -668,20 +665,22 @@ export class ZohoSyncService {
       Nombres_del_Socio: member.firstName,
       Apellidos_del_Socio: member.lastName,
       N_mero_de_pasaporte_Socio: member.passportNumber,
-      Nacionalidad_Socio: member.nationality,
+      Nacionalidad_Socio: normalizeCountryForZoho(member.nationality || ''),
       Fecha_de_Nacimiento_Socio: this.formatDate(member.dateOfBirth),
       Correo_electr_nico_Socio: member.email,
       Tel_fono_Socio: this.normalizePhoneNumber(member.phoneNumber),
       Calle_y_n_mero_exterior_altura: member.memberAddress?.street || '',
       N_mero_interior_departamento_S: member.memberAddress?.unit || '',
       Ciudad_Propietario: member.memberAddress?.city || '',
-      Estado_Regi_n_Provincia_Socio: member.memberAddress?.stateRegion || '',
+      Estado_Regi_n_Provincia_Socio: normalizeUsStateForZoho(member.memberAddress?.stateRegion || ''),
       C_digo_postal_Socio: member.memberAddress?.postalCode || '',
-      Pa_s_de_Residencia_Socio: member.memberAddress?.country || '',
+      Pa_s_de_Residencia_Socio: normalizeCountryForZoho(member.memberAddress?.country || ''),
       Porcentaje_Participaci_n_Socio: member.percentageOfParticipation || 0,
       ...(member.ssnOrItin && { N_mero_de_SSN_ITIN: member.ssnOrItin }),
       ...(member.nationalTaxId && { ID_Fiscal_Nacional_CUIT: member.nationalTaxId }),
-      ...(member.taxFilingCountry && { Pa_s_donde_paga_impuestos: member.taxFilingCountry }),
+      ...(member.taxFilingCountry && {
+        Pa_s_donde_paga_impuestos: normalizeCountryForZoho(member.taxFilingCountry),
+      }),
       ...(member.ownerContributions && {
         Contribuciones_de_capital_realizadas_en_2024: member.ownerContributions,
       }),
@@ -723,15 +722,15 @@ export class ZohoSyncService {
       Tel_fono: this.normalizePhoneNumber(member.phoneNumber) || '',
       Fecha_de_nacimiento: this.formatDate(member.dateOfBirth),
       N_mero_de_pasaporte: member.passportNumber || '',
-      Nacionalidad: member.nationality || '',
-      Ciudadania: member.nationality || '',
+      Nacionalidad: normalizeCountryForZoho(member.nationality || ''),
+      Ciudadania: normalizeCountryForZoho(member.nationality || ''),
       Ciudadano_EEUU: this.parseBoolean(member.isUSCitizen),
       Mas_de_31_dias_en_EEUU: this.parseBoolean(member.spentMoreThan31DaysInUS),
       Posee_Activos_en_EEUU: this.parseBoolean(member.hasUSFinancialInvestments),
       SSN_ITIN: member.ssnOrItin || '',
       ID_Fiscal_Nacional: member.nationalTaxId || '',
-      Pais_Declaracion_Impuestos: member.taxFilingCountry || '',
-      Pa_s_bajo_cuyas_leyes_el_propietario_presenta_impu: member.taxFilingCountry || '',
+      Pais_Declaracion_Impuestos: normalizeCountryForZoho(member.taxFilingCountry || ''),
+      Pa_s_bajo_cuyas_leyes_el_propietario_presenta_impu: normalizeCountryForZoho(member.taxFilingCountry || ''),
       Aportes_de_Capital: member.ownerContributions ?? null,
       Prestamos_a_LLC: member.ownerLoansToLLC ?? null,
       Prestamos_Reembolsados: member.loansReimbursedByLLC ?? null,
@@ -741,9 +740,9 @@ export class ZohoSyncService {
       Calle_y_n_mero_exterior: member.memberAddress?.street || '',
       Apartamento_Suite: member.memberAddress?.unit || '',
       Ciudad: member.memberAddress?.city || '',
-      Estado: member.memberAddress?.stateRegion || '',
+      Estado: normalizeUsStateForZoho(member.memberAddress?.stateRegion || ''),
       Codigo_postal: member.memberAddress?.postalCode || '',
-      Pa_s: member.memberAddress?.country || '',
+      Pa_s: normalizeCountryForZoho(member.memberAddress?.country || ''),
       Es_propietario_Primario: isPrimary,
       Es_propietario_Secundario: !isPrimary,
       Source_Subform: isPrimary ? 'Contacto_Principal_LLC' : 'Socios_LLC',
@@ -1974,7 +1973,12 @@ export class ZohoSyncService {
     if (estructura.includes('single') || estructura.includes('solo miembro')) {
       return 'single';
     }
-    if (estructura.includes('multi') || estructura.includes('multi-miembro')) {
+    if (
+      estructura.includes('multi') ||
+      estructura.includes('multi-miembro') ||
+      estructura.includes('múltiples') ||
+      estructura.includes('múltiples miembros')
+    ) {
       return 'multi';
     }
     return 'single'; // Default
