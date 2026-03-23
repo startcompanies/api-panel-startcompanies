@@ -20,6 +20,7 @@ Este proyecto proporciona una API REST completa para gestionar:
 - **AWS SDK** - Integración con S3
 - **Stripe** - Procesamiento de pagos
 - **Resend** - Servicio de envío de emails
+- **Socket.IO** - Notificaciones en tiempo real (namespace `/notifications`)
 
 ## Estructura del Proyecto
 
@@ -377,6 +378,23 @@ El servidor está configurado para aceptar peticiones desde los siguientes oríg
 - `https://staging.startcompanies.io` (Staging)
 
 Dominios adicionales de Zoho pueden configurarse mediante la variable `ZOHO_CRM_DOMAINS`.
+
+### Notificaciones en tiempo real (Socket.IO)
+
+El panel usa **Socket.IO** con namespace `/notifications` y path por defecto `/socket.io`. El handshake envía la cookie HttpOnly `access_token` (misma política CORS y credenciales que REST).
+
+Tras un reverse proxy (nginx, ALB, etc.), debe permitirse el **upgrade WebSocket** y el long-polling en `/socket.io/`. Ejemplo nginx:
+
+```nginx
+location /socket.io/ {
+  proxy_pass http://127.0.0.1:3000;
+  proxy_http_version 1.1;
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection "upgrade";
+  proxy_set_header Host $host;
+  proxy_set_header Cookie $http_cookie;
+}
+```
 
 ## Estructura de Entidades Principales
 

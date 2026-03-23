@@ -14,6 +14,8 @@ import {
 import { NotificationsService } from './notifications.service';
 import { CreateNotificationDto } from './dtos/create-notification.dto';
 import { AuthGuard } from '../../shared/auth/auth.guard';
+import { RolesGuard } from '../../shared/auth/roles.guard';
+import { Roles } from '../../shared/auth/roles.decorator';
 import {
   ApiTags,
   ApiOperation,
@@ -54,8 +56,10 @@ export class NotificationsController {
     return this.notificationsService.findUnreadCount(userId);
   }
 
-  // Crear notificación (admin o sistema)
+  /** Solo administradores; el flujo automático usa NotificationsService en servidor. */
   @Post()
+  @UseGuards(RolesGuard)
+  @Roles('admin')
   create(@Body() createNotificationDto: CreateNotificationDto) {
     return this.notificationsService.create(createNotificationDto);
   }

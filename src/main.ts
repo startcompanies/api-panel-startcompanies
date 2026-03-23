@@ -6,9 +6,12 @@ import * as express from 'express';
 import cookieParser from 'cookie-parser';
 
 import { LoggingInterceptor } from './shared/common/interceptors/logging.interceptor';
+import { SocketIoAdapter } from './socket-io.adapter';
+import { createCorsOriginCallback } from './config/cors-origins';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  app.useWebSocketAdapter(new SocketIoAdapter(app));
   
   // Configurar cookie parser para SSO
   app.use(cookieParser());
@@ -21,30 +24,8 @@ async function bootstrap() {
   app.useGlobalInterceptors(new LoggingInterceptor());
 
 
-  // Habilitar CORS para permitir peticiones desde dominios especificos
-  const allowedOrigins = [
-    'http://localhost:4200',
-    'http://127.0.0.1:4200',
-    'https://startcompanies.us',
-    'https://admin-blog.startcompanies.us',
-    'https://staging.startcompanies.io',
-    'https://startcompanies.io',
-  ];
-
-  // Agregar dominios de Zoho si están configurados
-  if (process.env.ZOHO_CRM_DOMAINS) {
-    const zohoDomains = process.env.ZOHO_CRM_DOMAINS.split(',').map(d => d.trim());
-    allowedOrigins.push(...zohoDomains);
-  }
-
   app.enableCors({
-    origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
-      }
-    },
+    origin: createCorsOriginCallback(),
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
     exposedHeaders: ['Content-Type', 'Authorization'],

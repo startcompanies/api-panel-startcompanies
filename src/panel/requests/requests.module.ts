@@ -18,6 +18,7 @@ import { ZohoConfigModule } from '../../zoho-config/zoho-config.module';
 import { PaymentsModule } from '../../shared/payments/payments.module';
 import { UserModule } from '../../shared/user/user.module';
 import { UploadFileModule } from '../../shared/upload-file/upload-file.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { UploadFileModule } from '../../shared/upload-file/upload-file.module';
     PaymentsModule,
     UserModule,
     UploadFileModule,
+    NotificationsModule,
   ],
   controllers: [
     RequestsController,

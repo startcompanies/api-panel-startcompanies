@@ -33,6 +33,7 @@ import { awsConfigService } from '../../config/aws.config.service';
 // ZohoCrmService ya no se usa en findOne - solo se consulta la BD local
 // import { ZohoCrmService } from '../../zoho-config/zoho-crm.service';
 import { ZohoSyncService } from '../../zoho-config/zoho-sync.service';
+import { RequestSubmittedNotificationsService } from '../notifications/request-submitted-notifications.service';
 export type { RequestType } from './types/request-type';
 
 @Injectable()
@@ -305,6 +306,7 @@ export class RequestsService {
     // ZohoCrmService ya no se usa - solo consultamos BD local
     // private readonly zohoCrmService: ZohoCrmService,
     private readonly zohoSyncService: ZohoSyncService,
+    private readonly requestSubmittedNotifications: RequestSubmittedNotificationsService,
   ) {}
 
   async findAllByUser(userId: number, role: 'client' | 'partner') {
@@ -1532,6 +1534,16 @@ export class RequestsService {
 
       await queryRunner.commitTransaction();
 
+      if (savedRequest.status === 'solicitud-recibida') {
+        const clientRow = await this.clientRepo.findOne({
+          where: { id: savedRequest.clientId },
+        });
+        await this.requestSubmittedNotifications.notifyAfterSolicitudRecibida(
+          savedRequest,
+          clientRow,
+        );
+      }
+
       // Mover archivos de request/{servicio}/ a request/{servicio}/{uuid}/ si existen
       // Esto organiza los archivos subidos antes de crear el request
       if (savedRequest.uuid && createRequestDto.type) {
@@ -1615,6 +1627,8 @@ export class RequestsService {
       if (!request) {
         throw new NotFoundException(`Solicitud con ID ${id} no encontrada`);
       }
+
+      const statusBeforeUpdate = request.status;
 
       // Validación dinámica según tipo de servicio y sección (si se proporcionan datos)
       if (updateRequestDto.currentStepNumber !== undefined) {
@@ -2527,6 +2541,19 @@ export class RequestsService {
       }
 
       await queryRunner.commitTransaction();
+
+      if (
+        request.status === 'solicitud-recibida' &&
+        statusBeforeUpdate !== 'solicitud-recibida'
+      ) {
+        const clientRow = await this.clientRepo.findOne({
+          where: { id: request.clientId },
+        });
+        await this.requestSubmittedNotifications.notifyAfterSolicitudRecibida(
+          request,
+          clientRow,
+        );
+      }
 
       // Mover archivos de request/{servicio}/ a request/{servicio}/{uuid}/ si existen y actualizar URLs
       // Esto organiza los archivos subidos antes de crear el request o cuando se actualiza un request existente
