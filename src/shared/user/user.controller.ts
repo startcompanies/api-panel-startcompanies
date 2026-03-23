@@ -1,13 +1,15 @@
 import {
-  Controller,
-  Post,
   Body,
+  Controller,
   Get,
-  UseGuards,
-  Patch,
   Param,
-  Request,
+  Patch,
+  Post,
   Query,
+  Request,
+  UseGuards,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import { UserService } from './user.service';
 import { UserDto } from './dtos/user.dto';
@@ -36,6 +38,13 @@ export class UserController {
   @ApiResponse({ status: 201, description: 'Usuario creado exitosamente' })
   @ApiResponse({ status: 400, description: 'Datos inválidos' })
   @ApiResponse({ status: 403, description: 'Acceso denegado (solo admin)' })
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
   createUser(@Body() createUserDto: CreateUserDto) {
     return this.userService.createUserByAdmin(createUserDto);
   }

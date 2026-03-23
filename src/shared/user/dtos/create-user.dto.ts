@@ -1,5 +1,17 @@
-import { IsEmail, IsIn, IsNotEmpty, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+  MinLength,
+  ValidateIf,
+} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+
+const E164_PHONE_REGEX = /^\+[1-9]\d{6,14}$/;
 
 export class CreateUserDto {
   @ApiProperty({ example: 'testuser', description: 'Nombre del usuario' })
@@ -20,12 +32,16 @@ export class CreateUserDto {
 
   @ApiProperty({
     example: 'Contraseña123',
-    description: 'La contraseña del usuario',
+    description:
+      'Contraseña (opcional en alta admin: si viene vacía se genera una temporal)',
+    required: false,
   })
+  @ValidateIf(
+    (o) => o.password != null && String(o.password).trim() !== '',
+  )
   @IsString()
-  @IsNotEmpty({ message: 'La contraseña no puede estar vacia' })
   @MinLength(8, { message: 'La contraseña debe tener al menos 8 caracteres' })
-  password: string;
+  password?: string;
 
   @ApiProperty({ example: 'Jhon', description: 'Nombre(s) del usuario' })
   @IsString()
@@ -49,9 +65,18 @@ export class CreateUserDto {
   })
   type?: 'user' | 'client' | 'partner' | 'admin' | 'editor';
 
-  @ApiProperty({ example: '+1234567890', description: 'Teléfono del usuario', required: false })
-  @IsOptional()
+  @ApiProperty({
+    example: '+521234567890',
+    description: 'Obligatorio si type es partner; formato E.164',
+    required: false,
+  })
+  @ValidateIf((o) => o.type === 'partner')
+  @IsNotEmpty({ message: 'El teléfono es obligatorio para partners' })
   @IsString()
+  @Matches(E164_PHONE_REGEX, {
+    message:
+      'El teléfono debe estar en formato internacional (E.164), por ejemplo +521234567890',
+  })
   phone?: string;
 
   @ApiProperty({ example: 'Mi Empresa S.A.', description: 'Empresa del usuario', required: false })

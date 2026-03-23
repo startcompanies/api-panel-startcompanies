@@ -282,6 +282,19 @@ export class ZohoSyncService {
   }
 
   /**
+   * Usuario partner asociado a la solicitud (relación cargada o consulta por partnerId).
+   */
+  private async resolvePartnerUser(request: Request): Promise<User | null> {
+    if (request.partner) {
+      return request.partner;
+    }
+    if (request.partnerId != null) {
+      return this.userRepo.findOne({ where: { id: request.partnerId } });
+    }
+    return null;
+  }
+
+  /**
    * Mapea una Request a un Account de Zoho
    */
   private async mapRequestToAccount(
@@ -413,6 +426,26 @@ export class ZohoSyncService {
         Postal_Zip_Code: cuenta.ownerPersonalAddress?.postalCode || '',
         Pais: normalizeCountryForZoho(cuenta.ownerPersonalAddress?.country || ''),
       };
+    }
+
+    if (empresa === 'Partner') {
+      const partner = await this.resolvePartnerUser(request);
+      if (partner) {
+        const email = (partner.email || '').trim();
+        if (email) {
+          accountData.Partner_Email = email;
+        } else {
+          this.logger.warn(
+            `Partner user ${partner.id} sin email; no se envía Partner_Email a Zoho para request ${request.id}`,
+          );
+        }
+        accountData.Partner_Phone =
+          this.normalizePhoneNumber(partner.phone) || '';
+      } else {
+        this.logger.warn(
+          `Request ${request.id} tiene Empresa=Partner pero no se resolvió el usuario partner (partnerId=${request.partnerId ?? 'n/a'})`,
+        );
+      }
     }
 
     return accountData;
