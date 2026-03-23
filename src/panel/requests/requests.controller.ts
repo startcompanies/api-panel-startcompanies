@@ -74,13 +74,13 @@ export class RequestsController {
     return this.requestsService.findAllByUser(user.id, effectiveRole);
   }
 
-  // Listar todas las solicitudes con filtros (solo admin)
+  // Listar todas las solicitudes con filtros (admin y staff user)
   @Get()
   @UseGuards(RolesGuard)
-  @Roles('admin')
+  @Roles('admin', 'user')
   @ApiOperation({
     summary: 'Listar todas las solicitudes (Admin)',
-    description: 'Obtiene todas las solicitudes con filtros opcionales. Solo disponible para administradores.',
+    description: 'Obtiene todas las solicitudes con filtros opcionales. Administradores y usuarios operativos.',
   })
   @ApiQuery({ name: 'status', required: false, description: 'Filtrar por estado' })
   @ApiQuery({ name: 'type', required: false, description: 'Filtrar por tipo de solicitud' })

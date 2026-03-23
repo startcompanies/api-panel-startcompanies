@@ -54,6 +54,46 @@ export class RequestsService {
     return date;
   }
 
+  /**
+   * Postgres rechaza '' en columnas numeric/decimal. El front puede enviar strings vacíos en pasos incompletos.
+   */
+  private sanitizeRenovacionLlcNumericFields(obj: Record<string, unknown>): void {
+    const numericFields = [
+      'llcOpeningCost',
+      'paidToFamilyMembers',
+      'paidToLocalCompanies',
+      'paidForLLCFormation',
+      'paidForLLCDissolution',
+      'bankAccountBalanceEndOfYear',
+      'totalRevenue',
+    ];
+    for (const key of numericFields) {
+      if (!(key in obj)) continue;
+      const v = obj[key];
+      if (v === null || v === undefined) {
+        delete obj[key];
+        continue;
+      }
+      if (typeof v === 'string') {
+        const t = v.trim();
+        if (t === '') {
+          delete obj[key];
+          continue;
+        }
+        const n = parseFloat(t.replace(/,/g, ''));
+        if (Number.isFinite(n)) {
+          obj[key] = n;
+        } else {
+          delete obj[key];
+        }
+        continue;
+      }
+      if (typeof v === 'number' && !Number.isFinite(v)) {
+        delete obj[key];
+      }
+    }
+  }
+
   /** Misma normalización que UploadFileService para servicio en rutas S3 */
   private normalizeServicioForUpload(servicio: string): string {
     return servicio
@@ -1233,7 +1273,9 @@ export class RequestsService {
           renovacionDataToCreate.totalRevenue = renovacionDataToCreate.totalRevenue2025;
           delete renovacionDataToCreate.totalRevenue2025;
         }
-        
+
+        this.sanitizeRenovacionLlcNumericFields(renovacionDataToCreate);
+
         const renovacionData = this.renovacionRepo.create(renovacionDataToCreate);
         await queryRunner.manager.save(RenovacionLlcRequest, renovacionData);
 
@@ -1989,11 +2031,13 @@ export class RequestsService {
           delete dataToAssign.wantsInvoice;
           delete dataToAssign.payment_proof_url;
           delete dataToAssign.paymentProofUrl;
-          
+
+          this.sanitizeRenovacionLlcNumericFields(dataToAssign);
+
           Object.keys(dataToAssign).forEach(key => {
             let value = dataToAssign[key];
             
-            // Convertir strings vacíos a null para campos numéricos
+            // Convertir strings vacíos a null para campos numéricos (residuo tras sanitize)
             if (numericFields.includes(key) && value === '') {
               value = null;
             }

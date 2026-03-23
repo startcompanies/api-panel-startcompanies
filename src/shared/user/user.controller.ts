@@ -26,11 +26,11 @@ export class UserController {
 
   @Post()
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles('admin')
+  @Roles('admin', 'user')
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
-    summary: 'Crear un nuevo usuario (solo admin)',
-    description: 'Permite a un administrador crear usuarios con cualquier tipo y campos adicionales',
+    summary: 'Crear un nuevo usuario (admin o staff user)',
+    description: 'Permite crear usuarios con cualquier tipo y campos adicionales',
   })
   @ApiBody({ type: CreateUserDto })
   @ApiResponse({ status: 201, description: 'Usuario creado exitosamente' })
@@ -65,10 +65,10 @@ export class UserController {
 
   @Get('/partners')
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles('admin')
+  @Roles('admin', 'user')
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
-    summary: 'Listar todos los partners (solo admin)',
+    summary: 'Listar todos los partners (admin y staff user)',
   })
   getPartners() {
     return this.userService.getPartners();
@@ -76,7 +76,7 @@ export class UserController {
 
   @Get('/partners/:id/stats')
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles('admin')
+  @Roles('admin', 'user')
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
     summary: 'Obtener estadísticas de un partner (conteo de clientes y solicitudes)',
@@ -153,10 +153,10 @@ export class UserController {
 
   @Patch('/:id/status')
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles('admin')
+  @Roles('admin', 'user')
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
-    summary: 'Activar/Desactivar usuario (solo admin)',
+    summary: 'Activar/Desactivar usuario (admin o staff user)',
   })
   toggleUserStatus(@Param('id') id: string) {
     return this.userService.toggleUserStatus(id);
