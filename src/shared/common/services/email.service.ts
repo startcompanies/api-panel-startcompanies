@@ -318,6 +318,121 @@ export class EmailService {
 
     this.logger.log(`Email de solicitud enviada enviado a ${email} (request #${requestId})`);
   }
+
+  private requestTypeToLabel(requestType: string): string {
+    const map: Record<string, string> = {
+      'apertura-llc': 'Apertura LLC',
+      'renovacion-llc': 'Renovación LLC',
+      'cuenta-bancaria': 'Cuenta bancaria',
+    };
+    return map[requestType] ?? requestType;
+  }
+
+  /**
+   * Confirmación al usuario del panel que envía la solicitud (partner o cliente).
+   */
+  async sendPanelRequestSubmittedToActor(params: {
+    email: string;
+    displayName: string;
+    requestId: number;
+    requestType: string;
+    actorType: 'partner' | 'client';
+  }): Promise<void> {
+    const { email, displayName, requestId, requestType, actorType } = params;
+    if (!this.resend) {
+      this.logger.warn(`Email actor panel no enviado a ${email} (Resend no configurado)`);
+      return;
+    }
+
+    const frontendUrl =
+      this.configService.get<string>('FRONTEND_URL') || 'http://localhost:4200';
+    const detailUrl = `${frontendUrl}/panel/my-requests/${requestId}`;
+    const typeLabel = this.requestTypeToLabel(requestType);
+
+    const roleLine =
+      actorType === 'partner'
+        ? 'Como <strong>partner</strong>, registramos tu envío y el equipo lo revisará.'
+        : 'Tu solicitud quedó registrada y el equipo la revisará.';
+
+    const bodyHtml = `
+      <p>Hola ${displayName || email},</p>
+      <p>${roleLine}</p>
+      <p><strong>Solicitud #${requestId}</strong> — ${typeLabel}</p>
+      <p>Puedes seguir el estado desde tu panel.</p>
+    `;
+
+    try {
+      await this.resend.emails.send({
+        from:
+          this.configService.get<string>('RESEND_FROM_EMAIL') ||
+          'Start Companies <noreply@startcompanies.us>',
+        to: email,
+        subject: `Solicitud enviada — #${requestId} (${typeLabel})`,
+        html: this.getEmailHtml({
+          title: 'Solicitud registrada',
+          bodyHtml,
+          button: { text: 'Ver mi solicitud', url: detailUrl },
+        }),
+      });
+      this.logger.log(`Email confirmación actor panel enviado a ${email} (request #${requestId})`);
+    } catch (error) {
+      this.logger.error(`Error al enviar email actor panel a ${email}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Aviso a un usuario interno (admin / user) por nueva solicitud (panel o wizard).
+   */
+  async sendNewRequestAlertToStaff(params: {
+    toEmail: string;
+    recipientName?: string;
+    requestId: number;
+    requestType: string;
+    channel: 'panel' | 'wizard';
+    originLabel: string;
+  }): Promise<void> {
+    const { toEmail, recipientName, requestId, requestType, channel, originLabel } = params;
+    if (!this.resend) {
+      this.logger.warn(`Email staff no enviado a ${toEmail} (Resend no configurado)`);
+      return;
+    }
+
+    const frontendUrl =
+      this.configService.get<string>('FRONTEND_URL') || 'http://localhost:4200';
+    const adminUrl = `${frontendUrl}/panel/requests/${requestId}`;
+    const typeLabel = this.requestTypeToLabel(requestType);
+    const channelLabel = channel === 'wizard' ? 'Wizard' : 'Panel';
+
+    const greet = recipientName ? `Hola ${recipientName},` : 'Hola,';
+    const bodyHtml = `
+      <p>${greet}</p>
+      <p>Hay una <strong>nueva solicitud</strong> pendiente de revisión.</p>
+      <p><strong>ID:</strong> #${requestId}<br/>
+      <strong>Servicio:</strong> ${typeLabel}<br/>
+      <strong>Origen:</strong> ${originLabel}<br/>
+      <strong>Canal:</strong> ${channelLabel}</p>
+    `;
+
+    try {
+      await this.resend.emails.send({
+        from:
+          this.configService.get<string>('RESEND_FROM_EMAIL') ||
+          'Start Companies <noreply@startcompanies.us>',
+        to: toEmail,
+        subject: `[Nueva solicitud] #${requestId} — ${typeLabel} (${originLabel})`,
+        html: this.getEmailHtml({
+          title: 'Nueva solicitud',
+          bodyHtml,
+          button: { text: 'Abrir en el panel', url: adminUrl },
+        }),
+      });
+      this.logger.log(`Email aviso staff enviado a ${toEmail} (request #${requestId})`);
+    } catch (error) {
+      this.logger.error(`Error al enviar email staff a ${toEmail}:`, error);
+      throw error;
+    }
+  }
 }
 
 

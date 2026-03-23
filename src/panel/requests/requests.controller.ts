@@ -18,6 +18,7 @@ import { CreateRequestDto } from './dtos/create-request.dto';
 import { UpdateRequestDto } from './dtos/update-request.dto';
 import { ApproveRequestDto } from './dtos/approve-request.dto';
 import { RejectRequestDto } from './dtos/reject-request.dto';
+import { PanelRequestActorUser } from '../notifications/request-submitted-notifications.service';
 import { AuthGuard } from '../../shared/auth/auth.guard';
 import { RolesGuard } from '../../shared/auth/roles.guard';
 import { Roles } from '../../shared/auth/roles.decorator';
@@ -40,6 +41,18 @@ export class RequestsController {
   
   constructor(private readonly requestsService: RequestsService) {}
 
+  private toActorUser(req: any): PanelRequestActorUser | undefined {
+    const u = req?.user;
+    if (!u?.id || !u?.email) return undefined;
+    return {
+      id: u.id,
+      email: u.email,
+      type: u.type,
+      first_name: u.first_name,
+      username: u.username,
+    };
+  }
+
   // Crear nueva solicitud
   @Post()
   @ApiOperation({
@@ -55,7 +68,7 @@ export class RequestsController {
     if (req.user?.type === 'partner' && !createRequestDto.partnerId) {
       createRequestDto.partnerId = req.user.id;
     }
-    return this.requestsService.create(createRequestDto);
+    return this.requestsService.create(createRequestDto, this.toActorUser(req));
   }
 
   // Lista de solicitudes para el usuario actual (cliente/partner)
@@ -158,6 +171,7 @@ export class RequestsController {
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateRequestDto: UpdateRequestDto,
+    @Req() req: any,
   ) {
     this.logger.log(`[Controller] PATCH /panel/requests/${id} recibido`);
     this.logger.log(`[Controller] Datos recibidos:`, {
@@ -169,7 +183,7 @@ export class RequestsController {
       currentStep: updateRequestDto.currentStep,
       currentStepNumber: updateRequestDto.currentStepNumber,
     });
-    return this.requestsService.update(id, updateRequestDto);
+    return this.requestsService.update(id, updateRequestDto, this.toActorUser(req));
   }
 
   // getRequiredDocuments eliminado - RequestRequiredDocument ya no se usa

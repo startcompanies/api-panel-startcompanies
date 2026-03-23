@@ -33,7 +33,10 @@ import { awsConfigService } from '../../config/aws.config.service';
 // ZohoCrmService ya no se usa en findOne - solo se consulta la BD local
 // import { ZohoCrmService } from '../../zoho-config/zoho-crm.service';
 import { ZohoSyncService } from '../../zoho-config/zoho-sync.service';
-import { RequestSubmittedNotificationsService } from '../notifications/request-submitted-notifications.service';
+import {
+  PanelRequestActorUser,
+  RequestSubmittedNotificationsService,
+} from '../notifications/request-submitted-notifications.service';
 export type { RequestType } from './types/request-type';
 
 @Injectable()
@@ -835,7 +838,10 @@ export class RequestsService {
     return request;
   }
 
-  async create(createRequestDto: CreateRequestDto) {
+  async create(
+    createRequestDto: CreateRequestDto,
+    actorUser?: PanelRequestActorUser | null,
+  ) {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -1548,6 +1554,8 @@ export class RequestsService {
         await this.requestSubmittedNotifications.notifyAfterSolicitudRecibida(
           savedRequest,
           clientRow,
+          actorUser ?? null,
+          { channel: 'panel' },
         );
       }
 
@@ -1615,7 +1623,11 @@ export class RequestsService {
     }
   }
 
-  async update(id: number, updateRequestDto: UpdateRequestDto) {
+  async update(
+    id: number,
+    updateRequestDto: UpdateRequestDto,
+    actorUser?: PanelRequestActorUser | null,
+  ) {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -2559,6 +2571,8 @@ export class RequestsService {
         await this.requestSubmittedNotifications.notifyAfterSolicitudRecibida(
           request,
           clientRow,
+          actorUser ?? null,
+          { channel: 'panel' },
         );
       }
 

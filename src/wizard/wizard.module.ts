@@ -16,6 +16,7 @@ import { GeoService } from './geo/geo.service';
 import { PaymentsModule } from '../shared/payments/payments.module';
 import { CommonModule } from '../shared/common/common.module';
 import { AuthModule } from '../shared/auth/auth.module';
+import { NotificationsModule } from '../panel/notifications/notifications.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { AuthModule } from '../shared/auth/auth.module';
     PaymentsModule,
     CommonModule,
     AuthModule,
+    NotificationsModule,
   ],
   controllers: [WizardController, GeoController],
   providers: [WizardService, GeoService],

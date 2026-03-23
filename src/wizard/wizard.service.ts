@@ -25,6 +25,7 @@ import { EmailService } from '../shared/common/services/email.service';
 import { JwtService } from '@nestjs/jwt';
 import { encodePassword } from '../shared/common/utils/bcrypt';
 import { validateRequestData } from '../panel/requests/validation/request-validation-rules';
+import { RequestSubmittedNotificationsService } from '../panel/notifications/request-submitted-notifications.service';
 import * as crypto from 'crypto';
 
 @Injectable()
@@ -52,6 +53,7 @@ export class WizardService {
     private readonly stripeService: StripeService,
     private readonly emailService: EmailService,
     private readonly jwtService: JwtService,
+    private readonly requestSubmittedNotifications: RequestSubmittedNotificationsService,
   ) { }
 
   /**
@@ -2018,6 +2020,30 @@ export class WizardService {
         // No bloquear el flujo si falla el email
         this.logger.error(
           `[Wizard] Error al enviar email de solicitud enviada para request ${id}: ${emailError}`,
+        );
+      }
+
+      // Notificaciones in-app + correos a staff (mismo flujo que panel al pasar a solicitud-recibida)
+      try {
+        if (
+          previousStatus !== 'solicitud-recibida' &&
+          updatedRequest?.status === 'solicitud-recibida'
+        ) {
+          const clientRow = updatedRequest.clientId
+            ? await this.clientRepo.findOne({
+                where: { id: updatedRequest.clientId },
+              })
+            : null;
+          await this.requestSubmittedNotifications.notifyAfterSolicitudRecibida(
+            updatedRequest,
+            clientRow,
+            null,
+            { channel: 'wizard' },
+          );
+        }
+      } catch (notifyErr) {
+        this.logger.error(
+          `[Wizard] Error en notifyAfterSolicitudRecibida para request ${id}: ${notifyErr}`,
         );
       }
 
