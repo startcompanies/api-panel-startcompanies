@@ -111,23 +111,19 @@ export class ZohoWorkDriveService {
    * Busca cualquier configuración de WorkDrive disponible si no se especifica org
    */
   private async getCredentialsAndToken(org?: string) {
-    const service = 'workdrive';
+    const allConfigs = await this.zohoConfigService.findAll();
+
     let config;
-    
     if (org) {
-      // Buscar por org específico
-      try {
-        config = await this.zohoConfigService.findByOrgAndService(org, service);
-      } catch (error) {
-        // Si no se encuentra, intentar buscar cualquier configuración de WorkDrive
-        const allConfigs = await this.zohoConfigService.findAll();
-        config = allConfigs.find(c => c.service === service && c.refresh_token);
-      }
-    } else {
-      // Buscar cualquier configuración de WorkDrive disponible
-      const allConfigs = await this.zohoConfigService.findAll();
-      config = allConfigs.find(c => c.service === service && c.refresh_token);
+      // 1. Buscar workdrive para el org específico
+      config = allConfigs.find(c => c.org === org && c.service === 'workdrive' && c.refresh_token);
+      // 2. Fallback: crm para el mismo org
+      if (!config) config = allConfigs.find(c => c.org === org && c.service === 'crm' && c.refresh_token);
     }
+    // 3. Fallback global: cualquier workdrive
+    if (!config) config = allConfigs.find(c => c.service === 'workdrive' && c.refresh_token);
+    // 4. Fallback global: cualquier crm
+    if (!config) config = allConfigs.find(c => c.service === 'crm' && c.refresh_token);
 
     if (!config || !config.refresh_token) {
       throw new HttpException(
