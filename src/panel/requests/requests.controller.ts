@@ -14,10 +14,12 @@ import {
   Logger,
 } from '@nestjs/common';
 import { RequestsService } from './requests.service';
+import { ServiceHistoryService } from './service-history.service';
 import { CreateRequestDto } from './dtos/create-request.dto';
 import { UpdateRequestDto } from './dtos/update-request.dto';
 import { ApproveRequestDto } from './dtos/approve-request.dto';
 import { RejectRequestDto } from './dtos/reject-request.dto';
+import { PanelRequestActorUser } from '../notifications/request-submitted-notifications.service';
 import { AuthGuard } from '../../shared/auth/auth.guard';
 import { RolesGuard } from '../../shared/auth/roles.guard';
 import { Roles } from '../../shared/auth/roles.decorator';
@@ -38,7 +40,22 @@ import {
 export class RequestsController {
   private readonly logger = new Logger(RequestsController.name);
   
-  constructor(private readonly requestsService: RequestsService) {}
+  constructor(
+    private readonly requestsService: RequestsService,
+    private readonly serviceHistoryService: ServiceHistoryService,
+  ) {}
+
+  private toActorUser(req: any): PanelRequestActorUser | undefined {
+    const u = req?.user;
+    if (!u?.id || !u?.email) return undefined;
+    return {
+      id: u.id,
+      email: u.email,
+      type: u.type,
+      first_name: u.first_name,
+      username: u.username,
+    };
+  }
 
   // Crear nueva solicitud
   @Post()
@@ -55,7 +72,7 @@ export class RequestsController {
     if (req.user?.type === 'partner' && !createRequestDto.partnerId) {
       createRequestDto.partnerId = req.user.id;
     }
-    return this.requestsService.create(createRequestDto);
+    return this.requestsService.create(createRequestDto, this.toActorUser(req));
   }
 
   // Lista de solicitudes para el usuario actual (cliente/partner)
@@ -74,13 +91,41 @@ export class RequestsController {
     return this.requestsService.findAllByUser(user.id, effectiveRole);
   }
 
-  // Listar todas las solicitudes con filtros (solo admin)
+  @Get('service-history')
+  @UseGuards(RolesGuard)
+  @Roles('client', 'partner')
+  @ApiOperation({
+    summary: 'Historial de servicios (Deals Zoho sincronizados)',
+    description:
+      'Cliente: solo sus deals vinculados por email del Contact. Partner: deals de sus clientes; opcional clientId para filtrar.',
+  })
+  @ApiQuery({
+    name: 'clientId',
+    required: false,
+    description: 'Filtrar por ID de cliente (partner: debe ser su cliente; client: debe ser el propio)',
+  })
+  @ApiResponse({ status: 200, description: 'Lista ordenada por fecha de modificación en Zoho' })
+  getServiceHistory(@Req() req: any, @Query('clientId') clientId?: string) {
+    const user = req.user;
+    const role: 'client' | 'partner' =
+      user?.type === 'partner' ? 'partner' : 'client';
+    if (clientId !== undefined && clientId !== '') {
+      const n = parseInt(clientId, 10);
+      if (Number.isNaN(n)) {
+        throw new BadRequestException('clientId inválido');
+      }
+      return this.serviceHistoryService.findForPortalUser(user.id, role, n);
+    }
+    return this.serviceHistoryService.findForPortalUser(user.id, role, undefined);
+  }
+
+  // Listar todas las solicitudes con filtros (admin y staff user)
   @Get()
   @UseGuards(RolesGuard)
-  @Roles('admin')
+  @Roles('admin', 'user')
   @ApiOperation({
     summary: 'Listar todas las solicitudes (Admin)',
-    description: 'Obtiene todas las solicitudes con filtros opcionales. Solo disponible para administradores.',
+    description: 'Obtiene todas las solicitudes con filtros opcionales. Administradores y usuarios operativos.',
   })
   @ApiQuery({ name: 'status', required: false, description: 'Filtrar por estado' })
   @ApiQuery({ name: 'type', required: false, description: 'Filtrar por tipo de solicitud' })
@@ -158,6 +203,7 @@ export class RequestsController {
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updateRequestDto: UpdateRequestDto,
+    @Req() req: any,
   ) {
     this.logger.log(`[Controller] PATCH /panel/requests/${id} recibido`);
     this.logger.log(`[Controller] Datos recibidos:`, {
@@ -169,7 +215,7 @@ export class RequestsController {
       currentStep: updateRequestDto.currentStep,
       currentStepNumber: updateRequestDto.currentStepNumber,
     });
-    return this.requestsService.update(id, updateRequestDto);
+    return this.requestsService.update(id, updateRequestDto, this.toActorUser(req));
   }
 
   // getRequiredDocuments eliminado - RequestRequiredDocument ya no se usa

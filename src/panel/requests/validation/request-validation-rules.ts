@@ -302,7 +302,14 @@ export function validateRequestData(
       }
     }
 
-    const value = getNestedValue(data, rule.field);
+    let value = getNestedValue(data, rule.field);
+    if (
+      serviceType === 'renovacion-llc' &&
+      currentStepNumber === 2 &&
+      rule.field === 'owners'
+    ) {
+      value = value ?? data.members;
+    }
     const error = validateValue(value, rule, isDraft);
 
     if (error) {
@@ -357,7 +364,8 @@ export function validateRequestData(
   }
 
   if (serviceType === 'renovacion-llc' && currentStepNumber === 2) {
-    const owners = data.owners || [];
+    // Panel/wizard envían `members` (mismo criterio que apertura-llc); legacy puede usar `owners`
+    const owners = data.owners || data.members || [];
     const llcType = data.llcType;
 
     if (!Array.isArray(owners) || owners.length === 0) {

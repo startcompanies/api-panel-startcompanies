@@ -25,6 +25,7 @@ import { Notification } from './panel/notifications/entities/notification.entity
 import { UserPreferences } from './panel/settings/entities/user-preferences.entity';
 import { ProcessConfig } from './panel/settings/entities/process-config.entity';
 import { Client } from './panel/clients/entities/client.entity';
+import { ZohoDealTimeline } from './panel/requests/entities/zoho-deal-timeline.entity';
 import { ZohoConfig } from './zoho-config/zoho-config.entity';
 
 // Validar que existan las variables de entorno requeridas
@@ -61,6 +62,7 @@ export const dataSourceOptions: DataSourceOptions = {
     // RequestRequiredDocument, Document, ProcessStep, UserPreferences y ProcessConfig eliminados - no se usan
     Notification,
     Client,
+    ZohoDealTimeline,
     ZohoConfig,
   ],
   migrations: [

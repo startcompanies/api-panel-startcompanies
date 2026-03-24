@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   InternalServerErrorException,
   NotFoundException,
@@ -88,6 +89,19 @@ export class UserService {
    */
   async createUserByAdmin(createUserDto: CreateUserDto): Promise<User> {
     try {
+      const e164Phone = /^\+[1-9]\d{6,14}$/;
+      if (createUserDto.type === 'partner') {
+        const phone = (createUserDto.phone || '').trim();
+        if (!phone) {
+          throw new BadRequestException('El teléfono es obligatorio para partners');
+        }
+        if (!e164Phone.test(phone)) {
+          throw new BadRequestException(
+            'El teléfono debe estar en formato internacional (E.164).',
+          );
+        }
+      }
+
       // Verificar si el email ya existe
       const existingUser = await this.findUserByEmail(createUserDto.email);
       if (existingUser) {
@@ -146,6 +160,9 @@ export class UserService {
       return savedUser;
     } catch (e) {
       if (e instanceof InternalServerErrorException) {
+        throw e;
+      }
+      if (e instanceof BadRequestException) {
         throw e;
       }
       console.error('Error al crear el usuario:', e);
@@ -306,6 +323,27 @@ export class UserService {
       throw new InternalServerErrorException(
         'No se pudieron obtener los partners',
       );
+    }
+  }
+
+  /**
+   * Partner por ID (solo usuarios con type 'partner'). Admin y staff.
+   */
+  async getPartnerById(partnerId: number): Promise<User> {
+    try {
+      const user = await this.userRepository.findOne({
+        where: { id: partnerId, type: 'partner' },
+      });
+      if (!user) {
+        throw new NotFoundException('Partner no encontrado');
+      }
+      return user;
+    } catch (e) {
+      if (e instanceof NotFoundException) {
+        throw e;
+      }
+      console.error('Error al obtener el partner:', e);
+      throw new InternalServerErrorException('No se pudo obtener el partner');
     }
   }
 

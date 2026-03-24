@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, EntityManager } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { Request } from './entities/request.entity';
 import { AperturaLlcRequest } from './entities/apertura-llc-request.entity';
@@ -33,6 +33,10 @@ import { awsConfigService } from '../../config/aws.config.service';
 // ZohoCrmService ya no se usa en findOne - solo se consulta la BD local
 // import { ZohoCrmService } from '../../zoho-config/zoho-crm.service';
 import { ZohoSyncService } from '../../zoho-config/zoho-sync.service';
+import {
+  PanelRequestActorUser,
+  RequestSubmittedNotificationsService,
+} from '../notifications/request-submitted-notifications.service';
 export type { RequestType } from './types/request-type';
 
 @Injectable()
@@ -52,6 +56,122 @@ export class RequestsService {
       return null;
     }
     return date;
+  }
+
+  /**
+   * Postgres rechaza '' en columnas numeric/decimal. El front puede enviar strings vacíos en pasos incompletos.
+   */
+  private sanitizeRenovacionLlcNumericFields(obj: Record<string, unknown>): void {
+    const numericFields = [
+      'llcOpeningCost',
+      'paidToFamilyMembers',
+      'paidToLocalCompanies',
+      'paidForLLCFormation',
+      'paidForLLCDissolution',
+      'bankAccountBalanceEndOfYear',
+      'totalRevenue',
+    ];
+    for (const key of numericFields) {
+      if (!(key in obj)) continue;
+      const v = obj[key];
+      if (v === null || v === undefined) {
+        delete obj[key];
+        continue;
+      }
+      if (typeof v === 'string') {
+        const t = v.trim();
+        if (t === '') {
+          delete obj[key];
+          continue;
+        }
+        const n = parseFloat(t.replace(/,/g, ''));
+        if (Number.isFinite(n)) {
+          obj[key] = n;
+        } else {
+          delete obj[key];
+        }
+        continue;
+      }
+      if (typeof v === 'number' && !Number.isFinite(v)) {
+        delete obj[key];
+      }
+    }
+  }
+
+  /** Misma normalización que UploadFileService para servicio en rutas S3 */
+  private normalizeServicioForUpload(servicio: string): string {
+    return servicio
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+  }
+
+  private normalizeRequestUuidForUpload(uuid: string): string {
+    return uuid.trim().replace(/[^a-zA-Z0-9-]/g, '');
+  }
+
+  /**
+   * Recorre el payload (create/update) y obtiene claves S3 bajo request/{servicio}/
+   * que aún no están en request/{servicio}/{uuid}/ (archivos temporales a mover).
+   */
+  private collectS3KeysFromRequestPayload(
+    servicioRaw: string,
+    requestUuid: string,
+    payload: unknown,
+  ): string[] {
+    const servicio = this.normalizeServicioForUpload(servicioRaw);
+    const uuidNorm = this.normalizeRequestUuidForUpload(requestUuid);
+
+    const alreadyPlacedPrefix = `request/${servicio}/${uuidNorm}/`;
+    const tempPrefix = `request/${servicio}/`;
+    const keys = new Set<string>();
+
+    const tryAddFromString = (s: string) => {
+      const trimmed = s.trim();
+      if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+        return;
+      }
+      let parsed: URL;
+      try {
+        parsed = new URL(trimmed);
+      } catch {
+        return;
+      }
+      let key: string;
+      try {
+        key = decodeURIComponent(parsed.pathname.replace(/^\//, ''));
+      } catch {
+        return;
+      }
+      if (!key.startsWith(tempPrefix) || key.startsWith(alreadyPlacedPrefix)) {
+        return;
+      }
+      keys.add(key);
+    };
+
+    const walk = (val: unknown): void => {
+      if (val === null || val === undefined) {
+        return;
+      }
+      if (typeof val === 'string') {
+        tryAddFromString(val);
+        return;
+      }
+      if (Array.isArray(val)) {
+        val.forEach(walk);
+        return;
+      }
+      if (typeof val === 'object') {
+        for (const k of Object.keys(val as object)) {
+          walk((val as Record<string, unknown>)[k]);
+        }
+      }
+    };
+
+    walk(payload);
+    return Array.from(keys);
   }
 
   /**
@@ -189,6 +309,7 @@ export class RequestsService {
     // ZohoCrmService ya no se usa - solo consultamos BD local
     // private readonly zohoCrmService: ZohoCrmService,
     private readonly zohoSyncService: ZohoSyncService,
+    private readonly requestSubmittedNotifications: RequestSubmittedNotificationsService,
   ) {}
 
   async findAllByUser(userId: number, role: 'client' | 'partner') {
@@ -212,7 +333,9 @@ export class RequestsService {
             'cuentaBancariaRequest',
           ],
         });
-        this.logger.log(`[findAllByUser] requests by clientId=${client.id} count=${requests.length}`);
+        this.logger.log(
+          `[findAllByUser] requests by clientId=${client.id} count=${requests.length}`,
+        );
       } else {
         // Respaldo: solicitudes creadas desde wizard pueden tener Client por email sin userId; buscar por email del usuario
         const user = await this.userRepo.findOne({
@@ -717,7 +840,10 @@ export class RequestsService {
     return request;
   }
 
-  async create(createRequestDto: CreateRequestDto) {
+  async create(
+    createRequestDto: CreateRequestDto,
+    actorUser?: PanelRequestActorUser | null,
+  ) {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -857,15 +983,19 @@ export class RequestsService {
         }
       }
 
-      // Validar currentStepNumber según el tipo
+      // Validar currentStepNumber según el tipo (omitido en borrador → 1)
       const maxSteps = {
         'apertura-llc': 6,
         'renovacion-llc': 6,
         'cuenta-bancaria': 7,
       };
+      const sectionStep =
+        createRequestDto.currentStepNumber == null
+          ? 1
+          : createRequestDto.currentStepNumber;
       if (
-        createRequestDto.currentStepNumber < 1 ||
-        createRequestDto.currentStepNumber > maxSteps[createRequestDto.type]
+        sectionStep < 1 ||
+        sectionStep > maxSteps[createRequestDto.type]
       ) {
         throw new BadRequestException(
           `currentStepNumber debe estar entre 1 y ${maxSteps[createRequestDto.type]} para tipo ${createRequestDto.type}`,
@@ -888,7 +1018,7 @@ export class RequestsService {
         validateRequestData(
           serviceData,
           createRequestDto.type,
-          createRequestDto.currentStepNumber,
+          sectionStep,
           requestStatus, // 'pendiente' durante wizard, 'solicitud-recibida' al procesar pago
         );
       } catch (error) {
@@ -968,7 +1098,7 @@ export class RequestsService {
           createRequestDto.aperturaLlcData;
 
         // Validar miembros según el tipo de LLC
-        if (createRequestDto.currentStepNumber >= 6) {
+        if (sectionStep >= 6) {
           if (aperturaDataFields.llcType === 'multi') {
             if (!members || members.length < 2) {
               throw new BadRequestException(
@@ -985,10 +1115,10 @@ export class RequestsService {
         }
 
         // Determinar qué secciones se deben procesar según currentStepNumber
-        const currentStep = createRequestDto.currentStepNumber || 1;
+        const currentStep = sectionStep;
         const aperturaDataToCreate: any = {
           requestId: savedRequest.id,
-          currentStepNumber: createRequestDto.currentStepNumber,
+          currentStepNumber: sectionStep,
           ...aperturaDataFields,
         };
         
@@ -1068,7 +1198,7 @@ export class RequestsService {
 
         // Crear miembros solo si estamos en la sección 2 o superior (donde se capturan los miembros)
         // Filtrar miembros vacíos (sin datos básicos)
-        if (createRequestDto.currentStepNumber >= 2 && members && members.length > 0) {
+        if (sectionStep >= 2 && members && members.length > 0) {
           // Filtrar miembros que tengan al menos algún dato (no completamente vacíos)
           const validMembers = members.filter((m: any) => 
             m.firstName || m.lastName || m.email || m.passportNumber
@@ -1106,7 +1236,7 @@ export class RequestsService {
           createRequestDto.renovacionLlcData;
 
         // Validar miembros según el tipo de LLC
-        if (createRequestDto.currentStepNumber >= 2) {
+        if (sectionStep >= 2) {
           if (renovacionDataFields.llcType === 'multi') {
             if (!members || members.length < 2) {
               throw new BadRequestException(
@@ -1125,7 +1255,7 @@ export class RequestsService {
         // Eliminar campos que no existen en el formulario (campos obsoletos o no usados)
         const renovacionDataToCreate: any = {
           requestId: savedRequest.id,
-          currentStepNumber: createRequestDto.currentStepNumber,
+          currentStepNumber: sectionStep,
           ...renovacionDataFields,
         };
         
@@ -1153,7 +1283,9 @@ export class RequestsService {
           renovacionDataToCreate.totalRevenue = renovacionDataToCreate.totalRevenue2025;
           delete renovacionDataToCreate.totalRevenue2025;
         }
-        
+
+        this.sanitizeRenovacionLlcNumericFields(renovacionDataToCreate);
+
         const renovacionData = this.renovacionRepo.create(renovacionDataToCreate);
         await queryRunner.manager.save(RenovacionLlcRequest, renovacionData);
 
@@ -1326,11 +1458,18 @@ export class RequestsService {
           cuentaDataRaw.bankService = 'Relay';
         }
         
+        // current_step_number es NOT NULL en BD; el panel a veces no envía currentStepNumber en el DTO raíz
+        const cuentaStepNumber =
+          [cuentaDataRaw.currentStepNumber, cuentaDataRaw.currentSection, createRequestDto.currentStepNumber, currentStep].find(
+            (v) => typeof v === 'number' && !Number.isNaN(v) && v >= 1,
+          ) ?? 1;
+        delete cuentaDataRaw.currentSection;
+
         // Preparar datos para crear, excluyendo llcType si no tiene un valor válido
         const cuentaDataToCreate: any = {
           requestId: savedRequest.id,
-          currentStepNumber: createRequestDto.currentStepNumber,
           ...cuentaDataRaw,
+          currentStepNumber: cuentaStepNumber,
         };
         
         // Solo incluir llcType si tiene un valor válido ('single' o 'multi')
@@ -1410,14 +1549,32 @@ export class RequestsService {
 
       await queryRunner.commitTransaction();
 
+      if (savedRequest.status === 'solicitud-recibida') {
+        const clientRow = await this.clientRepo.findOne({
+          where: { id: savedRequest.clientId },
+        });
+        await this.requestSubmittedNotifications.notifyAfterSolicitudRecibida(
+          savedRequest,
+          clientRow,
+          actorUser ?? null,
+          { channel: 'panel' },
+        );
+      }
+
       // Mover archivos de request/{servicio}/ a request/{servicio}/{uuid}/ si existen
       // Esto organiza los archivos subidos antes de crear el request
       if (savedRequest.uuid && createRequestDto.type) {
         try {
+          const keysToMove = this.collectS3KeysFromRequestPayload(
+            createRequestDto.type,
+            savedRequest.uuid,
+            createRequestDto,
+          );
           this.logger.log(`Moviendo archivos para request ${savedRequest.uuid} de tipo ${createRequestDto.type}`);
           const moveResult = await this.uploadFileService.moveFilesToRequestFolder(
             createRequestDto.type,
             savedRequest.uuid,
+            keysToMove,
           );
           
           if (moveResult.moved > 0) {
@@ -1468,7 +1625,11 @@ export class RequestsService {
     }
   }
 
-  async update(id: number, updateRequestDto: UpdateRequestDto) {
+  async update(
+    id: number,
+    updateRequestDto: UpdateRequestDto,
+    actorUser?: PanelRequestActorUser | null,
+  ) {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -1487,6 +1648,8 @@ export class RequestsService {
       if (!request) {
         throw new NotFoundException(`Solicitud con ID ${id} no encontrada`);
       }
+
+      const statusBeforeUpdate = request.status;
 
       // Validación dinámica según tipo de servicio y sección (si se proporcionan datos)
       if (updateRequestDto.currentStepNumber !== undefined) {
@@ -1903,11 +2066,13 @@ export class RequestsService {
           delete dataToAssign.wantsInvoice;
           delete dataToAssign.payment_proof_url;
           delete dataToAssign.paymentProofUrl;
-          
+
+          this.sanitizeRenovacionLlcNumericFields(dataToAssign);
+
           Object.keys(dataToAssign).forEach(key => {
             let value = dataToAssign[key];
             
-            // Convertir strings vacíos a null para campos numéricos
+            // Convertir strings vacíos a null para campos numéricos (residuo tras sanitize)
             if (numericFields.includes(key) && value === '') {
               value = null;
             }
@@ -2398,14 +2563,35 @@ export class RequestsService {
 
       await queryRunner.commitTransaction();
 
+      if (
+        request.status === 'solicitud-recibida' &&
+        statusBeforeUpdate !== 'solicitud-recibida'
+      ) {
+        const clientRow = await this.clientRepo.findOne({
+          where: { id: request.clientId },
+        });
+        await this.requestSubmittedNotifications.notifyAfterSolicitudRecibida(
+          request,
+          clientRow,
+          actorUser ?? null,
+          { channel: 'panel' },
+        );
+      }
+
       // Mover archivos de request/{servicio}/ a request/{servicio}/{uuid}/ si existen y actualizar URLs
       // Esto organiza los archivos subidos antes de crear el request o cuando se actualiza un request existente
       if (request.uuid && request.type) {
         try {
+          const keysToMove = this.collectS3KeysFromRequestPayload(
+            request.type,
+            request.uuid,
+            updateRequestDto,
+          );
           this.logger.log(`Moviendo archivos para request ${request.uuid} de tipo ${request.type}`);
           const moveResult = await this.uploadFileService.moveFilesToRequestFolder(
             request.type,
             request.uuid,
+            keysToMove,
           );
           
           if (moveResult.moved > 0) {
@@ -2699,8 +2885,10 @@ export class RequestsService {
     if (filters?.type) {
       queryBuilder.andWhere('request.type = :type', { type: filters.type });
     }
-    if (filters?.clientId) {
-      queryBuilder.andWhere('request.clientId = :clientId', { clientId: filters.clientId });
+    if (filters?.clientId != null) {
+      queryBuilder.andWhere('request.clientId = :clientId', {
+        clientId: filters.clientId,
+      });
     }
     if (filters?.partnerId) {
       queryBuilder.andWhere('request.partnerId = :partnerId', { partnerId: filters.partnerId });
@@ -2736,6 +2924,31 @@ export class RequestsService {
 
   // getRequiredDocuments eliminado - RequestRequiredDocument ya no se usa
 
+  /**
+   * DELETE por request_id solo si la tabla existe en `public`.
+   * No usar try/catch sobre DELETE inexistente: en PostgreSQL el error aborta la transacción (25P02 en los siguientes comandos).
+   */
+  private async deleteFromOptionalTableIfExists(
+    manager: EntityManager,
+    tableName: 'process_steps' | 'documents' | 'notifications',
+    requestId: number,
+  ): Promise<void> {
+    const check = await manager.query(
+      `SELECT EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = $1
+      ) AS "exists"`,
+      [tableName],
+    );
+    if (!check[0]?.exists) {
+      return;
+    }
+    await manager.query(
+      `DELETE FROM ${tableName} WHERE request_id = $1`,
+      [requestId],
+    );
+  }
+
   async delete(id: number, userId: number, userRole: string) {
     const request = await this.requestRepository.findOne({
       where: { id },
@@ -2767,8 +2980,23 @@ export class RequestsService {
       }
     }
 
-    // Eliminar la solicitud (las relaciones en cascada eliminarán los datos relacionados)
-    await this.requestRepository.remove(request);
+    // Borrado explícito de hijos: el FK apunta desde tablas como apertura_llc_requests hacia requests;
+    // TypeORM cascade en OneToOne no elimina el hijo al borrar el padre en todos los casos.
+    await this.dataSource.transaction(async (manager) => {
+      await manager.delete(Member, { requestId: id });
+      await manager.delete(AperturaLlcRequest, { requestId: id });
+      await manager.delete(RenovacionLlcRequest, { requestId: id });
+      await manager.delete(CuentaBancariaRequest, { requestId: id });
+
+      await this.deleteFromOptionalTableIfExists(manager, 'process_steps', id);
+      await this.deleteFromOptionalTableIfExists(manager, 'documents', id);
+      await this.deleteFromOptionalTableIfExists(manager, 'notifications', id);
+
+      const del = await manager.delete(Request, { id });
+      if (!del.affected) {
+        throw new NotFoundException(`Solicitud con ID ${id} no encontrada`);
+      }
+    });
 
     return { message: 'Solicitud eliminada correctamente' };
   }

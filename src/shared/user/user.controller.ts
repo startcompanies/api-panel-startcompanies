@@ -1,13 +1,15 @@
 import {
-  Controller,
-  Post,
   Body,
+  Controller,
   Get,
-  UseGuards,
-  Patch,
   Param,
-  Request,
+  Patch,
+  Post,
   Query,
+  Request,
+  UseGuards,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import { UserService } from './user.service';
 import { UserDto } from './dtos/user.dto';
@@ -26,16 +28,23 @@ export class UserController {
 
   @Post()
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles('admin')
+  @Roles('admin', 'user')
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
-    summary: 'Crear un nuevo usuario (solo admin)',
-    description: 'Permite a un administrador crear usuarios con cualquier tipo y campos adicionales',
+    summary: 'Crear un nuevo usuario (admin o staff user)',
+    description: 'Permite crear usuarios con cualquier tipo y campos adicionales',
   })
   @ApiBody({ type: CreateUserDto })
   @ApiResponse({ status: 201, description: 'Usuario creado exitosamente' })
   @ApiResponse({ status: 400, description: 'Datos inválidos' })
   @ApiResponse({ status: 403, description: 'Acceso denegado (solo admin)' })
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
   createUser(@Body() createUserDto: CreateUserDto) {
     return this.userService.createUserByAdmin(createUserDto);
   }
@@ -65,10 +74,10 @@ export class UserController {
 
   @Get('/partners')
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles('admin')
+  @Roles('admin', 'user')
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
-    summary: 'Listar todos los partners (solo admin)',
+    summary: 'Listar todos los partners (admin y staff user)',
   })
   getPartners() {
     return this.userService.getPartners();
@@ -76,13 +85,24 @@ export class UserController {
 
   @Get('/partners/:id/stats')
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles('admin')
+  @Roles('admin', 'user')
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
     summary: 'Obtener estadísticas de un partner (conteo de clientes y solicitudes)',
   })
   getPartnerStats(@Param('id') id: string) {
     return this.userService.getPartnerStats(parseInt(id, 10));
+  }
+
+  @Get('/partners/:id')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('admin', 'user')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Obtener un partner por ID (solo type partner)',
+  })
+  getPartnerById(@Param('id') id: string) {
+    return this.userService.getPartnerById(parseInt(id, 10));
   }
 
   @Get('/clients')
@@ -153,10 +173,10 @@ export class UserController {
 
   @Patch('/:id/status')
   @UseGuards(AuthGuard, RolesGuard)
-  @Roles('admin')
+  @Roles('admin', 'user')
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
-    summary: 'Activar/Desactivar usuario (solo admin)',
+    summary: 'Activar/Desactivar usuario (admin o staff user)',
   })
   toggleUserStatus(@Param('id') id: string) {
     return this.userService.toggleUserStatus(id);

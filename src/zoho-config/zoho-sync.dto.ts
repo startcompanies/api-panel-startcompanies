@@ -57,9 +57,46 @@ export class ZohoCrmRequestStageWebhookDto {
   org?: string;
 }
 
+/** Metadatos opcionales cuando el import ocurre dentro de un lote de sync completo */
+export interface ZohoImportFullSyncMeta {
+  batchIndex: number;
+  batchOffset: number;
+  estimatedTotal?: number;
+}
 
+export type ZohoImportAccountsProgressEvent =
+  | {
+      phase: 'count';
+      totalAccounts: number;
+    }
+  | {
+      phase: 'prefetch_list';
+      accumulated: number;
+    }
+  | {
+      phase: 'list_ready';
+      totalAccounts: number;
+    }
+  | {
+      phase: 'coql';
+      pageTotal: number;
+      offset: number;
+      limit: number;
+      fullSync?: ZohoImportFullSyncMeta;
+    }
+  | {
+      phase: 'fetch_detail' | 'import';
+      current: number;
+      total: number;
+      accountId: string;
+      accountName?: string;
+      fullSync?: ZohoImportFullSyncMeta;
+    };
 
-
+export type ZohoImportAccountsNdjsonLine =
+  | { type: 'progress'; data: ZohoImportAccountsProgressEvent }
+  | { type: 'done'; payload: unknown }
+  | { type: 'error'; message: string };
 
 
 

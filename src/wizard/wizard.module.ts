@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { HttpModule } from '@nestjs/axios';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Request } from '../panel/requests/entities/request.entity';
 import { AperturaLlcRequest } from '../panel/requests/entities/apertura-llc-request.entity';
@@ -10,12 +11,16 @@ import { User } from '../shared/user/entities/user.entity';
 import { Client } from '../panel/clients/entities/client.entity';
 import { WizardService } from './wizard.service';
 import { WizardController } from './wizard.controller';
+import { GeoController } from './geo/geo.controller';
+import { GeoService } from './geo/geo.service';
 import { PaymentsModule } from '../shared/payments/payments.module';
 import { CommonModule } from '../shared/common/common.module';
 import { AuthModule } from '../shared/auth/auth.module';
+import { NotificationsModule } from '../panel/notifications/notifications.module';
 
 @Module({
   imports: [
+    HttpModule.register({ timeout: 8000, maxRedirects: 3 }),
     TypeOrmModule.forFeature([
       Request,
       AperturaLlcRequest,
@@ -29,9 +34,10 @@ import { AuthModule } from '../shared/auth/auth.module';
     PaymentsModule,
     CommonModule,
     AuthModule,
+    NotificationsModule,
   ],
-  controllers: [WizardController],
-  providers: [WizardService],
+  controllers: [WizardController, GeoController],
+  providers: [WizardService, GeoService],
   exports: [WizardService],
 })
 export class WizardModule {}
