@@ -3047,24 +3047,31 @@ export class RequestsService {
     }
 
     // SOLO si la sincronización fue exitosa, aprobar la solicitud
-    request.status = 'en-proceso';
-    request.stage = initialStage;
-    if (approveDto.notes) {
-      request.notes = approveDto.notes;
+    // Recargar la solicitud para obtener el zohoAccountId actualizado por syncRequestToZoho
+    const updatedRequest = await this.requestRepository.findOne({ where: { id } });
+    if (!updatedRequest) {
+      throw new NotFoundException(`Solicitud con ID ${id} no encontrada tras sincronización`);
     }
 
-    await this.requestRepository.save(request);
+    updatedRequest.status = 'en-proceso';
+    updatedRequest.stage = initialStage;
+    if (approveDto.notes) {
+      updatedRequest.notes = approveDto.notes;
+    }
+
+    await this.requestRepository.save(updatedRequest);
 
     this.logger.log(
-      `Solicitud ${id} aprobada exitosamente. Etapa inicial: ${initialStage}`,
+      `Solicitud ${id} aprobada exitosamente. Etapa inicial: ${initialStage}. zohoAccountId: ${updatedRequest.zohoAccountId ?? 'no asignado'}`,
     );
 
     return {
       message: 'Solicitud aprobada correctamente',
       request: {
-        id: request.id,
-        status: request.status,
-        stage: request.stage,
+        id: updatedRequest.id,
+        status: updatedRequest.status,
+        stage: updatedRequest.stage,
+        zohoAccountId: updatedRequest.zohoAccountId,
       },
     };
   }
