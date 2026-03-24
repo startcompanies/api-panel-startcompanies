@@ -1,6 +1,6 @@
-import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, Logger, HttpException, HttpStatus, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, Not, IsNull } from 'typeorm';
 import { ZohoCrmService } from './zoho-crm.service';
 import { ZohoWorkDriveService } from './zoho-workdrive.service';
 import { Request } from 'src/panel/requests/entities/request.entity';
@@ -26,7 +26,7 @@ import {
 } from './zoho-sync.dto';
 
 @Injectable()
-export class ZohoSyncService {
+export class ZohoSyncService implements OnModuleInit {
   private readonly logger = new Logger(ZohoSyncService.name);
 
   constructor(
@@ -50,6 +50,37 @@ export class ZohoSyncService {
     private readonly clientRepo: Repository<Client>,
     private readonly dataSource: DataSource,
   ) {}
+
+  async onModuleInit() {
+    setImmediate(() => this.backfillMissingWorkDrivePermalinks());
+  }
+
+  private async backfillMissingWorkDrivePermalinks(): Promise<void> {
+    try {
+      const pending = await this.requestRepository.find({
+        where: {
+          workDriveId: Not(IsNull()),
+          workDriveUrlExternal: IsNull(),
+        },
+      });
+      if (pending.length === 0) {
+        this.logger.log('WorkDrive backfill: sin permalinks pendientes');
+        return;
+      }
+      this.logger.log(`WorkDrive backfill: ${pending.length} registro(s) sin permalink`);
+      for (const request of pending) {
+        try {
+          const permalink = await this.zohoWorkDriveService.generateEmbedPermalink(request.workDriveId!);
+          await this.requestRepository.update(request.id, { workDriveUrlExternal: permalink });
+          this.logger.log(`WorkDrive backfill: permalink generado para request ${request.id}`);
+        } catch (err: any) {
+          this.logger.warn(`WorkDrive backfill: error en request ${request.id}: ${err.message}`);
+        }
+      }
+    } catch (err: any) {
+      this.logger.error('WorkDrive backfill: error general:', err.message);
+    }
+  }
 
   /**
    * Normaliza un número de teléfono agregando el prefijo "+" si no lo tiene
@@ -1969,21 +2000,23 @@ export class ZohoSyncService {
 
       request.clientId = clientRow.id;
 
-      // Persistir workDriveId y regenerar permalink siempre que el Account tenga workDriveId
+      // Persistir workDriveId siempre; generar permalink solo si aún no existe
       if (account.workDriveId) {
         request.workDriveId = account.workDriveId;
-        try {
-          this.logger.log(`Generando permalink para workDriveId: ${account.workDriveId} (Account ${account.id})`);
-          const permalink = await this.zohoWorkDriveService.generateEmbedPermalink(
-            account.workDriveId,
-          );
-          request.workDriveUrlExternal = permalink;
-          this.logger.log(`Permalink guardado para Account ${account.id}: ${permalink}`);
-        } catch (error: any) {
-          this.logger.warn(
-            `Error al generar permalink para workDriveId ${account.workDriveId} (Account ${account.id}):`,
-            error.message,
-          );
+        if (!request.workDriveUrlExternal) {
+          try {
+            this.logger.log(`Generando permalink para workDriveId: ${account.workDriveId} (Account ${account.id})`);
+            const permalink = await this.zohoWorkDriveService.generateEmbedPermalink(
+              account.workDriveId,
+            );
+            request.workDriveUrlExternal = permalink;
+            this.logger.log(`Permalink guardado para Account ${account.id}: ${permalink}`);
+          } catch (error: any) {
+            this.logger.warn(
+              `Error al generar permalink para workDriveId ${account.workDriveId} (Account ${account.id}):`,
+              error.message,
+            );
+          }
         }
       } else if (account.workDriveUrlExternal && !request.workDriveUrlExternal) {
         // Fallback: sin workDriveId pero con URL directa en Zoho
@@ -2663,22 +2696,24 @@ export class ZohoSyncService {
         if (accountResponse.data && accountResponse.data.length > 0) {
           const account = accountResponse.data[0];
           
-          // Persistir workDriveId y regenerar permalink siempre que el Account tenga workDriveId
+          // Persistir workDriveId siempre; generar permalink solo si aún no existe
           if (account.workDriveId) {
             request.workDriveId = account.workDriveId;
             needsUpdate = true;
-            try {
-              this.logger.log(`Generando permalink para workDriveId: ${account.workDriveId} (Request ${request.id})`);
-              const permalink = await this.zohoWorkDriveService.generateEmbedPermalink(
-                account.workDriveId,
-              );
-              request.workDriveUrlExternal = permalink;
-              this.logger.log(`Request ${request.id} actualizado con permalink: ${permalink}`);
-            } catch (embedError: any) {
-              this.logger.warn(
-                `Error al generar permalink para workDriveId ${account.workDriveId} (Request ${request.id}):`,
-                embedError.message,
-              );
+            if (!request.workDriveUrlExternal) {
+              try {
+                this.logger.log(`Generando permalink para workDriveId: ${account.workDriveId} (Request ${request.id})`);
+                const permalink = await this.zohoWorkDriveService.generateEmbedPermalink(
+                  account.workDriveId,
+                );
+                request.workDriveUrlExternal = permalink;
+                this.logger.log(`Request ${request.id} actualizado con permalink: ${permalink}`);
+              } catch (embedError: any) {
+                this.logger.warn(
+                  `Error al generar permalink para workDriveId ${account.workDriveId} (Request ${request.id}):`,
+                  embedError.message,
+                );
+              }
             }
           } else if (account.workDriveUrlExternal && !request.workDriveUrlExternal) {
             // Fallback: sin workDriveId pero con URL directa en Zoho
