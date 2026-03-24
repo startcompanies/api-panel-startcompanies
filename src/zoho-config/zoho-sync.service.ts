@@ -1969,35 +1969,26 @@ export class ZohoSyncService {
 
       request.clientId = clientRow.id;
 
-      // Generar permalink si Account tiene workDriveId Y el Request no tiene workDriveUrlExternal
-      if (account.workDriveId && !request.workDriveUrlExternal) {
+      // Persistir workDriveId y regenerar permalink siempre que el Account tenga workDriveId
+      if (account.workDriveId) {
+        request.workDriveId = account.workDriveId;
         try {
           this.logger.log(`Generando permalink para workDriveId: ${account.workDriveId} (Account ${account.id})`);
-          // No pasar org, dejar que el servicio busque cualquier configuración de WorkDrive disponible
           const permalink = await this.zohoWorkDriveService.generateEmbedPermalink(
             account.workDriveId,
           );
-          // Guardar el permalink completo tal como viene de la API
           request.workDriveUrlExternal = permalink;
-          this.logger.log(`Permalink completo guardado para Account ${account.id}: ${permalink}`);
-          this.logger.log(`Longitud de la URL guardada: ${permalink.length} caracteres`);
+          this.logger.log(`Permalink guardado para Account ${account.id}: ${permalink}`);
         } catch (error: any) {
           this.logger.warn(
             `Error al generar permalink para workDriveId ${account.workDriveId} (Account ${account.id}):`,
             error.message,
           );
-          // Si falla, intentar usar workDriveUrlExternal directamente si existe
-          if (account.workDriveUrlExternal) {
-            request.workDriveUrlExternal = account.workDriveUrlExternal;
-            this.logger.log(`Usando workDriveUrlExternal directo desde Account ${account.id}: ${account.workDriveUrlExternal}`);
-          }
         }
       } else if (account.workDriveUrlExternal && !request.workDriveUrlExternal) {
-        // Si no hay workDriveId pero sí workDriveUrlExternal, y el Request no tiene uno, usarlo directamente
+        // Fallback: sin workDriveId pero con URL directa en Zoho
         request.workDriveUrlExternal = account.workDriveUrlExternal;
         this.logger.log(`WorkDrive URL externa guardada para Account ${account.id}: ${account.workDriveUrlExternal}`);
-      } else if (request.workDriveUrlExternal) {
-        this.logger.log(`Request ${request.id} ya tiene workDriveUrlExternal, no se regenerará: ${request.workDriveUrlExternal}`);
       }
 
       // Guardar Request (ahora con clientId y workDriveUrlExternal)
@@ -2672,38 +2663,28 @@ export class ZohoSyncService {
         if (accountResponse.data && accountResponse.data.length > 0) {
           const account = accountResponse.data[0];
           
-          // Si Account tiene workDriveId Y el Request no tiene workDriveUrlExternal, generar permalink
-          if (account.workDriveId && !request.workDriveUrlExternal) {
+          // Persistir workDriveId y regenerar permalink siempre que el Account tenga workDriveId
+          if (account.workDriveId) {
+            request.workDriveId = account.workDriveId;
+            needsUpdate = true;
             try {
               this.logger.log(`Generando permalink para workDriveId: ${account.workDriveId} (Request ${request.id})`);
-              // No pasar org, dejar que el servicio busque cualquier configuración de WorkDrive disponible
               const permalink = await this.zohoWorkDriveService.generateEmbedPermalink(
                 account.workDriveId,
               );
-              
-              // Guardar el permalink completo tal como viene de la API
               request.workDriveUrlExternal = permalink;
-              needsUpdate = true;
-              this.logger.log(`Request ${request.id} actualizado con permalink completo: ${permalink}`);
+              this.logger.log(`Request ${request.id} actualizado con permalink: ${permalink}`);
             } catch (embedError: any) {
               this.logger.warn(
                 `Error al generar permalink para workDriveId ${account.workDriveId} (Request ${request.id}):`,
                 embedError.message,
               );
-              // Si falla, intentar usar workDriveUrlExternal directamente si existe
-              if (account.workDriveUrlExternal) {
-                request.workDriveUrlExternal = account.workDriveUrlExternal;
-                needsUpdate = true;
-                this.logger.log(`Request ${request.id} actualizado con workDriveUrlExternal directo: ${account.workDriveUrlExternal}`);
-              }
             }
           } else if (account.workDriveUrlExternal && !request.workDriveUrlExternal) {
-            // Si no hay workDriveId pero sí workDriveUrlExternal, y el Request no tiene uno, usarlo directamente
+            // Fallback: sin workDriveId pero con URL directa en Zoho
             request.workDriveUrlExternal = account.workDriveUrlExternal;
             needsUpdate = true;
             this.logger.log(`Request ${request.id} actualizado con workDriveUrlExternal: ${account.workDriveUrlExternal}`);
-          } else if (request.workDriveUrlExternal) {
-            this.logger.log(`Request ${request.id} ya tiene workDriveUrlExternal, no se actualizará: ${request.workDriveUrlExternal}`);
           }
         }
       } catch (accountError: any) {
