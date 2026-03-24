@@ -109,8 +109,31 @@ export class ZohoSyncService {
   }
 
   /**
+   * Zoho CRM rechaza muchos valores que `new URL` acepta (p. ej. localhost, IPs privadas).
+   */
+  private isAcceptableZohoWebsiteHostname(hostname: string): boolean {
+    const h = (hostname || '').toLowerCase();
+    if (!h) return false;
+    if (h === 'localhost' || h.endsWith('.localhost')) return false;
+    if (h === '127.0.0.1' || h === '0.0.0.0' || h === '::1') return false;
+
+    const ipv4Parts = h.split('.');
+    if (ipv4Parts.length === 4 && ipv4Parts.every((p) => /^\d{1,3}$/.test(p))) {
+      const a = parseInt(ipv4Parts[0], 10);
+      const b = parseInt(ipv4Parts[1], 10);
+      if (a === 10) return false;
+      if (a === 127) return false;
+      if (a === 192 && b === 168) return false;
+      if (a === 172 && b >= 16 && b <= 31) return false;
+      if (a === 169 && b === 254) return false;
+    }
+
+    return true;
+  }
+
+  /**
    * Normaliza URL para campos Zoho de tipo website.
-   * Si no es válida, retorna string vacío para evitar INVALID_DATA.
+   * Si no es válida o no es aceptable para Zoho (p. ej. localhost), retorna '' y no se envían las claves.
    */
   private normalizeWebsiteUrl(url: string | null | undefined): string {
     const raw = (url || '').trim();
@@ -120,6 +143,7 @@ export class ZohoSyncService {
     try {
       const parsed = new URL(candidate);
       if (!parsed.hostname) return '';
+      if (!this.isAcceptableZohoWebsiteHostname(parsed.hostname)) return '';
       return candidate;
     } catch {
       return '';
