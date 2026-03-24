@@ -454,6 +454,7 @@ export class ZohoSyncService {
       const projectOrCompanyUrl = this.normalizeWebsiteUrl(
         (apertura as any).project_or_company_url ?? apertura.projectOrCompanyUrl,
       );
+      const linkedinUrl = this.normalizeWebsiteUrl(apertura.linkedin);
       accountData = {
         ...accountData,
         // Mapeo según CSV - campos del formulario
@@ -466,7 +467,7 @@ export class ZohoSyncService {
           apertura.llcType === 'single'
             ? ZOHO_LLC_ESTRUCTURA_SINGLE
             : ZOHO_LLC_ESTRUCTURA_MULTI,
-        LinkedIn: apertura.linkedin || '',
+        ...(linkedinUrl ? { LinkedIn: linkedinUrl } : {}),
         ...(projectOrCompanyUrl
           ? { Website: projectOrCompanyUrl, P_gina_web_de_la_LLC: projectOrCompanyUrl }
           : {}),

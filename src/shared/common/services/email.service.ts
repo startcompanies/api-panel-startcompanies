@@ -319,6 +319,49 @@ export class EmailService {
     this.logger.log(`Email de solicitud enviada enviado a ${email} (request #${requestId})`);
   }
 
+  /**
+   * Envía un email de verificación para confirmar el cambio de correo desde el panel.
+   */
+  async sendEmailChangeVerification(
+    newEmail: string,
+    name: string,
+    token: string,
+  ): Promise<void> {
+    if (!this.resend) {
+      this.logger.warn(`Email de cambio de correo no enviado a ${newEmail} (Resend no configurado)`);
+      return;
+    }
+
+    const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'http://localhost:4200';
+    const confirmUrl = `${frontendUrl}/panel/settings?confirmEmailToken=${encodeURIComponent(token)}`;
+
+    const bodyHtml = `
+      <p>Hola ${name || newEmail},</p>
+      <p>Recibimos una solicitud para cambiar el correo electrónico de tu cuenta a <strong>${newEmail}</strong>.</p>
+      <p>Haz clic en el botón para confirmar el cambio:</p>
+      <p>O copia y pega este enlace en tu navegador:</p>
+      <p style="word-break: break-all;"><a href="${confirmUrl}">${confirmUrl}</a></p>
+      <p><strong>Importante:</strong> Este enlace expirará en 24 horas.</p>
+      <p>Si no solicitaste este cambio, puedes ignorar este email y tu correo permanecerá igual.</p>
+    `;
+    try {
+      await this.resend.emails.send({
+        from: this.configService.get<string>('RESEND_FROM_EMAIL') || 'Start Companies <noreply@startcompanies.us>',
+        to: newEmail,
+        subject: 'Confirma tu nuevo correo - Start Companies',
+        html: this.getEmailHtml({
+          title: 'Confirma tu nuevo correo',
+          bodyHtml,
+          button: { text: 'Confirmar nuevo correo', url: confirmUrl },
+        }),
+      });
+      this.logger.log(`Email de cambio de correo enviado a ${newEmail}`);
+    } catch (error) {
+      this.logger.error(`Error al enviar email de cambio de correo a ${newEmail}:`, error);
+      throw error;
+    }
+  }
+
   private requestTypeToLabel(requestType: string): string {
     const map: Record<string, string> = {
       'apertura-llc': 'Apertura LLC',
