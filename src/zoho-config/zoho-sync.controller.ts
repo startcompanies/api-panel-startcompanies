@@ -11,7 +11,9 @@ import {
   UnauthorizedException,
   UsePipes,
   ValidationPipe,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { ZohoSyncService } from './zoho-sync.service';
 import {
@@ -85,6 +87,48 @@ export class ZohoSyncController {
     const limitNumber = limit ? parseInt(limit, 10) : 200;
     const offsetNumber = offset ? parseInt(offset, 10) : 0;
     return this.zohoSyncService.importAccountsFromZoho(org, limitNumber, offsetNumber);
+  }
+
+  @Get('import/accounts-stream')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary:
+      'Importar Accounts con eventos de progreso (NDJSON: progress por línea, luego done o error)',
+  })
+  @ApiQuery({ name: 'org', required: false, description: 'Organización/cliente' })
+  @ApiQuery({ name: 'limit', required: false, description: 'Límite de registros (máx 200)' })
+  @ApiQuery({ name: 'offset', required: false, description: 'Offset para paginación' })
+  async importAccountsStream(
+    @Res({ passthrough: false }) res: Response,
+    @Query('org') org?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('X-Accel-Buffering', 'no');
+    const writeLine = (obj: object) => {
+      res.write(`${JSON.stringify(obj)}\n`);
+    };
+    try {
+      const limitNumber = limit ? parseInt(limit, 10) : 200;
+      const offsetNumber = offset ? parseInt(offset, 10) : 0;
+      const result = await this.zohoSyncService.importAccountsFromZoho(
+        org,
+        limitNumber,
+        offsetNumber,
+        (evt) => {
+          writeLine({ type: 'progress', data: evt });
+        },
+      );
+      writeLine({ type: 'done', payload: result });
+    } catch (e: any) {
+      const message = e?.message || 'Error al importar Accounts';
+      writeLine({ type: 'error', message });
+    }
+    res.end();
   }
 
   @Post('import/account/:accountId')
@@ -169,6 +213,42 @@ export class ZohoSyncController {
     return this.zohoSyncService.importDealsFromZoho(org, limitNumber);
   }
 
+  @Post('import/deal-timeline')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary:
+      'Importar Deals a la tabla de historial del portal (una fila por Deal; no modifica Requests)',
+  })
+  @ApiQuery({ name: 'org', required: false, description: 'Organización/cliente' })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    description: 'Registros por página COQL (máx. recomendado 200)',
+  })
+  @ApiQuery({
+    name: 'maxPages',
+    required: false,
+    description: 'Máximo de páginas a recorrer (omitir para todas)',
+  })
+  importDealTimeline(
+    @Query('org') org?: string,
+    @Query('limit') limit?: string,
+    @Query('maxPages') maxPages?: string,
+  ) {
+    const limitPerPage = limit ? parseInt(limit, 10) : 200;
+    const maxPagesNum =
+      maxPages !== undefined && maxPages !== ''
+        ? parseInt(maxPages, 10)
+        : undefined;
+    return this.zohoSyncService.importDealTimelineFromZoho(
+      org,
+      limitPerPage,
+      Number.isFinite(maxPagesNum as number) ? maxPagesNum : undefined,
+    );
+  }
+
   @Post('import/full-sync')
   @UseGuards(AuthGuard, RolesGuard)
   @Roles('admin')
@@ -185,6 +265,42 @@ export class ZohoSyncController {
     const accountsLimitNumber = accountsLimit ? parseInt(accountsLimit, 10) : 200;
     const dealsLimitNumber = dealsLimit ? parseInt(dealsLimit, 10) : 200;
     return this.zohoSyncService.fullSyncFromZoho(org, accountsLimitNumber, dealsLimitNumber);
+  }
+
+  @Post('import/full-sync-stream')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('admin')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary:
+      'Sincronización completa con eventos de progreso (NDJSON: progress por línea, luego done o error)',
+  })
+  @ApiQuery({ name: 'org', required: false, description: 'Organización/cliente' })
+  async fullSyncStream(
+    @Res({ passthrough: false }) res: Response,
+    @Query('org') org?: string,
+  ) {
+    res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('X-Accel-Buffering', 'no');
+    const writeLine = (obj: object) => {
+      res.write(`${JSON.stringify(obj)}\n`);
+    };
+    try {
+      const result = await this.zohoSyncService.fullSyncFromZoho(
+        org,
+        200,
+        200,
+        (evt) => {
+          writeLine({ type: 'progress', data: evt });
+        },
+      );
+      writeLine({ type: 'done', payload: result });
+    } catch (e: any) {
+      const message = e?.message || 'Error en sincronización completa';
+      writeLine({ type: 'error', message });
+    }
+    res.end();
   }
 
   @Post('sync-request/:requestId')

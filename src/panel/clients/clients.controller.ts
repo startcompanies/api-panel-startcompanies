@@ -9,12 +9,22 @@ import {
   Query,
   UseGuards,
   Request,
+  ParseIntPipe,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags, ApiBody, ApiResponse, ApiParam } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiQuery,
+  ApiTags,
+  ApiBody,
+  ApiResponse,
+  ApiParam,
+} from '@nestjs/swagger';
 import { ClientsService } from './clients.service';
 import { CreateClientDto } from './dtos/create-client.dto';
 import { UpdateClientDto } from './dtos/update-client.dto';
 import { GetClientByUuidDto } from './dtos/get-client-by-uuid.dto';
+import { ConvertClientToPartnerDto } from './dtos/convert-client-to-partner.dto';
 import { AuthGuard } from '../../shared/auth/auth.guard';
 import { RolesGuard } from '../../shared/auth/roles.guard';
 import { Roles } from '../../shared/auth/roles.decorator';
@@ -43,10 +53,61 @@ export class ClientsController {
   @Roles('admin')
   @ApiOperation({
     summary: 'Listar clientes del admin',
-    description: 'Obtiene solo los clientes del admin (sin partner asignado). Los partners gestionan sus propios clientes a través de /my-clients.',
+    description:
+      'Obtiene solo los clientes del admin (sin partner asignado). Paginado con page/limit; filtros opcionales q (búsqueda) y status (all|active|inactive).',
   })
-  getAdminClients() {
-    return this.clientsService.getAdminClients();
+  @ApiQuery({ name: 'page', required: false, description: 'Página (1-based)', example: 1 })
+  @ApiQuery({ name: 'limit', required: false, description: 'Tamaño de página (máx. 100)', example: 12 })
+  @ApiQuery({ name: 'q', required: false, description: 'Buscar en nombre, email o empresa' })
+  @ApiQuery({ name: 'status', required: false, enum: ['all', 'active', 'inactive'] })
+  getAdminClients(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('q') q?: string,
+    @Query('status') status?: string,
+  ) {
+    const p = page ? parseInt(page, 10) : 1;
+    const l = limit ? parseInt(limit, 10) : 12;
+    return this.clientsService.getAdminClients({
+      page: Number.isFinite(p) && p > 0 ? p : 1,
+      limit: Number.isFinite(l) && l > 0 ? l : 12,
+      q: q?.trim() || undefined,
+      status:
+        status === 'active' || status === 'inactive' || status === 'all'
+          ? status
+          : 'all',
+    });
+  }
+
+  @Get('for-partner/:partnerId')
+  @UseGuards(RolesGuard)
+  @Roles('admin', 'user')
+  @ApiOperation({
+    summary: 'Clientes de un partner con estadísticas',
+    description: 'Admin y staff. Listado para el detalle de partner.',
+  })
+  @ApiParam({ name: 'partnerId', description: 'ID del usuario partner' })
+  getClientsForPartner(@Param('partnerId', ParseIntPipe) partnerId: number) {
+    return this.clientsService.getClientsForPartnerWithStats(partnerId);
+  }
+
+  @Post(':id/convert-to-partner')
+  @UseGuards(RolesGuard)
+  @Roles('admin')
+  @ApiOperation({
+    summary: 'Convertir usuario cliente en partner',
+    description:
+      'Solo admin. Si el listado es solo usuario (sin fila en clients), enviar listItemUserOnly: true en el body.',
+  })
+  @ApiParam({ name: 'id', description: 'ID en tabla clients o ID de usuario si listItemUserOnly' })
+  @ApiBody({ type: ConvertClientToPartnerDto })
+  @ApiResponse({ status: 200, description: 'Usuario actualizado a partner' })
+  @ApiResponse({ status: 404, description: 'Cliente no encontrado' })
+  convertClientToPartner(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: ConvertClientToPartnerDto,
+  ) {
+    return this.clientsService.convertClientToPartner(id, body);
   }
 
   @Post('by-uuid')

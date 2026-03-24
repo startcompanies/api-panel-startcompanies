@@ -327,6 +327,27 @@ export class UserService {
   }
 
   /**
+   * Partner por ID (solo usuarios con type 'partner'). Admin y staff.
+   */
+  async getPartnerById(partnerId: number): Promise<User> {
+    try {
+      const user = await this.userRepository.findOne({
+        where: { id: partnerId, type: 'partner' },
+      });
+      if (!user) {
+        throw new NotFoundException('Partner no encontrado');
+      }
+      return user;
+    } catch (e) {
+      if (e instanceof NotFoundException) {
+        throw e;
+      }
+      console.error('Error al obtener el partner:', e);
+      throw new InternalServerErrorException('No se pudo obtener el partner');
+    }
+  }
+
+  /**
    * Obtiene las estadísticas de un partner (conteo de clientes y solicitudes)
    * @param partnerId ID del partner
    * @returns Objeto con totalClients y totalRequests

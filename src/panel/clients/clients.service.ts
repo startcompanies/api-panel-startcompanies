@@ -42,13 +42,89 @@ export class ClientsService {
   }
 
   /**
+   * Clientes de un partner con estadísticas (admin y staff user).
+   */
+  async getClientsForPartnerWithStats(partnerId: number): Promise<
+    Array<{
+      id: number;
+      full_name: string;
+      email: string;
+      totalRequests: number;
+      activeRequests: number;
+      completedRequests: number;
+      createdAt: Date;
+      lastRequestDate: Date | null;
+    }>
+  > {
+    try {
+      const partnerUser = await this.userRepository.findOne({
+        where: { id: partnerId, type: 'partner' },
+      });
+      if (!partnerUser) {
+        throw new NotFoundException('Partner no encontrado');
+      }
+      const clients = await this.clientRepository.find({
+        where: { partnerId },
+        relations: ['user'],
+        order: { createdAt: 'DESC' },
+      });
+      const rows = await Promise.all(
+        clients.map(async (c) => {
+          const stats = await this.getClientStats(c.id).catch(() => ({
+            totalRequests: 0,
+            activeRequests: 0,
+            completedRequests: 0,
+          }));
+          const lastReq = await this.requestRepository.findOne({
+            where: { clientId: c.id },
+            order: { createdAt: 'DESC' },
+            select: ['createdAt'],
+          });
+          return {
+            id: c.id,
+            full_name: c.full_name,
+            email: c.email,
+            totalRequests: stats.totalRequests,
+            activeRequests: stats.activeRequests,
+            completedRequests: stats.completedRequests,
+            createdAt: c.createdAt,
+            lastRequestDate: lastReq?.createdAt ?? null,
+          };
+        }),
+      );
+      return rows;
+    } catch (e) {
+      if (e instanceof NotFoundException) {
+        throw e;
+      }
+      console.error('Error al obtener clientes del partner:', e);
+      throw new InternalServerErrorException(
+        'No se pudieron obtener los clientes del partner',
+      );
+    }
+  }
+
+  /**
    * Obtener clientes del admin
    * El admin ve:
    * 1. Clientes de la tabla clients sin partner asignado
    * 2. Usuarios con type: 'client' que no tienen registro en clients
    */
-  async getAdminClients(): Promise<Client[]> {
+  async getAdminClients(options?: {
+    page?: number;
+    limit?: number;
+    q?: string;
+    status?: 'all' | 'active' | 'inactive';
+  }): Promise<{
+    data: Array<Record<string, unknown> & { requestClientId: number | null }>;
+    total: number;
+    page: number;
+    limit: number;
+  }> {
     try {
+      const page = Math.max(1, options?.page ?? 1);
+      const limit = Math.min(100, Math.max(1, options?.limit ?? 12));
+
       // 1. Obtener clientes de la tabla clients sin partner
       const clientsFromTable = await this.clientRepository.find({
         where: {
@@ -84,6 +160,7 @@ export class ClientsService {
         const client = new Client();
         // Usar el userId como ID temporal (no habrá conflictos porque son tablas diferentes)
         // El frontend puede usar userId para identificar que es un usuario
+        (client as any).isUserOnlyListItem = true;
         client.id = user.id;
         client.userId = user.id;
         client.full_name = `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username || user.email;
@@ -98,17 +175,46 @@ export class ClientsService {
         return client;
       });
 
-      // 5. Combinar y devolver
+      // 5. Combinar y ordenar
       const allClients = [...clientsFromTable, ...clientsFromUsers];
-      
-      // Ordenar por fecha de creación descendente
+
       allClients.sort((a, b) => {
         const dateA = a.createdAt instanceof Date ? a.createdAt : new Date(a.createdAt);
         const dateB = b.createdAt instanceof Date ? b.createdAt : new Date(b.createdAt);
         return dateB.getTime() - dateA.getTime();
       });
 
-      return allClients;
+      let filtered = allClients;
+      const q = options?.q?.trim().toLowerCase();
+      if (q) {
+        filtered = filtered.filter(
+          c =>
+            (c.full_name || '').toLowerCase().includes(q) ||
+            (c.email || '').toLowerCase().includes(q) ||
+            (c.company || '').toLowerCase().includes(q),
+        );
+      }
+      const statusFilter = options?.status ?? 'all';
+      if (statusFilter === 'active') {
+        filtered = filtered.filter(c => !!c.status);
+      } else if (statusFilter === 'inactive') {
+        filtered = filtered.filter(c => !c.status);
+      }
+
+      const total = filtered.length;
+      const skip = (page - 1) * limit;
+      const pageRows = filtered.slice(skip, skip + limit);
+      const data = pageRows.map((c) => {
+        const isUserOnly = !!(c as any).isUserOnlyListItem;
+        const requestClientId = isUserOnly ? null : c.id;
+        const { isUserOnlyListItem: _omit, ...rest } = c as any;
+        return {
+          ...rest,
+          requestClientId,
+        };
+      });
+
+      return { data, total, page, limit };
     } catch (e) {
       console.error('Error al obtener clientes del admin:', e);
       throw new InternalServerErrorException(
@@ -344,22 +450,20 @@ export class ClientsService {
     completedRequests: number;
   }> {
     try {
-      // 1. Primero intentar buscar en la tabla clients
-      let client = await this.clientRepository.findOne({
+      // requests.client_id es FK a clients.id (no users.id)
+      const client = await this.clientRepository.findOne({
         where: { id },
         relations: ['user'],
       });
 
-      let userIdForRequests: number | undefined;
+      let effectiveClientId: number | null = null;
 
       if (client) {
-        // Cliente encontrado en la tabla clients
         if (partnerId && client.partnerId !== partnerId) {
           throw new NotFoundException('Cliente no encontrado');
         }
-        userIdForRequests = client.userId || id;
+        effectiveClientId = client.id;
       } else {
-        // 2. Si no se encuentra, buscar en la tabla users (puede ser un usuario con type: 'client')
         const user = await this.userRepository.findOne({
           where: { id, type: 'client' },
         });
@@ -368,19 +472,32 @@ export class ClientsService {
           throw new NotFoundException('Cliente no encontrado');
         }
 
-        // Si es un usuario, usar su ID directamente
-        userIdForRequests = user.id;
+        const linkedClient = await this.clientRepository.findOne({
+          where: { userId: user.id },
+        });
+
+        if (linkedClient) {
+          if (partnerId && linkedClient.partnerId !== partnerId) {
+            throw new NotFoundException('Cliente no encontrado');
+          }
+          effectiveClientId = linkedClient.id;
+        }
       }
 
-      // 3. Buscar requests por clientId (que en Request.entity es el ID del usuario)
-      const where: any = { clientId: userIdForRequests };
-      
-      if (partnerId) {
-        // Si hay partnerId, también filtrar por partnerId en las requests
-        where.partnerId = partnerId;
+      if (effectiveClientId == null) {
+        return {
+          totalRequests: 0,
+          activeRequests: 0,
+          completedRequests: 0,
+        };
       }
 
-      const allRequests = await this.requestRepository.find({ where });
+      const allRequests = await this.requestRepository.find({
+        where: {
+          clientId: effectiveClientId,
+          ...(partnerId ? { partnerId } : {}),
+        },
+      });
 
       return {
         totalRequests: allRequests.length,
@@ -400,6 +517,69 @@ export class ClientsService {
         'Error al obtener estadísticas del cliente',
       );
     }
+  }
+
+  /**
+   * Convierte el usuario asociado al cliente (type client → partner). Solo admin.
+   * `id` es clients.id salvo listItemUserOnly, entonces es users.id (listado solo usuario).
+   */
+  async convertClientToPartner(
+    id: number,
+    body?: { phone?: string; listItemUserOnly?: boolean },
+  ): Promise<{ user: User; message: string }> {
+    const e164Phone = /^\+[1-9]\d{6,14}$/;
+
+    let user: User | null = null;
+
+    if (body?.listItemUserOnly) {
+      user = await this.userRepository.findOne({
+        where: { id, type: 'client' },
+      });
+    } else {
+      const clientRow = await this.clientRepository.findOne({
+        where: { id },
+        relations: ['user'],
+      });
+
+      if (clientRow?.userId) {
+        user = await this.userRepository.findOne({
+          where: { id: clientRow.userId },
+        });
+      } else {
+        user = await this.userRepository.findOne({
+          where: { id, type: 'client' },
+        });
+      }
+    }
+
+    if (!user || user.type !== 'client') {
+      throw new NotFoundException(
+        'Usuario cliente no encontrado o el tipo no es client',
+      );
+    }
+
+    let phone = (body?.phone ?? user.phone ?? '').trim();
+    if (!phone) {
+      throw new BadRequestException(
+        'El teléfono es obligatorio para partners (formato internacional E.164, ej. +34600111222)',
+      );
+    }
+    if (!e164Phone.test(phone)) {
+      throw new BadRequestException(
+        'El teléfono debe estar en formato internacional (E.164).',
+      );
+    }
+
+    user.type = 'partner';
+    user.phone = phone;
+    const saved = await this.userRepository.save(user);
+    delete (saved as any).password;
+
+    return {
+      user: saved,
+      message:
+        'Usuario convertido a partner. Debe cerrar sesión e iniciar sesión de nuevo para aplicar el nuevo rol.',
+    };
   }
 
 }

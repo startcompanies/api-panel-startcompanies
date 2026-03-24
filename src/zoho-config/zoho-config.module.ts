@@ -16,6 +16,8 @@ import { RenovacionLlcRequest } from '../panel/requests/entities/renovacion-llc-
 import { CuentaBancariaRequest } from '../panel/requests/entities/cuenta-bancaria-request.entity';
 import { Member } from '../panel/requests/entities/member.entity';
 import { User } from '../shared/user/entities/user.entity';
+import { Client } from '../panel/clients/entities/client.entity';
+import { ZohoDealTimeline } from '../panel/requests/entities/zoho-deal-timeline.entity';
 
 @Module({
   imports: [
@@ -28,6 +30,8 @@ import { User } from '../shared/user/entities/user.entity';
       CuentaBancariaRequest,
       Member,
       User,
+      Client,
+      ZohoDealTimeline,
     ]),
     HttpModule,
   ],

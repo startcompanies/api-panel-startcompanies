@@ -14,6 +14,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { RequestsService } from './requests.service';
+import { ServiceHistoryService } from './service-history.service';
 import { CreateRequestDto } from './dtos/create-request.dto';
 import { UpdateRequestDto } from './dtos/update-request.dto';
 import { ApproveRequestDto } from './dtos/approve-request.dto';
@@ -39,7 +40,10 @@ import {
 export class RequestsController {
   private readonly logger = new Logger(RequestsController.name);
   
-  constructor(private readonly requestsService: RequestsService) {}
+  constructor(
+    private readonly requestsService: RequestsService,
+    private readonly serviceHistoryService: ServiceHistoryService,
+  ) {}
 
   private toActorUser(req: any): PanelRequestActorUser | undefined {
     const u = req?.user;
@@ -85,6 +89,34 @@ export class RequestsController {
     const effectiveRole =
       (role as 'client' | 'partner') || (user?.type ?? 'client');
     return this.requestsService.findAllByUser(user.id, effectiveRole);
+  }
+
+  @Get('service-history')
+  @UseGuards(RolesGuard)
+  @Roles('client', 'partner')
+  @ApiOperation({
+    summary: 'Historial de servicios (Deals Zoho sincronizados)',
+    description:
+      'Cliente: solo sus deals vinculados por email del Contact. Partner: deals de sus clientes; opcional clientId para filtrar.',
+  })
+  @ApiQuery({
+    name: 'clientId',
+    required: false,
+    description: 'Filtrar por ID de cliente (partner: debe ser su cliente; client: debe ser el propio)',
+  })
+  @ApiResponse({ status: 200, description: 'Lista ordenada por fecha de modificación en Zoho' })
+  getServiceHistory(@Req() req: any, @Query('clientId') clientId?: string) {
+    const user = req.user;
+    const role: 'client' | 'partner' =
+      user?.type === 'partner' ? 'partner' : 'client';
+    if (clientId !== undefined && clientId !== '') {
+      const n = parseInt(clientId, 10);
+      if (Number.isNaN(n)) {
+        throw new BadRequestException('clientId inválido');
+      }
+      return this.serviceHistoryService.findForPortalUser(user.id, role, n);
+    }
+    return this.serviceHistoryService.findForPortalUser(user.id, role, undefined);
   }
 
   // Listar todas las solicitudes con filtros (admin y staff user)

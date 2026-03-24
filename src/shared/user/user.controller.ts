@@ -94,6 +94,17 @@ export class UserController {
     return this.userService.getPartnerStats(parseInt(id, 10));
   }
 
+  @Get('/partners/:id')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('admin', 'user')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Obtener un partner por ID (solo type partner)',
+  })
+  getPartnerById(@Param('id') id: string) {
+    return this.userService.getPartnerById(parseInt(id, 10));
+  }
+
   @Get('/clients')
   @UseGuards(AuthGuard, RolesGuard)
   @Roles('admin')

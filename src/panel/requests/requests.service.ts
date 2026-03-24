@@ -333,7 +333,9 @@ export class RequestsService {
             'cuentaBancariaRequest',
           ],
         });
-        this.logger.log(`[findAllByUser] requests by clientId=${client.id} count=${requests.length}`);
+        this.logger.log(
+          `[findAllByUser] requests by clientId=${client.id} count=${requests.length}`,
+        );
       } else {
         // Respaldo: solicitudes creadas desde wizard pueden tener Client por email sin userId; buscar por email del usuario
         const user = await this.userRepo.findOne({
@@ -2883,8 +2885,10 @@ export class RequestsService {
     if (filters?.type) {
       queryBuilder.andWhere('request.type = :type', { type: filters.type });
     }
-    if (filters?.clientId) {
-      queryBuilder.andWhere('request.clientId = :clientId', { clientId: filters.clientId });
+    if (filters?.clientId != null) {
+      queryBuilder.andWhere('request.clientId = :clientId', {
+        clientId: filters.clientId,
+      });
     }
     if (filters?.partnerId) {
       queryBuilder.andWhere('request.partnerId = :partnerId', { partnerId: filters.partnerId });

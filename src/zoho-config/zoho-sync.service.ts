@@ -10,6 +10,7 @@ import { CuentaBancariaRequest } from 'src/panel/requests/entities/cuenta-bancar
 import { Member } from 'src/panel/requests/entities/member.entity';
 import { User } from 'src/shared/user/entities/user.entity';
 import { Client } from 'src/panel/clients/entities/client.entity';
+import { ZohoDealTimeline } from 'src/panel/requests/entities/zoho-deal-timeline.entity';
 import { encodePassword } from 'src/shared/common/utils/bcrypt';
 import {
   normalizeCountryForZoho,
@@ -18,6 +19,11 @@ import {
   ZOHO_LLC_ESTRUCTURA_MULTI,
   ZOHO_LLC_ESTRUCTURA_SINGLE,
 } from './zoho-location-normalization';
+import { applyRenovacionClientStageAlias } from './zoho-renovacion-stage-client';
+import {
+  ZohoImportAccountsProgressEvent,
+  ZohoImportFullSyncMeta,
+} from './zoho-sync.dto';
 
 @Injectable()
 export class ZohoSyncService {
@@ -38,6 +44,10 @@ export class ZohoSyncService {
     private readonly memberRepo: Repository<Member>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    @InjectRepository(ZohoDealTimeline)
+    private readonly zohoDealTimelineRepo: Repository<ZohoDealTimeline>,
+    @InjectRepository(Client)
+    private readonly clientRepo: Repository<Client>,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -96,6 +106,87 @@ export class ZohoSyncService {
       return cleaned;
     }
     return `+${cleaned}`;
+  }
+
+  /** Stage del módulo Deals (COQL / REST); a veces la clave puede variar. */
+  private normalizeZohoDealStage(deal: Record<string, unknown> | null | undefined): string {
+    if (!deal) return '';
+    const raw = deal['Stage'] ?? deal['stage'];
+    if (raw == null) return '';
+    return String(raw).trim();
+  }
+
+  /**
+   * Solo correo desde Account/subform cuando el Contact del Deal no trae Email (necesario para crear usuario).
+   */
+  private mergeEmailFromAccountIfMissing(
+    account: Record<string, unknown>,
+    contactEmail: string,
+  ): string {
+    if ((contactEmail || '').trim()) return (contactEmail || '').trim();
+    const merged = this.mergeClientContactFromAccountFields(account, {
+      contactEmail: '',
+      contactPhone: '',
+      contactFirstName: '',
+      contactLastName: '',
+    });
+    return merged.contactEmail;
+  }
+
+  /**
+   * Completa nombre, apellido, correo y teléfono del cliente desde el Account
+   * (subform Contacto_Principal_LLC y campos principales), igual criterio que mapAccountToCuentaRequest.
+   * Uso: cuando no hay Deal o no se pudo cargar el Contact vinculado al Deal.
+   */
+  private mergeClientContactFromAccountFields(
+    account: Record<string, unknown>,
+    partial: {
+      contactEmail: string;
+      contactPhone: string;
+      contactFirstName: string;
+      contactLastName: string;
+    },
+  ): {
+    contactEmail: string;
+    contactPhone: string;
+    contactFirstName: string;
+    contactLastName: string;
+  } {
+    let { contactEmail, contactPhone, contactFirstName, contactLastName } = partial;
+    const sub = Array.isArray(account.Contacto_Principal_LLC)
+      ? (account.Contacto_Principal_LLC[0] as Record<string, unknown> | undefined)
+      : undefined;
+
+    if (sub) {
+      if (!(contactFirstName || '').trim()) {
+        contactFirstName = String(sub.Nombres_del_propietario || account.Nombre_s || '');
+      }
+      if (!(contactLastName || '').trim()) {
+        contactLastName = String(sub.Apellidos_del_propietario || account.Apellidos || '');
+      }
+      if (!(contactEmail || '').trim()) {
+        contactEmail = String(
+          sub.Correo_electr_nico_Propietario || account.Email_Laboral || account.Correo_electr_nico || '',
+        );
+      }
+      if (!(contactPhone || '').trim()) {
+        contactPhone = String(sub.Tel_fono_Contacto_Propietario || account.Phone || '');
+      }
+    } else {
+      if (!(contactFirstName || '').trim()) contactFirstName = String(account.Nombre_s || '');
+      if (!(contactLastName || '').trim()) contactLastName = String(account.Apellidos || '');
+      if (!(contactEmail || '').trim()) {
+        contactEmail = String(account.Email_Laboral || account.Correo_electr_nico || '');
+      }
+      if (!(contactPhone || '').trim()) contactPhone = String(account.Phone || '');
+    }
+
+    return {
+      contactEmail: (contactEmail || '').trim(),
+      contactPhone: (contactPhone || '').trim(),
+      contactFirstName: (contactFirstName || '').trim(),
+      contactLastName: (contactLastName || '').trim(),
+    };
   }
 
   /**
@@ -1119,25 +1210,49 @@ export class ZohoSyncService {
     return pickListValues.includes(value);
   }
 
+  private async emitImportProgress(
+    onProgress: ((e: ZohoImportAccountsProgressEvent) => void | Promise<void>) | undefined,
+    event: ZohoImportAccountsProgressEvent,
+  ): Promise<void> {
+    if (!onProgress) return;
+    await Promise.resolve(onProgress(event));
+  }
+
   /**
-   * Importa Accounts desde Zoho con subformularios y crea Requests en BD
+   * Total de Accounts que aplican al mismo filtro que el import (COQL count). Opcional para barras de progreso.
    */
-  async importAccountsFromZoho(
-    org: string = 'startcompanies',
-    limit: number = 200,
-    offset: number = 0,
-  ) {
+  private async getAccountsImportFilterCount(org: string): Promise<number | undefined> {
     try {
-      this.logger.log(`Iniciando importación de Accounts desde Zoho CRM`);
+      const whereClause = "(Tipo in ('Apertura', 'Renovación', 'Cuenta Bancaria'))";
+      const coqlQuery = `select count() from Accounts where ${whereClause}`;
+      const response = await this.zohoCrmService.queryWithCoql(coqlQuery, undefined, org);
+      const infoCount = (response as { info?: { count?: number } })?.info?.count;
+      if (typeof infoCount === 'number' && Number.isFinite(infoCount)) {
+        return infoCount;
+      }
+      const rows = response?.data;
+      if (!Array.isArray(rows) || rows.length === 0) {
+        return undefined;
+      }
+      const first = rows[0] as Record<string, unknown>;
+      const n =
+        first.count ??
+        first.Count ??
+        (typeof first['count()'] === 'number' ? first['count()'] : undefined);
+      if (typeof n === 'number' && Number.isFinite(n)) {
+        return n;
+      }
+    } catch (e: any) {
+      this.logger.warn(`COQL count Accounts no disponible: ${e?.message ?? e}`);
+    }
+    return undefined;
+  }
 
-      // Obtener metadata
-      const metadata = await this.getMetadata(org);
-
-      // Obtener Accounts usando COQL
-      // Nota: Los subformularios (Contacto_Principal_LLC, Socios_LLC) no se pueden obtener directamente en COQL
-      // Se obtendrán después usando getRecordById con el parámetro fields
-      // Campos según mapeo proporcionado (solo los que están en el mapeo)
-      const fields = [
+  /**
+   * Misma consulta COQL que usa el import de Accounts (filtro por Tipo).
+   */
+  private buildAccountsImportCoqlQuery(limit: number, offset: number): string {
+    const fields = [
         'id',
         'Account_Name',
         'Actividad_Principal_de_la_LLC',
@@ -1165,7 +1280,7 @@ export class ZohoSyncService {
         'La_LLC_se_constituy_con_Start_Companies',
         'A_o_de_la_Declaraci_n_Fiscal',
         'Nuevo_nombre_de_la_LLC',
-        'Declaraciones_Juradas_Anteriores',
+        // Declaraciones_Juradas_Anteriores: File Upload — COQL no soporta; viene en getRecordById.
         'Cu_nto_cost_abrir_la_LLC_en_Estados_Unidos',
         'Pagos_a_familiares_servicios',
         'Cu_nto_pag_la_LLC_a_empresas_locales_En_otro_Pa',
@@ -1203,7 +1318,8 @@ export class ZohoSyncService {
         'Fecha_de_nacimiento',
         'Nacionalidad1',
         'N_mero_de_pasaporte',
-        'Es_ciudadano_de_EE_UU',
+        // Nota: Es_ciudadano_de_EE_UU está en el subform Contacto_Principal_LLC; COQL de Accounts no lo admite en SELECT.
+        // Sigue disponible tras getRecordById (merge) y en filas del subform.
         // Campos necesarios para lógica
         'Tipo', // Necesario para determinar el tipo de request
         'Empresa', // Necesario para determinar si es Partner
@@ -1213,118 +1329,165 @@ export class ZohoSyncService {
         'Modified_Time',
       ];
 
-      // COQL sintaxis: LIMIT offset, limit (no LIMIT limit OFFSET offset)
-      // Construir la consulta con cuidado para evitar problemas de sintaxis
-      // Usar OR en lugar de IN ya que IN no funciona para este campo
-      // Nota: Los valores con espacios deben estar entre comillas simples
-      // Probar primero con campos básicos para identificar el problema
-      // Campos básicos para la consulta COQL (solo los del mapeo)
-      const basicFieldsForQuery = [
-        'id',
-        'Account_Name',
-        'Tipo',
-        'Estado_de_Registro',
-        'Estructura_Societaria',
-        'N_mero_de_EIN',
-        'Empresa',
-        'Partner_Email',
-        'Partner_Phone',
-        'Created_Time',
-        'Modified_Time',
-      ];
-      
-      // COQL sintaxis según ejemplo funcional: limit X offset Y (no limit offset, limit)
-      // Usar IN para múltiples valores (funciona según el ejemplo proporcionado)
-      const whereClause = "(Tipo in ('Apertura', 'Renovación', 'Cuenta Bancaria'))";
-      const coqlQuery = `select ${fields.join(', ')} from Accounts where ${whereClause} order by Created_Time desc limit ${limit} offset ${offset}`;
-      
+    const whereClause = "(Tipo in ('Apertura', 'Renovación', 'Cuenta Bancaria'))";
+    return `select ${fields.join(', ')} from Accounts where ${whereClause} order by Created_Time desc limit ${limit} offset ${offset}`;
+  }
+
+  private async fetchAllAccountsCoqlPagesForFullSync(
+    org: string,
+    batchSize: number,
+    onProgress?: (event: ZohoImportAccountsProgressEvent) => void | Promise<void>,
+  ): Promise<any[]> {
+    const allAccounts: any[] = [];
+    let offset = 0;
+    while (true) {
+      const coqlQuery = this.buildAccountsImportCoqlQuery(batchSize, offset);
+      this.logger.debug(`Consulta COQL (prefetch full sync): ${coqlQuery}`);
+      const response = await this.zohoCrmService.queryWithCoql(coqlQuery, undefined, org);
+      const batch = response.data || [];
+      allAccounts.push(...batch);
+      await this.emitImportProgress(onProgress, {
+        phase: 'prefetch_list',
+        accumulated: allAccounts.length,
+      });
+      if (batch.length < batchSize) {
+        break;
+      }
+      offset += batchSize;
+    }
+    return allAccounts;
+  }
+
+  private async processAccountRowsFromCoql(
+    org: string,
+    accounts: any[],
+    metadata: any,
+    onProgress?: (event: ZohoImportAccountsProgressEvent) => void | Promise<void>,
+    fullSyncMeta?: ZohoImportFullSyncMeta,
+  ): Promise<{
+    success: boolean;
+    total: number;
+    imported: number;
+    updated: number;
+    errors: any[];
+    details: any[];
+  }> {
+    this.logger.log(`Obteniendo Account completo con subformularios para ${accounts.length} Accounts...`);
+
+    const results = {
+      imported: 0,
+      updated: 0,
+      errors: [] as any[],
+      details: [] as any[],
+    };
+
+    /** Un solo bucle por account: detalle Zoho y luego import al panel (evita que el contador 1/N “vuelva a 1” tras terminar todos los detalles). */
+    for (let i = 0; i < accounts.length; i++) {
+      const account = accounts[i];
+      await this.emitImportProgress(onProgress, {
+        phase: 'fetch_detail',
+        current: i + 1,
+        total: accounts.length,
+        accountId: String(account.id),
+        accountName: account.Account_Name,
+        ...(fullSyncMeta ? { fullSync: fullSyncMeta } : {}),
+      });
+      try {
+        const fullAccount = await this.zohoCrmService.getRecordById(
+          'Accounts',
+          account.id,
+          org,
+          undefined,
+        );
+        if (fullAccount.data && fullAccount.data.length > 0) {
+          Object.assign(account, fullAccount.data[0]);
+          const hasContactoPrincipal = !!(fullAccount.data[0].Contacto_Principal_LLC);
+          const hasSocios = !!(fullAccount.data[0].Socios_LLC);
+          this.logger.log(`Account ${account.id} (${account.Account_Name}) - Subforms obtenidos: Contacto_Principal_LLC=${hasContactoPrincipal}, Socios_LLC=${hasSocios}`);
+          if (hasContactoPrincipal && Array.isArray(fullAccount.data[0].Contacto_Principal_LLC)) {
+            this.logger.log(`Contacto_Principal_LLC tiene ${fullAccount.data[0].Contacto_Principal_LLC.length} registro(s)`);
+            if (fullAccount.data[0].Contacto_Principal_LLC.length > 0) {
+              const prop = fullAccount.data[0].Contacto_Principal_LLC[0];
+              this.logger.log(`  - Propietario: ${prop.Nombres_del_propietario || ''} ${prop.Apellidos_del_propietario || ''}, Email: ${prop.Correo_electr_nico_Propietario || 'N/A'}`);
+            }
+          }
+          if (hasSocios && Array.isArray(fullAccount.data[0].Socios_LLC)) {
+            this.logger.log(`Socios_LLC tiene ${fullAccount.data[0].Socios_LLC.length} registro(s)`);
+            fullAccount.data[0].Socios_LLC.forEach((socio: any, idx: number) => {
+              this.logger.log(`  - Socio ${idx + 1}: ${socio.Nombres_del_Socio || ''} ${socio.Apellidos_del_Socio || ''}, Email: ${socio.Correo_electr_nico_Socio || 'N/A'}`);
+            });
+          } else if (hasSocios === false || fullAccount.data[0].Socios_LLC === null) {
+            this.logger.log(`Socios_LLC es null o no existe (Single Member LLC)`);
+          }
+        } else {
+          this.logger.warn(`No se obtuvieron datos completos para Account ${account.id}`);
+        }
+      } catch (error: any) {
+        this.logger.warn(`Error al obtener Account completo para ${account.id}:`, error.message);
+      }
+
+      await this.emitImportProgress(onProgress, {
+        phase: 'import',
+        current: i + 1,
+        total: accounts.length,
+        accountId: String(account.id),
+        accountName: account.Account_Name,
+        ...(fullSyncMeta ? { fullSync: fullSyncMeta } : {}),
+      });
+      try {
+        const result = await this.importAccountToRequest(account, metadata, org);
+        if (result.created) {
+          results.imported++;
+        } else {
+          results.updated++;
+        }
+        results.details.push(result);
+      } catch (error: any) {
+        results.errors.push({
+          accountId: account.id,
+          accountName: account.Account_Name,
+          error: error.message,
+        });
+        this.logger.error(`Error al importar Account ${account.id}:`, error);
+      }
+    }
+
+    this.logger.log(`Obtenidos y procesados ${accounts.length} Accounts de Zoho`);
+
+    return {
+      success: true,
+      total: accounts.length,
+      ...results,
+    };
+  }
+
+  /**
+   * Importa Accounts desde Zoho con subformularios y crea Requests en BD
+   */
+  async importAccountsFromZoho(
+    org: string = 'startcompanies',
+    limit: number = 200,
+    offset: number = 0,
+    onProgress?: (event: ZohoImportAccountsProgressEvent) => void | Promise<void>,
+    fullSyncMeta?: ZohoImportFullSyncMeta,
+  ) {
+    try {
+      this.logger.log(`Iniciando importación de Accounts desde Zoho CRM`);
+      const metadata = await this.getMetadata(org);
+      const coqlQuery = this.buildAccountsImportCoqlQuery(limit, offset);
       this.logger.debug(`Consulta COQL: ${coqlQuery}`);
-      
       const response = await this.zohoCrmService.queryWithCoql(coqlQuery, undefined, org);
       const accounts = response.data || [];
-      
-      // Obtener Account completo con todos los campos y subformularios para cada Account
-      // Nota: Si no se especifican campos, Zoho devuelve todos los campos automáticamente incluyendo subforms
-      this.logger.log(`Obteniendo Account completo con subformularios para ${accounts.length} Accounts...`);
-      for (const account of accounts) {
-        try {
-          // Obtener Account completo SIN especificar campos para que devuelva TODO (incluyendo subforms)
-          // Esto asegura que se obtengan todos los campos necesarios y los subformularios
-          const fullAccount = await this.zohoCrmService.getRecordById(
-            'Accounts',
-            account.id,
-            org,
-            undefined, // No especificar campos = obtener todos los campos + subforms
-          );
-          
-          // Combinar datos del COQL con los datos completos del Account (incluyendo subformularios)
-          if (fullAccount.data && fullAccount.data.length > 0) {
-            // Combinar todos los campos del Account completo con los datos del COQL
-            Object.assign(account, fullAccount.data[0]);
-            
-            // Log para validar que los subforms se obtuvieron
-            const hasContactoPrincipal = !!(fullAccount.data[0].Contacto_Principal_LLC);
-            const hasSocios = !!(fullAccount.data[0].Socios_LLC);
-            this.logger.log(`Account ${account.id} (${account.Account_Name}) - Subforms obtenidos: Contacto_Principal_LLC=${hasContactoPrincipal}, Socios_LLC=${hasSocios}`);
-            
-            if (hasContactoPrincipal && Array.isArray(fullAccount.data[0].Contacto_Principal_LLC)) {
-              this.logger.log(`Contacto_Principal_LLC tiene ${fullAccount.data[0].Contacto_Principal_LLC.length} registro(s)`);
-              if (fullAccount.data[0].Contacto_Principal_LLC.length > 0) {
-                const prop = fullAccount.data[0].Contacto_Principal_LLC[0];
-                this.logger.log(`  - Propietario: ${prop.Nombres_del_propietario || ''} ${prop.Apellidos_del_propietario || ''}, Email: ${prop.Correo_electr_nico_Propietario || 'N/A'}`);
-              }
-            }
-            if (hasSocios && Array.isArray(fullAccount.data[0].Socios_LLC)) {
-              this.logger.log(`Socios_LLC tiene ${fullAccount.data[0].Socios_LLC.length} registro(s)`);
-              fullAccount.data[0].Socios_LLC.forEach((socio: any, idx: number) => {
-                this.logger.log(`  - Socio ${idx + 1}: ${socio.Nombres_del_Socio || ''} ${socio.Apellidos_del_Socio || ''}, Email: ${socio.Correo_electr_nico_Socio || 'N/A'}`);
-              });
-            } else if (hasSocios === false || fullAccount.data[0].Socios_LLC === null) {
-              this.logger.log(`Socios_LLC es null o no existe (Single Member LLC)`);
-            }
-          } else {
-            this.logger.warn(`No se obtuvieron datos completos para Account ${account.id}`);
-          }
-        } catch (error: any) {
-          this.logger.warn(`Error al obtener Account completo para ${account.id}:`, error.message);
-          // Continuar sin subformularios si falla
-        }
-      }
 
-      this.logger.log(`Obtenidos ${accounts.length} Accounts de Zoho`);
+      await this.emitImportProgress(onProgress, {
+        phase: 'coql',
+        pageTotal: accounts.length,
+        offset,
+        limit,
+        ...(fullSyncMeta ? { fullSync: fullSyncMeta } : {}),
+      });
 
-      const results = {
-        imported: 0,
-        updated: 0,
-        errors: [] as any[],
-        details: [] as any[],
-      };
-
-      // Procesar cada Account
-      for (const account of accounts) {
-        try {
-          const result = await this.importAccountToRequest(account, metadata, org);
-          if (result.created) {
-            results.imported++;
-          } else {
-            results.updated++;
-          }
-          results.details.push(result);
-        } catch (error: any) {
-          results.errors.push({
-            accountId: account.id,
-            accountName: account.Account_Name,
-            error: error.message,
-          });
-          this.logger.error(`Error al importar Account ${account.id}:`, error);
-        }
-      }
-
-      return {
-        success: true,
-        total: accounts.length,
-        ...results,
-      };
+      return await this.processAccountRowsFromCoql(org, accounts, metadata, onProgress, fullSyncMeta);
     } catch (error: any) {
       this.logger.error('Error al importar Accounts desde Zoho:', error);
       throw new HttpException(
@@ -1427,13 +1590,12 @@ export class ZohoSyncService {
             });
           }
         } else if (requestType === 'cuenta-bancaria') {
-          // Para cuenta bancaria, buscar por legalBusinessIdentifier o applicantEmail
+          // Por legal_business_identifier (applicant_email fue eliminado de la tabla en migración)
           const cuenta = await this.cuentaRepo
             .createQueryBuilder('c')
             .leftJoinAndSelect('c.request', 'request')
-            .where('c.legalBusinessIdentifier = :name OR c.applicantEmail = :email', {
+            .where('c.legal_business_identifier = :name', {
               name: account.Account_Name,
-              email: account.Correo_electr_nico,
             })
             .getOne();
           if (cuenta?.request) {
@@ -1466,13 +1628,11 @@ export class ZohoSyncService {
         });
       }
 
-      // PRIMERO: Obtener/crear usuario (cliente o partner) para asignar clientId
-      // Esto debe hacerse ANTES de guardar el Request porque clientId es NOT NULL
+      // PRIMERO: Partner (si aplica), luego Deal → User cliente y fila en `clients` (FK requests.client_id)
       // Nota: En este flujo de sync Zoho -> BD NO se envían correos de bienvenida.
-      let clientId: number | undefined;
-      
+      let partnerUserId: number | undefined;
+
       if (account.Empresa === 'Partner') {
-        // Procesar Partner primero
         if (!account.Partner_Email) {
           throw new Error(`Account ${account.id} tiene Empresa=Partner pero no tiene Partner_Email`);
         }
@@ -1483,7 +1643,6 @@ export class ZohoSyncService {
 
         if (!partnerUser) {
           let username = account.Partner_Email.split('@')[0];
-          // Verificar si el username ya existe y generar uno único si es necesario
           let existingUserByUsername = await queryRunner.manager.findOne(User, {
             where: { username },
           });
@@ -1516,129 +1675,249 @@ export class ZohoSyncService {
 
         if (partnerUser) {
           request.partnerId = partnerUser.id;
-          clientId = partnerUser.id; // Para Partners, clientId = partnerId
+          partnerUserId = partnerUser.id;
+        }
+      }
+
+      if (account.Empresa === 'Partner' && partnerUserId == null) {
+        throw new Error(`No se pudo obtener/crear usuario partner para Account ${account.id}`);
+      }
+
+      // Si hay Deal en Zoho, debe existir Contact_Name y poder cargarse; el cliente es ese Contact (correo vacío se puede completar desde Account).
+      let contactEmail = '';
+      let contactPhone = '';
+      let contactFirstName = '';
+      let contactLastName = '';
+      let dealContactLoaded = false;
+      let dealStage: string | undefined = undefined;
+
+      let deals: Record<string, unknown>[] = [];
+      try {
+        const dealCoqlQuery = `SELECT Contact_Name, Stage FROM Deals WHERE Account_Name.id = '${account.id}' ORDER BY Modified_Time DESC LIMIT 1`;
+        const dealsResponse = await this.zohoCrmService.queryWithCoql(dealCoqlQuery, undefined, org);
+        deals = dealsResponse.data || [];
+      } catch (dealCoqlError: any) {
+        this.logger.warn(
+          `No se pudo consultar Deals para Account ${account.id}: ${dealCoqlError.message}. Se intentará importar solo con datos del Account.`,
+        );
+      }
+
+      if (deals.length > 0) {
+        const deal = deals[0];
+        dealStage = this.normalizeZohoDealStage(deal);
+
+        if (!deal.Contact_Name) {
+          throw new Error(
+            `Account ${account.id}: el Deal más reciente debe tener un Contact asignado (Contact_Name) en Zoho. Corrige el Deal e importa de nuevo.`,
+          );
+        }
+
+        const contactId =
+          typeof deal.Contact_Name === 'object'
+            ? (deal.Contact_Name as { id?: string }).id
+            : deal.Contact_Name;
+
+        if (!contactId) {
+          throw new Error(
+            `Account ${account.id}: Contact_Name del Deal no tiene id válido. Revisa el lookup en Zoho.`,
+          );
+        }
+
+        let contactResponse: { data?: Record<string, unknown>[] };
+        try {
+          contactResponse = await this.zohoCrmService.getRecordById(
+            'Contacts',
+            String(contactId),
+            org,
+            undefined,
+          );
+        } catch (contactError: any) {
+          throw new Error(
+            `Account ${account.id}: no se pudo cargar el Contact ${contactId} del Deal: ${contactError.message}`,
+          );
+        }
+
+        if (!contactResponse.data?.length) {
+          throw new Error(
+            `Account ${account.id}: el Contact ${contactId} enlazado al Deal no existe o no es accesible en Zoho.`,
+          );
+        }
+
+        const contact = contactResponse.data[0];
+        const zohoContactText = (v: unknown) =>
+          v == null || v === '' ? '' : String(v);
+        contactEmail =
+          zohoContactText(contact.Email) ||
+          zohoContactText(contact.Secondary_Email) ||
+          zohoContactText(contact.Secondary_Email_1);
+        contactPhone = zohoContactText(contact.Phone) || zohoContactText(contact.Mobile);
+        contactFirstName = zohoContactText(contact.First_Name);
+        contactLastName = zohoContactText(contact.Last_Name);
+        dealContactLoaded = true;
+
+        this.logger.log(
+          `Cliente desde Contact del Deal (Contact_Name id=${contactId}) para Account ${account.id}: email=${contactEmail || '(vacío)'}`,
+        );
+      }
+
+      if (dealContactLoaded) {
+        contactEmail = (contactEmail || '').trim();
+        if (!contactEmail) {
+          contactEmail = this.mergeEmailFromAccountIfMissing(account, contactEmail);
         }
       } else {
-        // PRIMERO: Buscar Deal relacionado para obtener contacto principal
-        // SOLO migrar si hay un Deal (ganado o en proceso) con Contact_Name
-        let contactEmail: string = '';
-        let contactPhone: string = '';
-        let contactFirstName: string = '';
-        let contactLastName: string = '';
-        let dealFound = false;
-        let dealStage: string | undefined = undefined;
-
-        try {
-          // Buscar Deal relacionado con este Account
-          const dealCoqlQuery = `SELECT Contact_Name, Stage FROM Deals WHERE Account_Name.id = '${account.id}' ORDER BY Modified_Time DESC LIMIT 1`;
-          const dealsResponse = await this.zohoCrmService.queryWithCoql(dealCoqlQuery, undefined, org);
-          const deals = dealsResponse.data || [];
-
-          if (deals.length > 0) {
-            const deal = deals[0];
-            // Guardar el Stage del Deal para usarlo después
-            dealStage = deal.Stage || '';
-            
-            // Verificar que el Deal esté ganado o en proceso
-            const isWonOrInProcess = dealStage && (
-              dealStage.includes('Activa') || 
-              dealStage.includes('Finalizada') || 
-              dealStage.includes('Renovado') ||
-              dealStage.includes('Abierta') ||
-              dealStage.includes('En Proceso') ||
-              !dealStage.includes('Perdida')
-            );
-
-            if (isWonOrInProcess && deal.Contact_Name) {
-              // Obtener información completa del Contact desde Zoho
-              const contactId = typeof deal.Contact_Name === 'object' ? deal.Contact_Name.id : deal.Contact_Name;
-              
-              if (contactId) {
-                try {
-                  const contactFields = 'Email, Phone, Mobile, First_Name, Last_Name';
-                  const contactResponse = await this.zohoCrmService.getRecordById('Contacts', contactId, org, contactFields);
-                  
-                  if (contactResponse.data && contactResponse.data.length > 0) {
-                    const contact = contactResponse.data[0];
-                    contactEmail = contact.Email || '';
-                    contactPhone = contact.Phone || contact.Mobile || '';
-                    contactFirstName = contact.First_Name || '';
-                    contactLastName = contact.Last_Name || '';
-                    dealFound = true;
-                    
-                    this.logger.log(`Contacto principal obtenido desde Deal para Account ${account.id}: ${contactEmail}`);
-                  }
-                } catch (contactError: any) {
-                  this.logger.warn(`Error al obtener Contact ${contactId} del Deal: ${contactError.message}`);
-                }
-              }
-            }
-          }
-        } catch (dealError: any) {
-          this.logger.warn(`Error al buscar Deal para Account ${account.id}: ${dealError.message}`);
-        }
-
-        // Si no hay Deal válido, no migrar este Account
-        if (!dealFound || !contactEmail) {
-          throw new Error(`Account ${account.id} no tiene Deal relacionado válido (ganado o en proceso) con Contact_Name. Se omite la migración.`);
-        }
-        
-        // Guardar el Stage del Deal en la Request (para Apertura LLC y Cuenta Bancaria)
-        if ((requestType === 'apertura-llc' || requestType === 'cuenta-bancaria') && dealStage) {
-          request.stage = dealStage;
-          this.logger.log(`Stage del Deal guardado en Request: ${dealStage} para Account ${account.id}`);
-        }
-
-        let clientUser = await this.userRepo.findOne({
-          where: { email: contactEmail },
+        const mergedContact = this.mergeClientContactFromAccountFields(account, {
+          contactEmail,
+          contactPhone,
+          contactFirstName,
+          contactLastName,
         });
+        contactEmail = mergedContact.contactEmail;
+        contactPhone = mergedContact.contactPhone;
+        contactFirstName = mergedContact.contactFirstName;
+        contactLastName = mergedContact.contactLastName;
+      }
 
-        if (!clientUser) {
-          let username = contactEmail.split('@')[0];
-          // Verificar si el username ya existe y generar uno único si es necesario
-          let existingUserByUsername = await queryRunner.manager.findOne(User, {
+      if (!contactEmail) {
+        throw new Error(
+          dealContactLoaded
+            ? `Account ${account.id}: el Contact del Deal no tiene correo y no hay correo en Account/subform para completar. Se omite la migración.`
+            : `Account ${account.id} no tiene correo identificable (no hay Deal o no se pudo consultar; use Contacto Principal LLC / Account). Se omite la migración.`,
+        );
+      }
+
+      const normalizedContactPhone = this.normalizePhoneNumber(contactPhone) || '';
+      const resolvedFullName = dealContactLoaded
+        ? `${contactFirstName} ${contactLastName}`.trim() || contactEmail
+        : `${contactFirstName} ${contactLastName}`.trim() ||
+          `${account.Nombre_s || ''} ${account.Apellidos || ''}`.trim() ||
+          contactEmail;
+      const resolvedFirstName = dealContactLoaded
+        ? (contactFirstName || '').trim()
+        : (contactFirstName || '').trim() || (account.Nombre_s || '').trim();
+      const resolvedLastName = dealContactLoaded
+        ? (contactLastName || '').trim()
+        : (contactLastName || '').trim() || (account.Apellidos || '').trim();
+
+      // Stage del Deal aplica a los tres tipos; renovación usa alias para vista cliente
+      if (dealStage) {
+        const stageForRequest =
+          requestType === 'renovacion-llc'
+            ? applyRenovacionClientStageAlias(dealStage)
+            : dealStage;
+        request.stage = stageForRequest;
+        if (requestType === 'renovacion-llc' && stageForRequest !== dealStage) {
+          this.logger.log(
+            `Stage guardado (alias cliente): ${stageForRequest} (Zoho: ${dealStage}) para Account ${account.id}`,
+          );
+        } else {
+          this.logger.log(`Stage del Deal guardado en Request: ${stageForRequest} para Account ${account.id}`);
+        }
+      }
+
+      let clientUser = await this.userRepo.findOne({
+        where: { email: contactEmail },
+      });
+
+      if (!clientUser) {
+        let username = contactEmail.split('@')[0];
+        let existingUserByUsername = await queryRunner.manager.findOne(User, {
+          where: { username },
+        });
+        let counter = 1;
+        while (existingUserByUsername) {
+          username = `${contactEmail.split('@')[0]}${counter}`;
+          existingUserByUsername = await queryRunner.manager.findOne(User, {
             where: { username },
           });
-          let counter = 1;
-          while (existingUserByUsername) {
-            username = `${contactEmail.split('@')[0]}${counter}`;
-            existingUserByUsername = await queryRunner.manager.findOne(User, {
-              where: { username },
-            });
-            counter++;
-          }
-
-          const defaultPassword = this.generateTemporaryPassword();
-          const hashedPassword = encodePassword(defaultPassword);
-
-          clientUser = queryRunner.manager.create(User, {
-            username,
-            email: contactEmail,
-            password: hashedPassword,
-            first_name: contactFirstName,
-            last_name: contactLastName,
-            phone: this.normalizePhoneNumber(contactPhone) || '',
-            type: 'client',
-            status: true,
-          });
-
-          clientUser = await queryRunner.manager.save(User, clientUser);
-          if (clientUser) {
-            this.logger.log(`Usuario cliente creado: ${clientUser.id} (desde Deal)`);
-          }
+          counter++;
         }
 
+        const defaultPassword = this.generateTemporaryPassword();
+        const hashedPassword = encodePassword(defaultPassword);
+
+        clientUser = queryRunner.manager.create(User, {
+          username,
+          email: contactEmail,
+          password: hashedPassword,
+          first_name: resolvedFirstName,
+          last_name: resolvedLastName,
+          phone: normalizedContactPhone,
+          type: 'client',
+          status: true,
+        });
+
+        clientUser = await queryRunner.manager.save(User, clientUser);
         if (clientUser) {
-          clientId = clientUser.id;
+          this.logger.log(`Usuario cliente creado: ${clientUser.id} (desde Deal)`);
+        }
+      } else {
+        let userUpdated = false;
+        if (resolvedFirstName && clientUser.first_name !== resolvedFirstName) {
+          clientUser.first_name = resolvedFirstName;
+          userUpdated = true;
+        }
+        if (resolvedLastName && clientUser.last_name !== resolvedLastName) {
+          clientUser.last_name = resolvedLastName;
+          userUpdated = true;
+        }
+        if (normalizedContactPhone && clientUser.phone !== normalizedContactPhone) {
+          clientUser.phone = normalizedContactPhone;
+          userUpdated = true;
+        }
+        if (userUpdated) {
+          clientUser = await queryRunner.manager.save(User, clientUser);
+          this.logger.log(`Usuario cliente ${clientUser.id} actualizado desde Contact/Account (sync Zoho)`);
         }
       }
 
-      if (!clientId) {
-        throw new Error(`No se pudo obtener/crear usuario para Account ${account.id}`);
+      if (!clientUser) {
+        throw new Error(`No se pudo obtener/crear usuario cliente para Account ${account.id}`);
       }
 
-      // Asignar clientId al Request
-      request.clientId = clientId;
+      let clientRow = await queryRunner.manager.findOne(Client, {
+        where: { email: contactEmail },
+      });
+      if (!clientRow) {
+        clientRow = await queryRunner.manager.findOne(Client, {
+          where: { userId: clientUser.id },
+        });
+      }
+      if (!clientRow) {
+        clientRow = queryRunner.manager.create(Client, {
+          email: contactEmail,
+          full_name: resolvedFullName,
+          phone: normalizedContactPhone,
+          userId: clientUser.id,
+          partnerId: partnerUserId,
+          status: true,
+        });
+        clientRow = await queryRunner.manager.save(Client, clientRow);
+        this.logger.log(`Cliente (tabla clients) creado en sync Zoho: ${clientRow.id} — ${contactEmail}`);
+      } else {
+        let updated = false;
+        if (!clientRow.userId) {
+          clientRow.userId = clientUser.id;
+          updated = true;
+        }
+        if (partnerUserId && !clientRow.partnerId) {
+          clientRow.partnerId = partnerUserId;
+          updated = true;
+        }
+        if (resolvedFullName && clientRow.full_name !== resolvedFullName) {
+          clientRow.full_name = resolvedFullName;
+          updated = true;
+        }
+        if (normalizedContactPhone && clientRow.phone !== normalizedContactPhone) {
+          clientRow.phone = normalizedContactPhone;
+          updated = true;
+        }
+        if (updated) {
+          clientRow = await queryRunner.manager.save(Client, clientRow);
+        }
+      }
+
+      request.clientId = clientRow.id;
 
       // Generar permalink si Account tiene workDriveId Y el Request no tiene workDriveUrlExternal
       if (account.workDriveId && !request.workDriveUrlExternal) {
@@ -2311,7 +2590,7 @@ export class ZohoSyncService {
 
       if (deals.length > 0) {
         const deal = deals[0];
-        const dealStage = deal.Stage || '';
+        const dealStage = this.normalizeZohoDealStage(deal);
         const newStatus = this.mapDealStageToRequestStatus(dealStage, deal.Type);
         
         // Actualizar status si cambió
@@ -2320,11 +2599,14 @@ export class ZohoSyncService {
           needsUpdate = true;
         }
         
-        // Actualizar stage con el Stage del Deal (para Apertura LLC y Cuenta Bancaria)
-        if ((request.type === 'apertura-llc' || request.type === 'cuenta-bancaria') && dealStage && dealStage !== request.stage) {
-          request.stage = dealStage;
+        const stageForRequest =
+          request.type === 'renovacion-llc'
+            ? applyRenovacionClientStageAlias(dealStage)
+            : dealStage;
+        if (dealStage && stageForRequest !== request.stage) {
+          request.stage = stageForRequest;
           needsUpdate = true;
-          this.logger.log(`Request ${request.id} actualizado a stage: ${dealStage} desde Deal`);
+          this.logger.log(`Request ${request.id} actualizado a stage: ${stageForRequest} desde Deal`);
         }
       }
 
@@ -2381,7 +2663,7 @@ export class ZohoSyncService {
       
       if (needsUpdate) {
         await this.requestRepository.save(request);
-        const dealStage = deals.length > 0 ? deals[0].Stage || '' : '';
+        const dealStage = deals.length > 0 ? this.normalizeZohoDealStage(deals[0]) : '';
         this.logger.log(`Request ${request.id} actualizado - status: ${request.status}, stage: ${request.stage || 'N/A'}, workDriveUrlExternal: ${request.workDriveUrlExternal ? 'Sí' : 'No'}`);
       }
     } catch (error: any) {
@@ -2413,9 +2695,9 @@ export class ZohoSyncService {
       return 'en-proceso';
     }
 
-    // Renovaciones
+    // Renovaciones (Stage crudo de Zoho; no aplicar alias aquí)
     if (type === 'Renovación') {
-      if (stage === 'Renovado') return 'completada';
+      if (stage === 'Renovado' || stage === 'Renovación completa') return 'completada';
       if (stage === 'Renovación Abierta') return 'pendiente';
       // Todos los demás → en-proceso
       return 'en-proceso';
@@ -2473,7 +2755,7 @@ export class ZohoSyncService {
           }
 
           // Mapear Stage → status
-          const dealStage = deal.Stage || '';
+          const dealStage = this.normalizeZohoDealStage(deal);
           const newStatus = this.mapDealStageToRequestStatus(dealStage, deal.Type);
           
           let needsUpdate = false;
@@ -2484,16 +2766,19 @@ export class ZohoSyncService {
             needsUpdate = true;
           }
           
-          // Actualizar stage con el Stage del Deal (para Apertura LLC y Cuenta Bancaria)
-          if ((request.type === 'apertura-llc' || request.type === 'cuenta-bancaria') && dealStage && dealStage !== request.stage) {
-            request.stage = dealStage;
+          const stageForRequest =
+            request.type === 'renovacion-llc'
+              ? applyRenovacionClientStageAlias(dealStage)
+              : dealStage;
+          if (dealStage && stageForRequest !== request.stage) {
+            request.stage = stageForRequest;
             needsUpdate = true;
           }
           
           if (needsUpdate) {
             await this.requestRepository.save(request);
             results.updated++;
-            this.logger.log(`Request ${request.id} actualizado a status: ${newStatus || request.status} y stage: ${dealStage || request.stage} desde Deal Stage: ${dealStage}`);
+            this.logger.log(`Request ${request.id} actualizado a status: ${newStatus || request.status} y stage: ${stageForRequest || request.stage} desde Deal Stage: ${dealStage}`);
           }
         } catch (error: any) {
           results.errors.push({
@@ -2519,6 +2804,244 @@ export class ZohoSyncService {
     }
   }
 
+  private parseZohoLookupField(
+    field: unknown,
+  ): { id?: string; name?: string } {
+    if (!field || typeof field !== 'object') return {};
+    const o = field as Record<string, unknown>;
+    const id = o.id != null ? String(o.id) : undefined;
+    const name = o.name != null ? String(o.name) : undefined;
+    return { id, name };
+  }
+
+  private parseZohoDateTimeForTimeline(value: unknown): Date | undefined {
+    if (value == null || value === '') return undefined;
+    if (value instanceof Date) {
+      return Number.isNaN(value.getTime()) ? undefined : value;
+    }
+    const d = new Date(String(value));
+    return Number.isNaN(d.getTime()) ? undefined : d;
+  }
+
+  private async fetchContactDetailsForTimeline(
+    contactIds: string[],
+    org: string,
+  ): Promise<
+    Map<
+      string,
+      {
+        email?: string;
+        firstName?: string;
+        lastName?: string;
+        tipoContacto?: string;
+      }
+    >
+  > {
+    const map = new Map<
+      string,
+      {
+        email?: string;
+        firstName?: string;
+        lastName?: string;
+        tipoContacto?: string;
+      }
+    >();
+    const fields = 'Email,First_Name,Last_Name,Tipo_de_Contacto';
+    for (const id of contactIds) {
+      try {
+        const res = await this.zohoCrmService.getRecordById(
+          'Contacts',
+          id,
+          org,
+          fields,
+        );
+        const row = res?.data?.[0];
+        if (row) {
+          map.set(id, {
+            email: row.Email != null ? String(row.Email) : undefined,
+            firstName: row.First_Name != null ? String(row.First_Name) : undefined,
+            lastName: row.Last_Name != null ? String(row.Last_Name) : undefined,
+            tipoContacto:
+              row.Tipo_de_Contacto != null ? String(row.Tipo_de_Contacto) : undefined,
+          });
+        }
+      } catch (e: any) {
+        this.logger.warn(
+          `Timeline: no se pudo obtener Contact ${id}: ${e.message}`,
+        );
+      }
+    }
+    return map;
+  }
+
+  private async resolveClientIdsByEmailBatch(
+    emailsLower: string[],
+  ): Promise<Map<string, number>> {
+    const map = new Map<string, number>();
+    if (emailsLower.length === 0) return map;
+    const clients = await this.clientRepo
+      .createQueryBuilder('c')
+      .where('LOWER(TRIM(c.email)) IN (:...emails)', { emails: emailsLower })
+      .getMany();
+    for (const c of clients) {
+      map.set(c.email.trim().toLowerCase(), c.id);
+    }
+    return map;
+  }
+
+  /**
+   * Importa Deals (Apertura / Renovación / Cuenta Bancaria) a la tabla local de historial para el portal.
+   * No modifica Requests; una fila por Deal Zoho.
+   */
+  async importDealTimelineFromZoho(
+    org: string = 'startcompanies',
+    limitPerPage: number = 200,
+    maxPages?: number,
+  ) {
+    const coqlFields = [
+      'id',
+      'Deal_Name',
+      'Type',
+      'Stage',
+      'Status',
+      'Account_Name',
+      'Contact_Name',
+      'LLC_Principal',
+      'Partner',
+      'Amount',
+      'Closing_Date',
+      'Fecha',
+      'Fecha_de_constituci_n',
+      'Fecha_de_renovacion',
+      'Created_Time',
+      'Modified_Time',
+    ].join(', ');
+    const whereClause = "(Type in ('Apertura', 'Renovación', 'Cuenta Bancaria'))";
+    let offset = 0;
+    let page = 0;
+    let totalUpserted = 0;
+    const errors: { dealId?: string; error: string }[] = [];
+    const syncedAt = new Date();
+
+    while (true) {
+      if (maxPages != null && page >= maxPages) {
+        break;
+      }
+      const coqlQuery = `select ${coqlFields} from Deals where ${whereClause} order by Modified_Time desc limit ${limitPerPage} offset ${offset}`;
+      let response: { data?: Record<string, unknown>[] };
+      try {
+        response = await this.zohoCrmService.queryWithCoql(coqlQuery, undefined, org);
+      } catch (e: any) {
+        this.logger.error('importDealTimeline COQL error', e);
+        throw e;
+      }
+      const deals = response.data || [];
+      if (deals.length === 0) {
+        break;
+      }
+
+      const contactIdSet = new Set<string>();
+      for (const d of deals) {
+        const cn = this.parseZohoLookupField(d.Contact_Name);
+        if (cn.id) {
+          contactIdSet.add(cn.id);
+        }
+      }
+      const contactIds = [...contactIdSet];
+      const contactMap = await this.fetchContactDetailsForTimeline(contactIds, org);
+
+      const emailsLower = new Set<string>();
+      for (const id of contactIds) {
+        const e = contactMap.get(id)?.email?.trim();
+        if (e) {
+          emailsLower.add(e.toLowerCase());
+        }
+      }
+      const clientByEmailLower = await this.resolveClientIdsByEmailBatch([
+        ...emailsLower,
+      ]);
+
+      for (const deal of deals) {
+        try {
+          const dealId = deal.id != null ? String(deal.id) : null;
+          if (!dealId) {
+            continue;
+          }
+          const acc = this.parseZohoLookupField(deal.Account_Name);
+          const principal = this.parseZohoLookupField(deal.LLC_Principal);
+          const cn = this.parseZohoLookupField(deal.Contact_Name);
+          const cinfo = cn.id ? contactMap.get(cn.id) : undefined;
+
+          let amount: number | undefined;
+          if (deal.Amount != null && deal.Amount !== '') {
+            const n = parseFloat(String(deal.Amount).replace(/,/g, ''));
+            if (Number.isFinite(n)) {
+              amount = n;
+            }
+          }
+
+          const contactEmail = cinfo?.email?.trim() || undefined;
+          const clientId = contactEmail
+            ? clientByEmailLower.get(contactEmail.toLowerCase())
+            : undefined;
+
+          let row = await this.zohoDealTimelineRepo.findOne({
+            where: { zohoDealId: dealId },
+          });
+          if (!row) {
+            row = this.zohoDealTimelineRepo.create({ zohoDealId: dealId });
+          }
+          row.dealName = deal.Deal_Name != null ? String(deal.Deal_Name) : undefined;
+          row.dealType = deal.Type != null ? String(deal.Type) : undefined;
+          row.stage = this.normalizeZohoDealStage(deal) || undefined;
+          row.status = deal.Status != null ? String(deal.Status) : undefined;
+          row.zohoAccountId = acc.id;
+          row.accountName = acc.name;
+          row.zohoLlcPrincipalId = principal.id;
+          row.llcPrincipalName = principal.name;
+          row.zohoContactId = cn.id;
+          row.contactEmail = contactEmail;
+          row.contactFirstName = cinfo?.firstName;
+          row.contactLastName = cinfo?.lastName;
+          row.tipoContacto = cinfo?.tipoContacto;
+          row.partnerPicklist =
+            deal.Partner != null ? String(deal.Partner) : undefined;
+          row.amount = amount;
+          row.closingDate = this.parseZohoDateTimeForTimeline(deal.Closing_Date);
+          row.fecha = this.parseZohoDateTimeForTimeline(deal.Fecha);
+          row.fechaConstitucion = this.parseZohoDateTimeForTimeline(
+            deal.Fecha_de_constituci_n,
+          );
+          row.fechaRenovacion = this.parseZohoDateTimeForTimeline(
+            deal.Fecha_de_renovacion,
+          );
+          row.createdTimeZoho = this.parseZohoDateTimeForTimeline(deal.Created_Time);
+          row.modifiedTimeZoho = this.parseZohoDateTimeForTimeline(deal.Modified_Time);
+          row.clientId = clientId;
+          row.syncedAt = syncedAt;
+
+          await this.zohoDealTimelineRepo.save(row);
+          totalUpserted++;
+        } catch (err: any) {
+          errors.push({ dealId: String(deal.id), error: err.message });
+          this.logger.warn(`Timeline deal ${deal.id}: ${err.message}`);
+        }
+      }
+
+      if (deals.length < limitPerPage) {
+        break;
+      }
+      offset += limitPerPage;
+      page++;
+    }
+
+    return {
+      success: true,
+      upserted: totalUpserted,
+      errors,
+    };
+  }
+
   /**
    * Sincronización completa: importa TODOS los Accounts sin límite (incluye contactos y deals automáticamente)
    */
@@ -2526,61 +3049,71 @@ export class ZohoSyncService {
     org: string = 'startcompanies',
     accountsLimit: number = 200, // No se usa, se traen todos
     dealsLimit: number = 200, // Mantenido por compatibilidad, pero no se usa
+    onProgress?: (event: ZohoImportAccountsProgressEvent) => void | Promise<void>,
   ) {
     try {
       this.logger.log(`Iniciando sincronización completa desde Zoho CRM`);
       this.logger.log(`Nota: Al importar Accounts, se procesan automáticamente los contactos (subforms) y deals relacionados`);
       this.logger.log(`Importando TODOS los Accounts sin límite...`);
 
-      // Importar TODOS los Accounts con paginación automática
-      // Esto automáticamente procesa:
-      // 1. Contactos desde subforms (Contacto_Principal_LLC, Socios_LLC)
-      // 2. Deals relacionados para actualizar el status del Request
-      
-      const batchSize = 200; // Tamaño de lote para cada petición
-      let offset = 0;
-      let hasMore = true;
-      
-      const aggregatedResults = {
-        imported: 0,
-        updated: 0,
-        errors: [] as any[],
-        details: [] as any[],
-        totalProcessed: 0,
-      };
+      const batchSize = 200;
+      const allAccounts = await this.fetchAllAccountsCoqlPagesForFullSync(
+        org,
+        batchSize,
+        onProgress,
+      );
 
-      while (hasMore) {
-        this.logger.log(`Importando Accounts: offset ${offset}, límite ${batchSize}`);
-        
-        const batchResult = await this.importAccountsFromZoho(org, batchSize, offset);
-        
-        // Acumular resultados
-        aggregatedResults.imported += batchResult.imported;
-        aggregatedResults.updated += batchResult.updated;
-        aggregatedResults.errors.push(...batchResult.errors);
-        aggregatedResults.details.push(...batchResult.details);
-        aggregatedResults.totalProcessed += batchResult.total;
+      await this.emitImportProgress(onProgress, {
+        phase: 'list_ready',
+        totalAccounts: allAccounts.length,
+      });
 
-        // Si trajo menos de batchSize, no hay más registros
-        hasMore = batchResult.total === batchSize;
-        offset += batchSize;
-
-        this.logger.log(`Lote procesado: ${batchResult.total} Accounts (${batchResult.imported} nuevos, ${batchResult.updated} actualizados)`);
+      if (allAccounts.length === 0) {
+        return {
+          success: true,
+          accounts: {
+            success: true,
+            total: 0,
+            imported: 0,
+            updated: 0,
+            errors: [],
+            details: [],
+          },
+          message:
+            'Sincronización completa finalizada. No hay Accounts que coincidan con el filtro.',
+        };
       }
 
-      this.logger.log(`Sincronización completa finalizada. Total procesado: ${aggregatedResults.totalProcessed} Accounts`);
+      const metadata = await this.getMetadata(org);
+      const fullSyncMeta: ZohoImportFullSyncMeta = {
+        batchIndex: 1,
+        batchOffset: 0,
+        estimatedTotal: allAccounts.length,
+      };
+
+      const batchResult = await this.processAccountRowsFromCoql(
+        org,
+        allAccounts,
+        metadata,
+        onProgress,
+        fullSyncMeta,
+      );
+
+      this.logger.log(
+        `Sincronización completa finalizada. Total procesado: ${batchResult.total} Accounts`,
+      );
 
       return {
         success: true,
         accounts: {
           success: true,
-          total: aggregatedResults.totalProcessed,
-          imported: aggregatedResults.imported,
-          updated: aggregatedResults.updated,
-          errors: aggregatedResults.errors,
-          details: aggregatedResults.details,
+          total: batchResult.total,
+          imported: batchResult.imported,
+          updated: batchResult.updated,
+          errors: batchResult.errors,
+          details: batchResult.details,
         },
-        message: `Sincronización completa finalizada. Se procesaron ${aggregatedResults.totalProcessed} Accounts (${aggregatedResults.imported} nuevos, ${aggregatedResults.updated} actualizados). Los contactos y deals se procesaron automáticamente con cada Account.`,
+        message: `Sincronización completa finalizada. Se procesaron ${batchResult.total} Accounts (${batchResult.imported} nuevos, ${batchResult.updated} actualizados). Los contactos y deals se procesaron automáticamente con cada Account.`,
       };
     } catch (error: any) {
       this.logger.error('Error en sincronización completa:', error);
