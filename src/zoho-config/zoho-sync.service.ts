@@ -108,6 +108,24 @@ export class ZohoSyncService {
     return `+${cleaned}`;
   }
 
+  /**
+   * Normaliza URL para campos Zoho de tipo website.
+   * Si no es válida, retorna string vacío para evitar INVALID_DATA.
+   */
+  private normalizeWebsiteUrl(url: string | null | undefined): string {
+    const raw = (url || '').trim();
+    if (!raw) return '';
+
+    const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    try {
+      const parsed = new URL(candidate);
+      if (!parsed.hostname) return '';
+      return candidate;
+    } catch {
+      return '';
+    }
+  }
+
   /** Stage del módulo Deals (COQL / REST); a veces la clave puede variar. */
   private normalizeZohoDealStage(deal: Record<string, unknown> | null | undefined): string {
     if (!deal) return '';
@@ -409,6 +427,9 @@ export class ZohoSyncService {
     // Mapear datos según el tipo de solicitud
     if (request.type === 'apertura-llc' && request.aperturaLlcRequest) {
       const apertura = request.aperturaLlcRequest;
+      const projectOrCompanyUrl = this.normalizeWebsiteUrl(
+        (apertura as any).project_or_company_url ?? apertura.projectOrCompanyUrl,
+      );
       accountData = {
         ...accountData,
         // Mapeo según CSV - campos del formulario
@@ -422,8 +443,8 @@ export class ZohoSyncService {
             ? ZOHO_LLC_ESTRUCTURA_SINGLE
             : ZOHO_LLC_ESTRUCTURA_MULTI,
         LinkedIn: apertura.linkedin || '',
-        Website: apertura.projectOrCompanyUrl || '', // Usar projectOrCompanyUrl según CSV
-        P_gina_web_de_la_LLC: apertura.projectOrCompanyUrl || '',
+        Website: projectOrCompanyUrl,
+        P_gina_web_de_la_LLC: projectOrCompanyUrl,
         Actividad_financiera_esperada: apertura.actividadFinancieraEsperada || '',
         Tendr_ingresos_peri_dicos_que_sumen_USD_10_000: this.mapBooleanToPickList(apertura.periodicIncome10k),
         Correo_Electr_nico_Vinculado_a_la_Cuenta_Bancaria: apertura.bankAccountLinkedEmail || '',
