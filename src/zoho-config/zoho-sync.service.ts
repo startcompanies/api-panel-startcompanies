@@ -443,8 +443,9 @@ export class ZohoSyncService {
             ? ZOHO_LLC_ESTRUCTURA_SINGLE
             : ZOHO_LLC_ESTRUCTURA_MULTI,
         LinkedIn: apertura.linkedin || '',
-        Website: projectOrCompanyUrl,
-        P_gina_web_de_la_LLC: projectOrCompanyUrl,
+        ...(projectOrCompanyUrl
+          ? { Website: projectOrCompanyUrl, P_gina_web_de_la_LLC: projectOrCompanyUrl }
+          : {}),
         Actividad_financiera_esperada: apertura.actividadFinancieraEsperada || '',
         Tendr_ingresos_peri_dicos_que_sumen_USD_10_000: this.mapBooleanToPickList(apertura.periodicIncome10k),
         Correo_Electr_nico_Vinculado_a_la_Cuenta_Bancaria: apertura.bankAccountLinkedEmail || '',
@@ -500,7 +501,10 @@ export class ZohoSyncService {
         postalCode: cuenta.registeredAgentZipCode || '',
         country: normalizeCountryForZoho(cuenta.registeredAgentCountry || ''),
       };
-      
+      const sitioWebRedSocial = this.normalizeWebsiteUrl(
+        (cuenta as any).website_or_social_media ?? cuenta.websiteOrSocialMedia,
+      );
+
       accountData = {
         ...accountData,
         // Mapeo según CSV - campos del formulario
@@ -509,7 +513,7 @@ export class ZohoSyncService {
         Industria_Rubro: cuenta.industry || '',
         Cantidad_de_empleados: cuenta.numberOfEmployees || '',
         Descripci_n_breve: cuenta.economicActivity || '',
-        Sitio_web_o_Red_Social: cuenta.websiteOrSocialMedia || '',
+        ...(sitioWebRedSocial ? { Sitio_web_o_Red_Social: sitioWebRedSocial } : {}),
         N_mero_de_EIN: cuenta.ein || '',
         Estructura_Societaria:
           cuenta.llcType === 'single'
