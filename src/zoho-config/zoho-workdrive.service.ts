@@ -1,6 +1,5 @@
 import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
-import { ConfigService } from '@nestjs/config';
 import { lastValueFrom } from 'rxjs';
 import { ZohoConfigService } from './zoho-config.service';
 
@@ -31,7 +30,6 @@ export class ZohoWorkDriveService {
   constructor(
     private readonly httpService: HttpService,
     private readonly zohoConfigService: ZohoConfigService,
-    private readonly configService: ConfigService,
   ) {}
 
   /**
@@ -164,31 +162,18 @@ export class ZohoWorkDriveService {
     try {
       const { accessToken, baseUrl } = await this.getCredentialsAndToken(org);
 
-      // Obtener el dominio del frontend para permitir embed desde ese dominio
-      const frontendUrl = this.configService.get<string>('FRONTEND_URL') || '';
-      let allowedDomain = '';
-      try {
-        if (frontendUrl) {
-          const parsed = new URL(frontendUrl);
-          allowedDomain = parsed.hostname;
-        }
-      } catch {
-        // Si la URL no es válida, no se incluye allowed_domains
-      }
-
-      const requestBody: any = {
+      const requestBody = {
         data: {
           attributes: {
             resource_id: resourceId,
             shared_type: 'publish',
-            role_id: 34, // View role
-            ...(allowedDomain ? { allowed_domains: [allowedDomain] } : {}),
+            role_id: 34,
           },
           type: 'permissions',
         },
       };
 
-      this.logger.log(`Generando permalink de embed para resource_id: ${resourceId}${allowedDomain ? ` (dominio permitido: ${allowedDomain})` : ''}`);
+      this.logger.log(`Generando permalink de embed para resource_id: ${resourceId}`);
 
       const response = await lastValueFrom(
         this.httpService.post<WorkDrivePermissionResponse>(
