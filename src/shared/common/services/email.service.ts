@@ -274,8 +274,15 @@ export class EmailService {
     name: string;
     requestId: number;
     requestType: string;
+    includeActivationCta?: boolean;
   }): Promise<void> {
-    const { email, name, requestId, requestType } = params;
+    const {
+      email,
+      name,
+      requestId,
+      requestType,
+      includeActivationCta = true,
+    } = params;
 
     if (!this.resend) {
       this.logger.warn(`Email de solicitud enviada no enviado a ${email} (Resend no configurado)`);
@@ -285,6 +292,7 @@ export class EmailService {
     const frontendUrl =
       this.configService.get<string>('FRONTEND_URL') || 'http://localhost:4200';
     const panelUrl = `${frontendUrl}/panel`;
+    const activateAccountUrl = `${frontendUrl}/panel/login`;
 
     const typeLabel =
       requestType === 'apertura-llc'
@@ -295,11 +303,16 @@ export class EmailService {
             ? 'Cuenta Bancaria'
             : 'Solicitud';
 
+    const activationLine = includeActivationCta
+      ? '<p>Si aún no activas tu acceso, usa el botón para entrar y activar tu cuenta.</p>'
+      : '';
+
     const bodyHtml = `
       <p>Hola ${name || email},</p>
       <p>Tu solicitud de <strong>${typeLabel}</strong> ha sido enviada exitosamente.</p>
       <p><strong>ID de solicitud: #${requestId}</strong></p>
       <p>En breve nuestro equipo revisará tu información y se pondrá en contacto contigo.</p>
+      ${activationLine}
       <p>Si no solicitaste esto, por favor contáctanos.</p>
     `;
 
@@ -310,9 +323,13 @@ export class EmailService {
       to: email,
       subject: `Hemos recibido tu solicitud - ${typeLabel}`,
       html: this.getEmailHtml({
-        title: 'Solicitud enviada',
+        title: includeActivationCta
+          ? 'Solicitud enviada y activa tu cuenta'
+          : 'Solicitud enviada',
         bodyHtml,
-        button: { text: 'Ir a mi panel', url: panelUrl },
+        button: includeActivationCta
+          ? { text: 'Activar mi cuenta', url: activateAccountUrl || panelUrl }
+          : undefined,
       }),
     });
 

@@ -161,7 +161,7 @@ export class WizardController {
     }
 
     this.logger.log(`[Wizard] Creando solicitud para usuario: ${user.email}`);
-    return this.wizardService.createWizardRequest(createWizardRequestDto);
+    return this.wizardService.createWizardRequest(createWizardRequestDto, user);
   }
 
   @Patch(':id')
