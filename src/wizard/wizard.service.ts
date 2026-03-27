@@ -1436,18 +1436,45 @@ export class WizardService {
           );
         }
 
-        const currentStep = updateRequestDto.currentStepNumber ?? aperturaRequest.currentStepNumber;
-        
+        // Paso/sección del formulario LLC: puede venir en el DTO raíz, en BD, o en
+        // aperturaLlcData.currentSection (wizard guarda la sub-sección 1–3 del paso "Información").
+        // Si solo miramos current_step_number de BD (=1 tras el POST de pago), se borraban
+        // URLs y datos de la sección bancaria aunque el payload los trajera completo.
+        let effectiveSection = Math.max(
+          updateRequestDto.currentStepNumber ?? 0,
+          aperturaRequest.currentStepNumber ?? 0,
+        );
+
         if (updateRequestDto.currentStepNumber !== undefined) {
           aperturaRequest.currentStepNumber = updateRequestDto.currentStepNumber;
+          effectiveSection = Math.max(
+            effectiveSection,
+            updateRequestDto.currentStepNumber,
+          );
         }
 
         if (updateRequestDto.aperturaLlcData) {
-          const { members, ...aperturaDataFields } = updateRequestDto.aperturaLlcData;
+          const { members, currentSection, ...aperturaDataFields } =
+            updateRequestDto.aperturaLlcData as any;
           const aperturaDataRaw: any = { ...aperturaDataFields };
-          
-          // Sección 3 (apertura bancaria) - solo procesar si currentStep >= 3
-          if (currentStep < 3) {
+
+          if (typeof currentSection === 'number') {
+            effectiveSection = Math.max(effectiveSection, currentSection);
+          }
+
+          const hasBankingSectionPayload = [
+            aperturaDataRaw.serviceBillUrl,
+            aperturaDataRaw.bankStatementUrl,
+            aperturaDataRaw.periodicIncome10k,
+            aperturaDataRaw.bankAccountLinkedEmail,
+            aperturaDataRaw.bankAccountLinkedPhone,
+            aperturaDataRaw.actividadFinancieraEsperada,
+            aperturaDataRaw.projectOrCompanyUrl,
+          ].some((v) => v !== undefined && v !== null && String(v).trim() !== '');
+
+          // Sección bancaria (última del formulario LLC): no descartar si ya hay datos en el payload
+          // o si la sección efectiva es >= 3.
+          if (effectiveSection < 3 && !hasBankingSectionPayload) {
             delete aperturaDataRaw.serviceBillUrl;
             delete aperturaDataRaw.bankStatementUrl;
             delete aperturaDataRaw.periodicIncome10k;
@@ -1456,9 +1483,16 @@ export class WizardService {
             delete aperturaDataRaw.actividadFinancieraEsperada;
             delete aperturaDataRaw.projectOrCompanyUrl;
           }
-          
+
           Object.assign(aperturaRequest, aperturaDataRaw);
-          
+
+          if (typeof currentSection === 'number') {
+            aperturaRequest.currentStepNumber = Math.max(
+              aperturaRequest.currentStepNumber ?? 0,
+              currentSection,
+            );
+          }
+
           // Actualizar miembros si están presentes
           if (members && members.length > 0) {
             // Eliminar miembros existentes

@@ -10,6 +10,8 @@ import {
   ValidateNested,
   IsDateString,
   IsArray,
+  Min,
+  Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -95,6 +97,26 @@ export class CreateAperturaLlcRequestDto {
   @IsOptional()
   @IsString()
   businessDescription?: string;
+
+  @ApiPropertyOptional({ example: 'Nombre alternativo 2', description: 'Segunda opción de nombre de LLC' })
+  @IsOptional()
+  @IsString()
+  llcNameOption2?: string;
+
+  @ApiPropertyOptional({ example: 'Nombre alternativo 3', description: 'Tercera opción de nombre de LLC' })
+  @IsOptional()
+  @IsString()
+  llcNameOption3?: string;
+
+  @ApiPropertyOptional({ example: 'https://linkedin.com/company/...', description: 'Perfil de LinkedIn' })
+  @IsOptional()
+  @IsString()
+  linkedin?: string;
+
+  @ApiPropertyOptional({ example: 'Consultoría y servicios SaaS', description: 'Actividad financiera esperada (sección bancaria)' })
+  @IsOptional()
+  @IsString()
+  actividadFinancieraEsperada?: string;
 
   @ApiPropertyOptional({ example: '+1234567890', description: 'Número de teléfono de la LLC' })
   @IsOptional()
@@ -270,5 +292,13 @@ export class CreateAperturaLlcRequestDto {
   @ValidateNested({ each: true })
   @Type(() => CreateMemberDto)
   members?: CreateMemberDto[];
+
+  /** Sub-sección 1–3 dentro del paso "Información del servicio" (wizard/panel); no es columna en BD */
+  @ApiPropertyOptional({ example: 3, description: 'Sección actual del formulario LLC (1–3)' })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(6)
+  currentSection?: number;
 }
 
