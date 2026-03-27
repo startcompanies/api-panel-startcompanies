@@ -19,6 +19,7 @@ import {
   ZOHO_LLC_ESTRUCTURA_MULTI,
   ZOHO_LLC_ESTRUCTURA_SINGLE,
 } from './zoho-location-normalization';
+import { applyAperturaClientStageAlias } from './zoho-apertura-stage-client';
 import { applyRenovacionClientStageAlias } from './zoho-renovacion-stage-client';
 import {
   ZohoImportAccountsProgressEvent,
@@ -53,6 +54,7 @@ export class ZohoSyncService implements OnModuleInit {
 
   async onModuleInit() {
     setImmediate(() => this.backfillMissingWorkDrivePermalinks());
+    setImmediate(() => this.backfillClientStageAliases());
   }
 
   private async backfillMissingWorkDrivePermalinks(): Promise<void> {
@@ -79,6 +81,44 @@ export class ZohoSyncService implements OnModuleInit {
       }
     } catch (err: any) {
       this.logger.error('WorkDrive backfill: error general:', err.message);
+    }
+  }
+
+  private async backfillClientStageAliases(): Promise<void> {
+    try {
+      const candidates = await this.requestRepository.find({
+        where: {
+          stage: Not(IsNull()),
+        },
+        select: ['id', 'type', 'stage'],
+      });
+
+      if (candidates.length === 0) {
+        this.logger.log('Stage alias backfill: sin registros');
+        return;
+      }
+
+      let updated = 0;
+      for (const r of candidates) {
+        const raw = (r.stage || '').trim();
+        if (!raw) continue;
+
+        let nextStage = raw;
+        if (r.type === 'apertura-llc') {
+          nextStage = applyAperturaClientStageAlias(raw);
+        } else if (r.type === 'renovacion-llc') {
+          nextStage = applyRenovacionClientStageAlias(raw);
+        }
+
+        if (nextStage !== raw) {
+          await this.requestRepository.update(r.id, { stage: nextStage });
+          updated++;
+        }
+      }
+
+      this.logger.log(`Stage alias backfill: ${updated} registro(s) actualizados`);
+    } catch (err: any) {
+      this.logger.error('Stage alias backfill: error general:', err.message);
     }
   }
 
@@ -1885,7 +1925,9 @@ export class ZohoSyncService implements OnModuleInit {
         const stageForRequest =
           requestType === 'renovacion-llc'
             ? applyRenovacionClientStageAlias(dealStage)
-            : dealStage;
+            : requestType === 'apertura-llc'
+              ? applyAperturaClientStageAlias(dealStage)
+              : dealStage;
         request.stage = stageForRequest;
         if (requestType === 'renovacion-llc' && stageForRequest !== dealStage) {
           this.logger.log(
@@ -2676,7 +2718,9 @@ export class ZohoSyncService implements OnModuleInit {
         const stageForRequest =
           request.type === 'renovacion-llc'
             ? applyRenovacionClientStageAlias(dealStage)
-            : dealStage;
+            : request.type === 'apertura-llc'
+              ? applyAperturaClientStageAlias(dealStage)
+              : dealStage;
         if (dealStage && stageForRequest !== request.stage) {
           request.stage = stageForRequest;
           needsUpdate = true;
@@ -2835,7 +2879,9 @@ export class ZohoSyncService implements OnModuleInit {
           const stageForRequest =
             request.type === 'renovacion-llc'
               ? applyRenovacionClientStageAlias(dealStage)
-              : dealStage;
+              : request.type === 'apertura-llc'
+                ? applyAperturaClientStageAlias(dealStage)
+                : dealStage;
           if (dealStage && stageForRequest !== request.stage) {
             request.stage = stageForRequest;
             needsUpdate = true;
