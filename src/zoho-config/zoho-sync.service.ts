@@ -1,6 +1,6 @@
-import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, Logger, HttpException, HttpStatus, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { Repository, DataSource, Not, IsNull } from 'typeorm';
 import { ZohoCrmService } from './zoho-crm.service';
 import { ZohoWorkDriveService } from './zoho-workdrive.service';
 import { Request } from 'src/panel/requests/entities/request.entity';
@@ -19,6 +19,7 @@ import {
   ZOHO_LLC_ESTRUCTURA_MULTI,
   ZOHO_LLC_ESTRUCTURA_SINGLE,
 } from './zoho-location-normalization';
+import { applyAperturaClientStageAlias } from './zoho-apertura-stage-client';
 import { applyRenovacionClientStageAlias } from './zoho-renovacion-stage-client';
 import {
   ZohoImportAccountsProgressEvent,
@@ -26,7 +27,7 @@ import {
 } from './zoho-sync.dto';
 
 @Injectable()
-export class ZohoSyncService {
+export class ZohoSyncService implements OnModuleInit {
   private readonly logger = new Logger(ZohoSyncService.name);
 
   constructor(
@@ -50,6 +51,76 @@ export class ZohoSyncService {
     private readonly clientRepo: Repository<Client>,
     private readonly dataSource: DataSource,
   ) {}
+
+  async onModuleInit() {
+    setImmediate(() => this.backfillMissingWorkDrivePermalinks());
+    setImmediate(() => this.backfillClientStageAliases());
+  }
+
+  private async backfillMissingWorkDrivePermalinks(): Promise<void> {
+    try {
+      const pending = await this.requestRepository.find({
+        where: {
+          workDriveId: Not(IsNull()),
+          workDriveUrlExternal: IsNull(),
+        },
+      });
+      if (pending.length === 0) {
+        this.logger.log('WorkDrive backfill: sin permalinks pendientes');
+        return;
+      }
+      this.logger.log(`WorkDrive backfill: ${pending.length} registro(s) sin permalink`);
+      for (const request of pending) {
+        try {
+          const permalink = await this.zohoWorkDriveService.generateEmbedPermalink(request.workDriveId!);
+          await this.requestRepository.update(request.id, { workDriveUrlExternal: permalink });
+          this.logger.log(`WorkDrive backfill: permalink generado para request ${request.id}`);
+        } catch (err: any) {
+          this.logger.warn(`WorkDrive backfill: error en request ${request.id}: ${err.message}`);
+        }
+      }
+    } catch (err: any) {
+      this.logger.error('WorkDrive backfill: error general:', err.message);
+    }
+  }
+
+  private async backfillClientStageAliases(): Promise<void> {
+    try {
+      const candidates = await this.requestRepository.find({
+        where: {
+          stage: Not(IsNull()),
+        },
+        select: ['id', 'type', 'stage'],
+      });
+
+      if (candidates.length === 0) {
+        this.logger.log('Stage alias backfill: sin registros');
+        return;
+      }
+
+      let updated = 0;
+      for (const r of candidates) {
+        const raw = (r.stage || '').trim();
+        if (!raw) continue;
+
+        let nextStage = raw;
+        if (r.type === 'apertura-llc') {
+          nextStage = applyAperturaClientStageAlias(raw);
+        } else if (r.type === 'renovacion-llc') {
+          nextStage = applyRenovacionClientStageAlias(raw);
+        }
+
+        if (nextStage !== raw) {
+          await this.requestRepository.update(r.id, { stage: nextStage });
+          updated++;
+        }
+      }
+
+      this.logger.log(`Stage alias backfill: ${updated} registro(s) actualizados`);
+    } catch (err: any) {
+      this.logger.error('Stage alias backfill: error general:', err.message);
+    }
+  }
 
   /**
    * Normaliza un número de teléfono agregando el prefijo "+" si no lo tiene
@@ -106,6 +177,48 @@ export class ZohoSyncService {
       return cleaned;
     }
     return `+${cleaned}`;
+  }
+
+  /**
+   * Zoho CRM rechaza muchos valores que `new URL` acepta (p. ej. localhost, IPs privadas).
+   */
+  private isAcceptableZohoWebsiteHostname(hostname: string): boolean {
+    const h = (hostname || '').toLowerCase();
+    if (!h) return false;
+    if (h === 'localhost' || h.endsWith('.localhost')) return false;
+    if (h === '127.0.0.1' || h === '0.0.0.0' || h === '::1') return false;
+
+    const ipv4Parts = h.split('.');
+    if (ipv4Parts.length === 4 && ipv4Parts.every((p) => /^\d{1,3}$/.test(p))) {
+      const a = parseInt(ipv4Parts[0], 10);
+      const b = parseInt(ipv4Parts[1], 10);
+      if (a === 10) return false;
+      if (a === 127) return false;
+      if (a === 192 && b === 168) return false;
+      if (a === 172 && b >= 16 && b <= 31) return false;
+      if (a === 169 && b === 254) return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Normaliza URL para campos Zoho de tipo website.
+   * Si no es válida o no es aceptable para Zoho (p. ej. localhost), retorna '' y no se envían las claves.
+   */
+  private normalizeWebsiteUrl(url: string | null | undefined): string {
+    const raw = (url || '').trim();
+    if (!raw) return '';
+
+    const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    try {
+      const parsed = new URL(candidate);
+      if (!parsed.hostname) return '';
+      if (!this.isAcceptableZohoWebsiteHostname(parsed.hostname)) return '';
+      return candidate;
+    } catch {
+      return '';
+    }
   }
 
   /** Stage del módulo Deals (COQL / REST); a veces la clave puede variar. */
@@ -409,6 +522,10 @@ export class ZohoSyncService {
     // Mapear datos según el tipo de solicitud
     if (request.type === 'apertura-llc' && request.aperturaLlcRequest) {
       const apertura = request.aperturaLlcRequest;
+      const projectOrCompanyUrl = this.normalizeWebsiteUrl(
+        (apertura as any).project_or_company_url ?? apertura.projectOrCompanyUrl,
+      );
+      const linkedinUrl = this.normalizeWebsiteUrl(apertura.linkedin);
       accountData = {
         ...accountData,
         // Mapeo según CSV - campos del formulario
@@ -421,9 +538,10 @@ export class ZohoSyncService {
           apertura.llcType === 'single'
             ? ZOHO_LLC_ESTRUCTURA_SINGLE
             : ZOHO_LLC_ESTRUCTURA_MULTI,
-        LinkedIn: apertura.linkedin || '',
-        Website: apertura.projectOrCompanyUrl || '', // Usar projectOrCompanyUrl según CSV
-        P_gina_web_de_la_LLC: apertura.projectOrCompanyUrl || '',
+        ...(linkedinUrl ? { LinkedIn: linkedinUrl } : {}),
+        ...(projectOrCompanyUrl
+          ? { Website: projectOrCompanyUrl, P_gina_web_de_la_LLC: projectOrCompanyUrl }
+          : {}),
         Actividad_financiera_esperada: apertura.actividadFinancieraEsperada || '',
         Tendr_ingresos_peri_dicos_que_sumen_USD_10_000: this.mapBooleanToPickList(apertura.periodicIncome10k),
         Correo_Electr_nico_Vinculado_a_la_Cuenta_Bancaria: apertura.bankAccountLinkedEmail || '',
@@ -479,7 +597,10 @@ export class ZohoSyncService {
         postalCode: cuenta.registeredAgentZipCode || '',
         country: normalizeCountryForZoho(cuenta.registeredAgentCountry || ''),
       };
-      
+      const sitioWebRedSocial = this.normalizeWebsiteUrl(
+        (cuenta as any).website_or_social_media ?? cuenta.websiteOrSocialMedia,
+      );
+
       accountData = {
         ...accountData,
         // Mapeo según CSV - campos del formulario
@@ -488,7 +609,7 @@ export class ZohoSyncService {
         Industria_Rubro: cuenta.industry || '',
         Cantidad_de_empleados: cuenta.numberOfEmployees || '',
         Descripci_n_breve: cuenta.economicActivity || '',
-        Sitio_web_o_Red_Social: cuenta.websiteOrSocialMedia || '',
+        ...(sitioWebRedSocial ? { Sitio_web_o_Red_Social: sitioWebRedSocial } : {}),
         N_mero_de_EIN: cuenta.ein || '',
         Estructura_Societaria:
           cuenta.llcType === 'single'
@@ -1804,7 +1925,9 @@ export class ZohoSyncService {
         const stageForRequest =
           requestType === 'renovacion-llc'
             ? applyRenovacionClientStageAlias(dealStage)
-            : dealStage;
+            : requestType === 'apertura-llc'
+              ? applyAperturaClientStageAlias(dealStage)
+              : dealStage;
         request.stage = stageForRequest;
         if (requestType === 'renovacion-llc' && stageForRequest !== dealStage) {
           this.logger.log(
@@ -1919,35 +2042,28 @@ export class ZohoSyncService {
 
       request.clientId = clientRow.id;
 
-      // Generar permalink si Account tiene workDriveId Y el Request no tiene workDriveUrlExternal
-      if (account.workDriveId && !request.workDriveUrlExternal) {
-        try {
-          this.logger.log(`Generando permalink para workDriveId: ${account.workDriveId} (Account ${account.id})`);
-          // No pasar org, dejar que el servicio busque cualquier configuración de WorkDrive disponible
-          const permalink = await this.zohoWorkDriveService.generateEmbedPermalink(
-            account.workDriveId,
-          );
-          // Guardar el permalink completo tal como viene de la API
-          request.workDriveUrlExternal = permalink;
-          this.logger.log(`Permalink completo guardado para Account ${account.id}: ${permalink}`);
-          this.logger.log(`Longitud de la URL guardada: ${permalink.length} caracteres`);
-        } catch (error: any) {
-          this.logger.warn(
-            `Error al generar permalink para workDriveId ${account.workDriveId} (Account ${account.id}):`,
-            error.message,
-          );
-          // Si falla, intentar usar workDriveUrlExternal directamente si existe
-          if (account.workDriveUrlExternal) {
-            request.workDriveUrlExternal = account.workDriveUrlExternal;
-            this.logger.log(`Usando workDriveUrlExternal directo desde Account ${account.id}: ${account.workDriveUrlExternal}`);
+      // Persistir workDriveId siempre; generar permalink solo si aún no existe
+      if (account.workDriveId) {
+        request.workDriveId = account.workDriveId;
+        if (!request.workDriveUrlExternal) {
+          try {
+            this.logger.log(`Generando permalink para workDriveId: ${account.workDriveId} (Account ${account.id})`);
+            const permalink = await this.zohoWorkDriveService.generateEmbedPermalink(
+              account.workDriveId,
+            );
+            request.workDriveUrlExternal = permalink;
+            this.logger.log(`Permalink guardado para Account ${account.id}: ${permalink}`);
+          } catch (error: any) {
+            this.logger.warn(
+              `Error al generar permalink para workDriveId ${account.workDriveId} (Account ${account.id}):`,
+              error.message,
+            );
           }
         }
       } else if (account.workDriveUrlExternal && !request.workDriveUrlExternal) {
-        // Si no hay workDriveId pero sí workDriveUrlExternal, y el Request no tiene uno, usarlo directamente
+        // Fallback: sin workDriveId pero con URL directa en Zoho
         request.workDriveUrlExternal = account.workDriveUrlExternal;
         this.logger.log(`WorkDrive URL externa guardada para Account ${account.id}: ${account.workDriveUrlExternal}`);
-      } else if (request.workDriveUrlExternal) {
-        this.logger.log(`Request ${request.id} ya tiene workDriveUrlExternal, no se regenerará: ${request.workDriveUrlExternal}`);
       }
 
       // Guardar Request (ahora con clientId y workDriveUrlExternal)
@@ -2602,7 +2718,9 @@ export class ZohoSyncService {
         const stageForRequest =
           request.type === 'renovacion-llc'
             ? applyRenovacionClientStageAlias(dealStage)
-            : dealStage;
+            : request.type === 'apertura-llc'
+              ? applyAperturaClientStageAlias(dealStage)
+              : dealStage;
         if (dealStage && stageForRequest !== request.stage) {
           request.stage = stageForRequest;
           needsUpdate = true;
@@ -2622,38 +2740,30 @@ export class ZohoSyncService {
         if (accountResponse.data && accountResponse.data.length > 0) {
           const account = accountResponse.data[0];
           
-          // Si Account tiene workDriveId Y el Request no tiene workDriveUrlExternal, generar permalink
-          if (account.workDriveId && !request.workDriveUrlExternal) {
-            try {
-              this.logger.log(`Generando permalink para workDriveId: ${account.workDriveId} (Request ${request.id})`);
-              // No pasar org, dejar que el servicio busque cualquier configuración de WorkDrive disponible
-              const permalink = await this.zohoWorkDriveService.generateEmbedPermalink(
-                account.workDriveId,
-              );
-              
-              // Guardar el permalink completo tal como viene de la API
-              request.workDriveUrlExternal = permalink;
-              needsUpdate = true;
-              this.logger.log(`Request ${request.id} actualizado con permalink completo: ${permalink}`);
-            } catch (embedError: any) {
-              this.logger.warn(
-                `Error al generar permalink para workDriveId ${account.workDriveId} (Request ${request.id}):`,
-                embedError.message,
-              );
-              // Si falla, intentar usar workDriveUrlExternal directamente si existe
-              if (account.workDriveUrlExternal) {
-                request.workDriveUrlExternal = account.workDriveUrlExternal;
-                needsUpdate = true;
-                this.logger.log(`Request ${request.id} actualizado con workDriveUrlExternal directo: ${account.workDriveUrlExternal}`);
+          // Persistir workDriveId siempre; generar permalink solo si aún no existe
+          if (account.workDriveId) {
+            request.workDriveId = account.workDriveId;
+            needsUpdate = true;
+            if (!request.workDriveUrlExternal) {
+              try {
+                this.logger.log(`Generando permalink para workDriveId: ${account.workDriveId} (Request ${request.id})`);
+                const permalink = await this.zohoWorkDriveService.generateEmbedPermalink(
+                  account.workDriveId,
+                );
+                request.workDriveUrlExternal = permalink;
+                this.logger.log(`Request ${request.id} actualizado con permalink: ${permalink}`);
+              } catch (embedError: any) {
+                this.logger.warn(
+                  `Error al generar permalink para workDriveId ${account.workDriveId} (Request ${request.id}):`,
+                  embedError.message,
+                );
               }
             }
           } else if (account.workDriveUrlExternal && !request.workDriveUrlExternal) {
-            // Si no hay workDriveId pero sí workDriveUrlExternal, y el Request no tiene uno, usarlo directamente
+            // Fallback: sin workDriveId pero con URL directa en Zoho
             request.workDriveUrlExternal = account.workDriveUrlExternal;
             needsUpdate = true;
             this.logger.log(`Request ${request.id} actualizado con workDriveUrlExternal: ${account.workDriveUrlExternal}`);
-          } else if (request.workDriveUrlExternal) {
-            this.logger.log(`Request ${request.id} ya tiene workDriveUrlExternal, no se actualizará: ${request.workDriveUrlExternal}`);
           }
         }
       } catch (accountError: any) {
@@ -2769,7 +2879,9 @@ export class ZohoSyncService {
           const stageForRequest =
             request.type === 'renovacion-llc'
               ? applyRenovacionClientStageAlias(dealStage)
-              : dealStage;
+              : request.type === 'apertura-llc'
+                ? applyAperturaClientStageAlias(dealStage)
+                : dealStage;
           if (dealStage && stageForRequest !== request.stage) {
             request.stage = stageForRequest;
             needsUpdate = true;

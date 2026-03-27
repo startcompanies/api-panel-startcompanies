@@ -44,6 +44,16 @@ export class WizardClientDataDto {
 }
 
 export class CreateWizardRequestDto {
+  @ApiPropertyOptional({
+    enum: ['wizard', 'crm-lead', 'panel'],
+    description: 'Canal de origen del flujo',
+    example: 'wizard',
+  })
+  @IsOptional()
+  @IsString()
+  @IsIn(['wizard', 'crm-lead', 'panel'])
+  source?: 'wizard' | 'crm-lead' | 'panel';
+
   @ApiProperty({
     enum: ['apertura-llc', 'renovacion-llc', 'cuenta-bancaria'],
     description: 'Tipo de solicitud',

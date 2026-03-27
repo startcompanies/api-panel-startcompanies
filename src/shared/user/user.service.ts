@@ -444,7 +444,9 @@ export class UserService {
     updateData: Partial<UpdateUserDto>,
   ): Promise<User> {
     try {
-      await this.userRepository.update(userId, updateData);
+      // El email no se actualiza directamente; usa requestEmailChange/confirmEmailChange
+      const { email: _email, ...safeData } = updateData as any;
+      await this.userRepository.update(userId, safeData);
       const updatedUser = await this.userRepository.findOne({
         where: { id: userId },
       });
@@ -461,6 +463,76 @@ export class UserService {
         'No se pudo actualizar el usuario',
       );
     }
+  }
+
+  /**
+   * Solicita el cambio de correo electrónico del usuario.
+   * Genera un token JWT, lo guarda en emailVerificationToken y envía el email de verificación al nuevo correo.
+   * El email NO se actualiza hasta que el usuario confirme.
+   */
+  async requestEmailChange(userId: number, newEmail: string): Promise<void> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('Usuario no encontrado');
+
+    const existing = await this.userRepository.findOne({ where: { email: newEmail } });
+    if (existing && existing.id !== userId) {
+      throw new BadRequestException('El correo ya está en uso por otra cuenta');
+    }
+
+    const token = await this.jwtService.signAsync(
+      { id: userId, email: newEmail, type: 'email-change' },
+      { expiresIn: '24h' },
+    );
+
+    await this.userRepository.update(userId, { emailVerificationToken: token });
+
+    const name = `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username;
+    try {
+      await this.emailService.sendEmailChangeVerification(newEmail, name, token);
+    } catch (emailError) {
+      console.error('Error al enviar email de cambio de correo:', emailError);
+    }
+  }
+
+  /**
+   * Confirma el cambio de correo usando el token recibido por email.
+   * Actualiza el email en User y en Client (si existe relación por userId).
+   */
+  async confirmEmailChange(userId: number, token: string): Promise<User> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('Usuario no encontrado');
+
+    if (!user.emailVerificationToken || user.emailVerificationToken !== token) {
+      throw new BadRequestException('Token inválido o expirado');
+    }
+
+    let payload: { id: number; email: string; type: string };
+    try {
+      payload = await this.jwtService.verifyAsync(token);
+    } catch {
+      throw new BadRequestException('Token inválido o expirado');
+    }
+
+    if (payload.type !== 'email-change' || payload.id !== userId) {
+      throw new BadRequestException('Token inválido');
+    }
+
+    const newEmail = payload.email;
+
+    const existing = await this.userRepository.findOne({ where: { email: newEmail } });
+    if (existing && existing.id !== userId) {
+      throw new BadRequestException('El correo ya está en uso por otra cuenta');
+    }
+
+    await this.userRepository.update(userId, { email: newEmail, emailVerificationToken: null });
+
+    const client = await this.clientRepository.findOne({ where: { userId } });
+    if (client) {
+      await this.clientRepository.update(client.id, { email: newEmail });
+    }
+
+    const updated = await this.userRepository.findOne({ where: { id: userId } });
+    return updated!;
   }
 
   /**

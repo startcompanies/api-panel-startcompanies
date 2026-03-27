@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsEmail, IsOptional } from 'class-validator';
+import { IsString, IsNotEmpty, IsEmail, IsOptional, IsIn } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class RegisterWizardUserDto {
@@ -26,4 +26,14 @@ export class RegisterWizardUserDto {
   @IsString()
   @IsNotEmpty()
   password: string;
+
+  @ApiPropertyOptional({
+    enum: ['wizard', 'crm-lead', 'panel'],
+    description: 'Canal de origen del registro',
+    example: 'wizard',
+  })
+  @IsOptional()
+  @IsString()
+  @IsIn(['wizard', 'crm-lead', 'panel'])
+  source?: 'wizard' | 'crm-lead' | 'panel';
 }

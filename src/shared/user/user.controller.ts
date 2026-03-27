@@ -142,6 +142,38 @@ export class UserController {
     return this.userService.updateCurrentUser(userId, updateDto);
   }
 
+  @Post('/me/request-email-change')
+  @UseGuards(AuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Solicitar cambio de correo electrónico',
+    description: 'Envía un email de verificación al nuevo correo. El cambio no se aplica hasta confirmar.',
+  })
+  @ApiBody({ schema: { properties: { email: { type: 'string', example: 'nuevo@ejemplo.com' } } } })
+  @ApiResponse({ status: 200, description: 'Email de verificación enviado' })
+  @ApiResponse({ status: 400, description: 'El correo ya está en uso' })
+  async requestEmailChange(@Request() req, @Body('email') email: string) {
+    const userId = req.user.id;
+    await this.userService.requestEmailChange(userId, email);
+    return { message: 'Email de verificación enviado. Revisa tu bandeja de entrada.' };
+  }
+
+  @Post('/me/confirm-email-change')
+  @UseGuards(AuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Confirmar cambio de correo electrónico',
+    description: 'Aplica el cambio de correo usando el token recibido por email.',
+  })
+  @ApiBody({ schema: { properties: { token: { type: 'string' } } } })
+  @ApiResponse({ status: 200, description: 'Correo actualizado correctamente' })
+  @ApiResponse({ status: 400, description: 'Token inválido o expirado' })
+  async confirmEmailChange(@Request() req, @Body('token') token: string) {
+    const userId = req.user.id;
+    const user = await this.userService.confirmEmailChange(userId, token);
+    return { message: 'Correo actualizado correctamente', email: user.email };
+  }
+
   // Rutas con parámetros dinámicos deben ir DESPUÉS de las rutas específicas
   @Get(':id')
   @UseGuards(AuthGuard)

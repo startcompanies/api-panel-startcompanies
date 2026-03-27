@@ -70,6 +70,9 @@ export class Request {
   @Column({ name: 'work_drive_url_external', nullable: true, type: 'text' })
   workDriveUrlExternal?: string; // URL externa de Zoho WorkDrive desde Account
 
+  @Column({ name: 'work_drive_id', nullable: true, length: 200 })
+  workDriveId?: string; // ID del recurso en Zoho WorkDrive (carpeta/archivo)
+
   @Column({ name: 'company', nullable: true, length: 255 })
   company?: string; // Empresa: "Start Companies" o nombre del partner
 

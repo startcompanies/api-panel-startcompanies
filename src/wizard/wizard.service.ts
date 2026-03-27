@@ -152,7 +152,10 @@ export class WizardService {
     email: string;
     phone?: string;
     password: string;
+    source?: 'wizard' | 'crm-lead' | 'panel';
   }) {
+    const source = clientData.source || 'wizard';
+    const requiresEmailVerification = source === 'crm-lead';
     // Verificar si el usuario ya existe
     const existingUser = await this.userRepo.findOne({
       where: { email: clientData.email },
@@ -182,25 +185,31 @@ export class WizardService {
         await this.userRepo.save(existingUser);
         this.logger.log(`Código de verificación reenviado para usuario existente: ${existingUser.id} - ${existingUser.email}`);
         
-        // Enviar correo de confirmación con el nuevo código
-        try {
-          const userName = `${clientData.firstName} ${clientData.lastName}`.trim() || clientData.email;
-          await this.emailService.sendCodeEmailValidation(
-            clientData.email,
-            userName,
-            emailVerificationToken,
-          );
-          this.logger.log(`Correo de validación reenviado a: ${clientData.email}`);
-        } catch (emailError) {
-          this.logger.error(`Error al reenviar correo de validación: ${emailError}`);
-          // No fallar si el email falla, pero loguear el error
+        // Solo reenviar código cuando el flujo sí requiere verificación explícita
+        if (requiresEmailVerification) {
+          try {
+            const userName = `${clientData.firstName} ${clientData.lastName}`.trim() || clientData.email;
+            await this.emailService.sendCodeEmailValidation(
+              clientData.email,
+              userName,
+              emailVerificationToken,
+            );
+            this.logger.log(`Correo de validación reenviado a: ${clientData.email}`);
+          } catch (emailError) {
+            this.logger.error(`Error al reenviar correo de validación: ${emailError}`);
+            // No fallar si el email falla, pero loguear el error
+          }
         }
         
         // Retornar respuesta exitosa como si fuera un nuevo registro
         return {
-          message: 'Código de verificación reenviado. Por favor, revisa tu correo para confirmar tu cuenta.',
+          message: requiresEmailVerification
+            ? 'Código de verificación reenviado. Por favor, revisa tu correo para confirmar tu cuenta.'
+            : 'Registro de sesión actualizado exitosamente.',
           email: existingUser.email,
           id: existingUser.id,
+          requiresEmailVerification,
+          ...this.generateTokens(existingUser),
         };
       }
     }
@@ -239,24 +248,30 @@ export class WizardService {
     const savedClient = await this.clientRepo.save(client);
     this.logger.log(`Cliente creado en wizard: ${savedClient.id}`);
 
-    // Enviar correo de confirmación
-    try {
-      const userName = `${clientData.firstName} ${clientData.lastName}`.trim() || clientData.email;
-      await this.emailService.sendCodeEmailValidation(
-        clientData.email,
-        userName,
-        emailVerificationToken,
-      );
-      this.logger.log(`Correo de validación enviado a: ${clientData.email}`);
-    } catch (emailError) {
-      this.logger.error(`Error al enviar correo de validación: ${emailError}`);
-      // No fallar si el email falla, pero loguear el error
+    // Solo enviar correo de validación cuando el flujo lo requiere
+    if (requiresEmailVerification) {
+      try {
+        const userName = `${clientData.firstName} ${clientData.lastName}`.trim() || clientData.email;
+        await this.emailService.sendCodeEmailValidation(
+          clientData.email,
+          userName,
+          emailVerificationToken,
+        );
+        this.logger.log(`Correo de validación enviado a: ${clientData.email}`);
+      } catch (emailError) {
+        this.logger.error(`Error al enviar correo de validación: ${emailError}`);
+        // No fallar si el email falla, pero loguear el error
+      }
     }
 
     return {
-      message: 'Usuario registrado exitosamente. Por favor, confirma tu email para continuar.',
+      message: requiresEmailVerification
+        ? 'Usuario registrado exitosamente. Por favor, confirma tu email para continuar.'
+        : 'Usuario registrado exitosamente.',
       email: savedUser.email,
       id: savedUser.id,
+      requiresEmailVerification,
+      ...this.generateTokens(savedUser),
     };
   }
 
@@ -492,7 +507,7 @@ export class WizardService {
    * Crea una solicitud desde el wizard
    * IMPORTANTE: El pago se procesa ANTES de crear el request
    */
-  async createWizardRequest(createWizardRequestDto: CreateWizardRequestDto) {
+  async createWizardRequest(createWizardRequestDto: CreateWizardRequestDto, authUser?: any) {
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -507,15 +522,20 @@ export class WizardService {
 
       // Validar que el usuario esté autenticado y su email confirmado
       // El usuario viene del AuthGuard en el controlador
-      const user = await this.userRepo.findOne({
-        where: { email: createWizardRequestDto.clientData.email },
-      });
+      const source = createWizardRequestDto.source || 'wizard';
+      const user = authUser?.id
+        ? await this.userRepo.findOne({ where: { id: authUser.id } })
+        : await this.userRepo.findOne({
+            where: { email: createWizardRequestDto.clientData.email },
+          });
 
       if (!user) {
         throw new NotFoundException('Usuario no encontrado');
       }
 
-      if (!user.emailVerified) {
+      const requiresVerifiedEmailForRequest = source === 'crm-lead';
+
+      if (requiresVerifiedEmailForRequest && !user.emailVerified) {
         throw new BadRequestException(
           'Debes confirmar tu email antes de crear una solicitud. Por favor, confirma tu email primero.',
         );
@@ -572,8 +592,13 @@ export class WizardService {
       // paymentResult ya está declarado fuera del try
 
       // Verificar si hay pago requerido
-      const hasPayment = createWizardRequestDto.paymentAmount > 0 && 
-                        createWizardRequestDto.stripeToken !== 'no-payment';
+      const isNoInitialPaymentSource =
+        createWizardRequestDto.type === 'apertura-llc' &&
+        (source === 'crm-lead' || source === 'panel');
+      const hasPayment =
+        !isNoInitialPaymentSource &&
+        createWizardRequestDto.paymentAmount > 0 &&
+        createWizardRequestDto.stripeToken !== 'no-payment';
 
       if (hasPayment) {
         if (createWizardRequestDto.paymentMethod === 'stripe' && createWizardRequestDto.stripeToken) {
@@ -650,7 +675,7 @@ export class WizardService {
         type: createWizardRequestDto.type,
         status: 'pendiente', // Siempre pendiente al crear desde wizard
         currentStep: createWizardRequestDto.currentStep || 1,
-        createdFrom: 'wizard',
+        createdFrom: source === 'panel' ? 'panel' : 'wizard',
         clientId: client.id,
         partnerId: undefined, // Wizard no tiene partners
         notes: createWizardRequestDto.notes,
@@ -2004,11 +2029,17 @@ export class WizardService {
           const clientEmail = updatedRequest.client?.email;
           if (clientEmail) {
             const clientName = updatedRequest.client?.full_name || clientEmail;
+            const paymentAmountNum = Number(updatedRequest.paymentAmount || 0);
+            const isLeadAperturaFlow =
+              updatedRequest.type === 'apertura-llc' &&
+              updatedRequest.createdFrom === 'wizard' &&
+              (!updatedRequest.paymentMethod || paymentAmountNum <= 0);
             await this.emailService.sendWizardRequestSubmittedEmail({
               email: clientEmail,
               name: clientName,
               requestId: id,
               requestType: updatedRequest.type,
+              includeActivationCta: !isLeadAperturaFlow,
             });
           } else {
             this.logger.warn(

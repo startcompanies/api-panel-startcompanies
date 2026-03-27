@@ -33,6 +33,8 @@ import { awsConfigService } from '../../config/aws.config.service';
 // ZohoCrmService ya no se usa en findOne - solo se consulta la BD local
 // import { ZohoCrmService } from '../../zoho-config/zoho-crm.service';
 import { ZohoSyncService } from '../../zoho-config/zoho-sync.service';
+import { applyAperturaClientStageAlias } from '../../zoho-config/zoho-apertura-stage-client';
+import { applyRenovacionClientStageAlias } from '../../zoho-config/zoho-renovacion-stage-client';
 import {
   PanelRequestActorUser,
   RequestSubmittedNotificationsService,
@@ -3020,14 +3022,20 @@ export class RequestsService {
     }
 
     // Etapa inicial del blueprint según el tipo de solicitud
-    let defaultStage = 'Apertura Confirmada';
+    let defaultStage = 'Solicitud Recibida';
     if (request.type === 'cuenta-bancaria') {
       defaultStage = 'Cuenta Bancaria Confirmada';
     } else if (request.type === 'renovacion-llc') {
-      defaultStage = 'Renovación Confirmada';
+      defaultStage = 'Solicitud Recibida';
     }
     
-    const initialStage = approveDto.initialStage || defaultStage;
+    const initialStageRaw = approveDto.initialStage || defaultStage;
+    const initialStage =
+      request.type === 'apertura-llc'
+        ? applyAperturaClientStageAlias(initialStageRaw)
+        : request.type === 'renovacion-llc'
+          ? applyRenovacionClientStageAlias(initialStageRaw)
+          : initialStageRaw;
 
     // PRIMERO: Sincronizar con Zoho CRM antes de aprobar
     // Si la sincronización falla, no se aprueba la solicitud
@@ -3047,24 +3055,31 @@ export class RequestsService {
     }
 
     // SOLO si la sincronización fue exitosa, aprobar la solicitud
-    request.status = 'en-proceso';
-    request.stage = initialStage;
-    if (approveDto.notes) {
-      request.notes = approveDto.notes;
+    // Recargar la solicitud para obtener el zohoAccountId actualizado por syncRequestToZoho
+    const updatedRequest = await this.requestRepository.findOne({ where: { id } });
+    if (!updatedRequest) {
+      throw new NotFoundException(`Solicitud con ID ${id} no encontrada tras sincronización`);
     }
 
-    await this.requestRepository.save(request);
+    updatedRequest.status = 'en-proceso';
+    updatedRequest.stage = initialStage;
+    if (approveDto.notes) {
+      updatedRequest.notes = approveDto.notes;
+    }
+
+    await this.requestRepository.save(updatedRequest);
 
     this.logger.log(
-      `Solicitud ${id} aprobada exitosamente. Etapa inicial: ${initialStage}`,
+      `Solicitud ${id} aprobada exitosamente. Etapa inicial: ${initialStage}. zohoAccountId: ${updatedRequest.zohoAccountId ?? 'no asignado'}`,
     );
 
     return {
       message: 'Solicitud aprobada correctamente',
       request: {
-        id: request.id,
-        status: request.status,
-        stage: request.stage,
+        id: updatedRequest.id,
+        status: updatedRequest.status,
+        stage: updatedRequest.stage,
+        zohoAccountId: updatedRequest.zohoAccountId,
       },
     };
   }
@@ -3113,14 +3128,12 @@ export class RequestsService {
     return [
       'Apertura Confirmada',
       'Filing Iniciado',
-      'EIN Solicitado',
-      'Operating Agreement',
-      'BOI Enviado',
+      'Documentación completada',
+      'Apertura Cuenta Bancaria',
       'Cuenta Bancaria Confirmada',
       'Confirmación pago',
       'Apertura Activa',
       'Apertura Perdida',
-      'Apertura Cuenta Bancaria',
     ];
   }
 
