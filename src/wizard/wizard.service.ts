@@ -1422,6 +1422,20 @@ export class WizardService {
         request.notes = updateRequestDto.notes;
       }
 
+      // Paridad con panel (requests.service): persistir campos raíz del DTO en Request
+      if (updateRequestDto.signatureUrl !== undefined) {
+        request.signatureUrl = updateRequestDto.signatureUrl;
+      }
+      if (updateRequestDto.plan !== undefined) {
+        request.plan = updateRequestDto.plan;
+      }
+      if (
+        request.type === 'apertura-llc' &&
+        updateRequestDto.aperturaLlcData?.plan !== undefined
+      ) {
+        request.plan = (updateRequestDto.aperturaLlcData as any).plan;
+      }
+
       await queryRunner.manager.save(Request, request);
 
       // Actualizar la solicitud específica según el tipo
