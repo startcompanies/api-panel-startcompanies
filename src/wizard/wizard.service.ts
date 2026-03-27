@@ -541,18 +541,41 @@ export class WizardService {
         );
       }
 
-      // Validar currentStepNumber según el tipo
+      // currentStepNumber: el flujo sin pago (p. ej. crm-lead) a veces no lo envía en el POST.
+      // Sin valor, la columna NOT NULL en BD queda NULL. Coerción + fallback a último paso del tipo.
       const maxSteps = {
         'apertura-llc': 6,
         'renovacion-llc': 6,
         'cuenta-bancaria': 7,
+      } as const;
+      const dto = createWizardRequestDto;
+      const coerceStepNumber = (v: unknown): number | undefined => {
+        if (typeof v === 'number' && !Number.isNaN(v)) return v;
+        if (typeof v === 'string' && v.trim() !== '') {
+          const n = Number(v);
+          if (!Number.isNaN(n)) return n;
+        }
+        return undefined;
       };
+      const nestedSection =
+        dto.type === 'apertura-llc'
+          ? (dto.aperturaLlcData as any)?.currentSection
+          : dto.type === 'renovacion-llc'
+            ? (dto.renovacionLlcData as any)?.currentSection
+            : dto.type === 'cuenta-bancaria'
+              ? (dto.cuentaBancariaData as any)?.currentSection
+              : undefined;
+      const resolvedCurrentStepNumber =
+        coerceStepNumber(dto.currentStepNumber) ??
+        coerceStepNumber(nestedSection) ??
+        maxSteps[dto.type];
+
       if (
-        createWizardRequestDto.currentStepNumber < 1 ||
-        createWizardRequestDto.currentStepNumber > maxSteps[createWizardRequestDto.type]
+        resolvedCurrentStepNumber < 1 ||
+        resolvedCurrentStepNumber > maxSteps[dto.type]
       ) {
         throw new BadRequestException(
-          `currentStepNumber debe estar entre 1 y ${maxSteps[createWizardRequestDto.type]} para tipo ${createWizardRequestDto.type}`,
+          `currentStepNumber debe estar entre 1 y ${maxSteps[dto.type]} para tipo ${dto.type}`,
         );
       }
 
@@ -657,7 +680,7 @@ export class WizardService {
         validateRequestData(
           serviceData,
           createWizardRequestDto.type,
-          createWizardRequestDto.currentStepNumber,
+          resolvedCurrentStepNumber,
           requestStatus,
         );
       } catch (error) {
@@ -698,7 +721,7 @@ export class WizardService {
         }
 
         const { members, ...aperturaDataFields } = createWizardRequestDto.aperturaLlcData;
-        const currentStep = createWizardRequestDto.currentStepNumber;
+        const currentStep = resolvedCurrentStepNumber;
 
         // Preparar datos según la sección actual (igual que en panel)
         const aperturaDataRaw: any = { ...aperturaDataFields };
@@ -718,7 +741,7 @@ export class WizardService {
 
         const aperturaData = this.aperturaRepo.create({
           requestId: savedRequest.id,
-          currentStepNumber: createWizardRequestDto.currentStepNumber,
+          currentStepNumber: resolvedCurrentStepNumber,
           ...aperturaDataRaw,
         });
         await queryRunner.manager.save(AperturaLlcRequest, aperturaData);
@@ -773,7 +796,7 @@ export class WizardService {
 
         const renovacionDataRaw = createWizardRequestDto.renovacionLlcData as any;
         const { members, owners, ...renovacionDataFields } = renovacionDataRaw;
-        const currentStep = createWizardRequestDto.currentStepNumber;
+        const currentStep = resolvedCurrentStepNumber;
 
         // Preparar datos según la sección actual
         const dataToSave: any = { ...renovacionDataFields };
@@ -810,7 +833,7 @@ export class WizardService {
 
         const renovacionData = this.renovacionRepo.create({
           requestId: savedRequest.id,
-          currentStepNumber: createWizardRequestDto.currentStepNumber,
+          currentStepNumber: resolvedCurrentStepNumber,
           ...dataToSave,
         });
         await queryRunner.manager.save(RenovacionLlcRequest, renovacionData);
@@ -874,7 +897,7 @@ export class WizardService {
 
         const cuentaDataRaw = createWizardRequestDto.cuentaBancariaData as any;
         const { owners, validators, ...cuentaDataFields } = cuentaDataRaw;
-        const currentStep = createWizardRequestDto.currentStepNumber;
+        const currentStep = resolvedCurrentStepNumber;
 
         // Preparar datos según la sección actual (igual que en panel)
         const dataToSave: any = { ...cuentaDataFields };
@@ -1120,7 +1143,7 @@ export class WizardService {
         // Preparar datos para crear
         const cuentaDataToCreate: any = {
           requestId: savedRequest.id,
-          currentStepNumber: createWizardRequestDto.currentStepNumber,
+          currentStepNumber: resolvedCurrentStepNumber,
           ...dataToSave,
         };
         
@@ -2030,6 +2053,7 @@ export class WizardService {
           if (clientEmail) {
             const clientName = updatedRequest.client?.full_name || clientEmail;
             const paymentAmountNum = Number(updatedRequest.paymentAmount || 0);
+            // Lead (crm-lead, sin pago inicial): solo email de solicitud. Wizard /apertura-llc con pago: CTA de activación de cuenta.
             const isLeadAperturaFlow =
               updatedRequest.type === 'apertura-llc' &&
               updatedRequest.createdFrom === 'wizard' &&

@@ -84,6 +84,18 @@ export class GeoService {
       ? `https://ipapi.co/${encodeURIComponent(ip!)}/json/`
       : 'https://ipapi.co/json/';
 
+    const xff = req.headers['x-forwarded-for'];
+    const xfStr = typeof xff === 'string' ? xff.split(',')[0]?.trim() : undefined;
+    const cfRaw = req.headers['cf-connecting-ip'];
+    const cfStr = typeof cfRaw === 'string' ? cfRaw.trim() : undefined;
+    const socketIp = req.socket?.remoteAddress
+
+    this.logger.log(
+      `[Geo] extractedIp=${ip ?? 'null'} publicForLookup=${useIp} ` +
+        `mode=${useIp ? 'ipapi_by_client_ip' : 'ipapi_server_egress'} ` +
+        `xffFirst=${xfStr ?? '—'} cfConnectingIp=${cfStr ?? '—'} socket=${socketIp ?? '—'}`,
+    );
+
     try {
       const { data } = await firstValueFrom(
         this.http.get<IpApiResponse>(url, {
@@ -93,13 +105,16 @@ export class GeoService {
       );
 
       if (!data || data.error) {
-        this.logger.debug(
-          `ipapi sin país útil (${useIp ? 'ip cliente' : 'salida servidor'}): ${data?.reason ?? 'unknown'}`,
+        this.logger.warn(
+          `[Geo] ipapi sin país útil (${useIp ? 'ip cliente' : 'salida servidor'}): ${data?.reason ?? 'unknown'} → fallback us`,
         );
         return { countryCode: 'us' };
       }
 
       const code = (data.country_code || 'US').toString().toLowerCase();
+      this.logger.log(
+        `[Geo] resultado ipapi: countryCode=${code} countryName=${data.country_name ?? '—'} (sin fallback)`,
+      );
       return {
         countryCode: code,
         countryName: data.country_name,
