@@ -11,6 +11,7 @@ import { PaginationDto } from 'src/shared/common/dtos/pagination.dto';
 import { GetPostsFilterDto } from './dtos/get-posts-filter.dto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { toPublicUserResponse } from 'src/shared/user/serializers/user-response.serializer';
 
 export interface MigrationMetaItem {
   slug: string;
@@ -92,38 +93,121 @@ export class PostsService {
   }
 
   /** * Método para obtener todos los posts publicados para el portal */
-  async findAllPublishedForPortal(): Promise<Post[] | undefined> {
+  async findAllPublishedForPortal(): Promise<any[] | undefined> {
     try {
-      return this.postsRepository.find({
+      const posts = await this.postsRepository.find({
         where: { is_published: true },
-        select: ['title', 'seo_title', 'slug', 'excerpt', 'description', 'image_url', 'published_at'],
+        select: {
+          title: true,
+          seo_title: true,
+          slug: true,
+          excerpt: true,
+          description: true,
+          image_url: true,
+          published_at: true,
+          user: {
+            id: true,
+            username: true,
+            first_name: true,
+            last_name: true,
+          },
+          categories: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+          tags: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
         relations: ['user', 'categories', 'tags'],
         order: { published_at: 'DESC' },
       });
+      return posts.map((post) => ({
+        ...post,
+        user: toPublicUserResponse(post.user),
+      }));
     } catch (err) {
       this.exceptionsService.handleDBExceptions(err);
     }
   }
 
   /** * Método para obtener todos los posts en modo de revisión */
-  async findAllSandbox(): Promise<Post[] | undefined> {
+  async findAllSandbox(): Promise<any[] | undefined> {
     try {
-      return this.postsRepository.find({
+      const posts = await this.postsRepository.find({
         where: { sandbox: true },
-        select: ['title', 'seo_title', 'slug', 'excerpt', 'description', 'image_url', 'published_at'],
+        select: {
+          title: true,
+          seo_title: true,
+          slug: true,
+          excerpt: true,
+          description: true,
+          image_url: true,
+          published_at: true,
+          user: {
+            id: true,
+            username: true,
+            first_name: true,
+            last_name: true,
+          },
+          categories: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+          tags: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
         relations: ['user', 'categories', 'tags'],
         order: { published_at: 'DESC' },
       });
+      return posts.map((post) => ({
+        ...post,
+        user: toPublicUserResponse(post.user),
+      }));
     } catch (err) {
       this.exceptionsService.handleDBExceptions(err);
     }
   }
 
   /** * Método para obtener un post por su slug */
-  async findOneBySlug(slug: string): Promise<Post | undefined | null> {
+  async findOneBySlug(slug: string): Promise<any | undefined | null> {
     try {
       const post = await this.postsRepository.findOne({
-        where: { slug },
+        where: { slug, is_published: true },
+        select: {
+          id: true,
+          title: true,
+          seo_title: true,
+          slug: true,
+          content: true,
+          excerpt: true,
+          description: true,
+          image_url: true,
+          published_at: true,
+          user: {
+            id: true,
+            username: true,
+            first_name: true,
+            last_name: true,
+          },
+          categories: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+          tags: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
         relations: ['user', 'categories', 'tags'],
       });
 
@@ -131,7 +215,10 @@ export class PostsService {
         this.exceptionsService.handleNotFoundExceptions(slug);
       }
 
-      return post;
+      return {
+        ...post,
+        user: toPublicUserResponse(post?.user),
+      };
     } catch (err) {
       this.exceptionsService.handleDBExceptions(err);
     }

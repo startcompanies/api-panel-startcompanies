@@ -6,6 +6,7 @@ import * as express from 'express';
 import cookieParser from 'cookie-parser';
 
 import { LoggingInterceptor } from './shared/common/interceptors/logging.interceptor';
+import { ResponseSanitizerInterceptor } from './shared/common/interceptors/response-sanitizer.interceptor';
 import { SocketIoAdapter } from './socket-io.adapter';
 import { createCorsOriginCallback } from './config/cors-origins';
 
@@ -20,8 +21,11 @@ async function bootstrap() {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-  // Registrar interceptor de logging globalmente
-  app.useGlobalInterceptors(new LoggingInterceptor());
+  // Logging + saneamiento global de campos sensibles en respuestas
+  app.useGlobalInterceptors(
+    new LoggingInterceptor(),
+    new ResponseSanitizerInterceptor(),
+  );
 
 
   app.enableCors({
