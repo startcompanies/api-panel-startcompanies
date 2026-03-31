@@ -318,54 +318,43 @@ export class RequestsService {
     let requests: Request[];
 
     if (role === 'client') {
-      let client = await this.clientRepo.findOne({
-        where: { userId },
+      // Una sola consulta: (client.userId = usuario) OR (email del Client = email del User).
+      // Antes, si había un Client con userId pero la solicitud quedó ligada a otro Client (mismo email,
+      // userId null o duplicados de flujo), solo se listaba por client.id del primero → lista vacía.
+      const user = await this.userRepo.findOne({
+        where: { id: userId },
       });
-      this.logger.log(`[findAllByUser] role=client userId=${userId} clientByUserId=${client?.id ?? 'null'}`);
-
-      if (client) {
-        requests = await this.requestRepository.find({
-          where: { clientId: client.id },
-          order: { createdAt: 'DESC' },
-          relations: [
-            'client',
-            'partner',
-            'aperturaLlcRequest',
-            'renovacionLlcRequest',
-            'cuentaBancariaRequest',
-          ],
-        });
-        this.logger.log(
-          `[findAllByUser] requests by clientId=${client.id} count=${requests.length}`,
-        );
+      const email = user?.email?.trim();
+      if (!email) {
+        this.logger.log(`[findAllByUser] role=client userId=${userId} sin email en User → []`);
+        requests = [];
       } else {
-        // Respaldo: solicitudes creadas desde wizard pueden tener Client por email sin userId; buscar por email del usuario
-        const user = await this.userRepo.findOne({
-          where: { id: userId },
-        });
-        this.logger.log(`[findAllByUser] fallback user id=${userId} email=${user?.email ?? 'null'}`);
-        if (!user?.email) {
-          requests = [];
-        } else {
-          const qb = this.requestRepository
-            .createQueryBuilder('request')
-            .innerJoinAndSelect('request.client', 'client')
-            .leftJoinAndSelect('request.partner', 'partner')
-            .leftJoinAndSelect('request.aperturaLlcRequest', 'aperturaLlcRequest')
-            .leftJoinAndSelect('request.renovacionLlcRequest', 'renovacionLlcRequest')
-            .leftJoinAndSelect('request.cuentaBancariaRequest', 'cuentaBancariaRequest')
-            .where('client.email = :email', { email: user.email })
-            .orderBy('request.createdAt', 'DESC');
-          requests = await qb.getMany();
-          this.logger.log(`[findAllByUser] fallback by client.email=${user.email} count=${requests.length}`);
-          // Actualizar Client.userId para que la próxima vez se encuentre por userId
-          const clientByEmail = await this.clientRepo.findOne({
-            where: { email: user.email },
-          });
-          if (clientByEmail && clientByEmail.userId == null) {
-            await this.clientRepo.update(clientByEmail.id, { userId });
-          }
-        }
+        const emailNorm = email.toLowerCase();
+        const qb = this.requestRepository
+          .createQueryBuilder('request')
+          .innerJoinAndSelect('request.client', 'client')
+          .leftJoinAndSelect('request.partner', 'partner')
+          .leftJoinAndSelect('request.aperturaLlcRequest', 'aperturaLlcRequest')
+          .leftJoinAndSelect('request.renovacionLlcRequest', 'renovacionLlcRequest')
+          .leftJoinAndSelect('request.cuentaBancariaRequest', 'cuentaBancariaRequest')
+          .where(
+            '(client.userId = :uid OR LOWER(TRIM(client.email)) = :emailNorm)',
+            { uid: userId, emailNorm },
+          )
+          .andWhere('request.partnerId IS NULL')
+          .orderBy('request.createdAt', 'DESC');
+        requests = await qb.getMany();
+        this.logger.log(
+          `[findAllByUser] role=client userId=${userId} email=${email} unified count=${requests.length}`,
+        );
+        // Vincular Client al User cuando coincide el email y aún no hay user_id
+        await this.clientRepo
+          .createQueryBuilder()
+          .update(Client)
+          .set({ userId })
+          .where('LOWER(TRIM(email)) = :emailNorm', { emailNorm })
+          .andWhere('user_id IS NULL')
+          .execute();
       }
     } else {
       requests = await this.requestRepository.find({
