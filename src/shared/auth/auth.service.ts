@@ -14,8 +14,16 @@ import { ForgotPasswordDto } from './dtos/forgotPassword.dto';
 import { ResetPasswordDto } from './dtos/resetPassword.dto';
 import { EmailService } from 'src/shared/common/services/email.service';
 import { LoginOtpChallenge } from './entities/login-otp-challenge.entity';
+import { TrustedLoginDevice } from './entities/trusted-login-device.entity';
+import { LOGIN_TRUST_MAX_AGE_MS } from './constants/login-trust.constants';
 import * as crypto from 'crypto';
 import { jwtConstants } from 'src/shared/common/constants/jwtConstants';
+
+export interface LoginTrustRequestContext {
+  deviceCookie?: string;
+  userAgent: string;
+  clientIp: string;
+}
 
 const OTP_TTL_MS = 10 * 60 * 1000;
 const MAX_OTP_ATTEMPTS = 5;
@@ -28,6 +36,8 @@ export class authService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(LoginOtpChallenge)
     private readonly loginOtpRepository: Repository<LoginOtpChallenge>,
+    @InjectRepository(TrustedLoginDevice)
+    private readonly trustedDeviceRepository: Repository<TrustedLoginDevice>,
     private handleExceptionService: HandleExceptionsService,
     private jwtService: JwtService,
     private emailService: EmailService,
@@ -71,10 +81,113 @@ export class authService {
     };
   }
 
+  private hashDeviceSecret(secretHex: string): string {
+    return crypto.createHash('sha256').update(Buffer.from(secretHex, 'hex')).digest('hex');
+  }
+
+  private fingerprintUserAgent(ua: string): string {
+    return crypto.createHash('sha256').update(ua || '', 'utf8').digest('hex');
+  }
+
+  private fingerprintIp(ip: string): string {
+    return crypto.createHash('sha256').update(ip || '', 'utf8').digest('hex');
+  }
+
+  private parseDeviceTrustCookie(raw: string | undefined): { id: string; secret: string } | null {
+    if (!raw || typeof raw !== 'string') {
+      return null;
+    }
+    try {
+      const json = Buffer.from(raw, 'base64url').toString('utf8');
+      const o = JSON.parse(json) as { i?: string; s?: string };
+      if (
+        typeof o.i !== 'string' ||
+        typeof o.s !== 'string' ||
+        !/^[0-9a-f]{64}$/i.test(o.s)
+      ) {
+        return null;
+      }
+      return { id: o.i, secret: o.s.toLowerCase() };
+    } catch {
+      return null;
+    }
+  }
+
+  buildDeviceTrustCookieValue(deviceId: string, secretHex: string): string {
+    return Buffer.from(JSON.stringify({ i: deviceId, s: secretHex }), 'utf8').toString(
+      'base64url',
+    );
+  }
+
+  private async consumeTrustedDeviceIfValid(
+    user: User,
+    ctx: LoginTrustRequestContext,
+  ): Promise<boolean> {
+    const parsed = this.parseDeviceTrustCookie(ctx.deviceCookie);
+    if (!parsed) {
+      return false;
+    }
+    const row = await this.trustedDeviceRepository.findOne({ where: { id: parsed.id } });
+    if (!row || row.userId !== user.id) {
+      return false;
+    }
+    if (new Date() > row.expiresAt) {
+      return false;
+    }
+    const expectedHash = this.hashDeviceSecret(parsed.secret);
+    let secretOk = false;
+    try {
+      secretOk = crypto.timingSafeEqual(
+        Buffer.from(row.secretHash, 'hex'),
+        Buffer.from(expectedHash, 'hex'),
+      );
+    } catch {
+      secretOk = false;
+    }
+    if (!secretOk) {
+      return false;
+    }
+    if (row.userAgentHash !== this.fingerprintUserAgent(ctx.userAgent)) {
+      return false;
+    }
+    if (row.ipHash != null && row.ipHash !== this.fingerprintIp(ctx.clientIp)) {
+      return false;
+    }
+    row.lastUsedAt = new Date();
+    await this.trustedDeviceRepository.save(row);
+    return true;
+  }
+
   /**
-   * Paso 1 del login: valida credenciales y envía OTP por correo. No emite cookies de sesión.
+   * Registra este navegador como confiable (tras sesión iniciada). Devuelve el valor de cookie a setear.
    */
-  async signIn(signInDto: SignInDto) {
+  async createTrustedLoginDevice(
+    userId: number,
+    ctx: LoginTrustRequestContext,
+  ): Promise<string> {
+    const secretHex = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + LOGIN_TRUST_MAX_AGE_MS);
+    const entity = this.trustedDeviceRepository.create({
+      userId,
+      secretHash: this.hashDeviceSecret(secretHex),
+      userAgentHash: this.fingerprintUserAgent(ctx.userAgent),
+      ipHash: ctx.clientIp ? this.fingerprintIp(ctx.clientIp) : null,
+      expiresAt,
+      lastUsedAt: null,
+    });
+    const saved = await this.trustedDeviceRepository.save(entity);
+    return this.buildDeviceTrustCookieValue(saved.id, secretHex);
+  }
+
+  async revokeTrustedDevicesForUser(userId: number): Promise<void> {
+    await this.trustedDeviceRepository.delete({ userId });
+  }
+
+  /**
+   * Paso 1 del login: valida credenciales; si hay dispositivo confiable válido emite sesión (sin OTP).
+   * Si no, envía OTP por correo. No emite cookies aquí salvo bypass (el controlador las setea).
+   */
+  async signIn(signInDto: SignInDto, trustCtx?: LoginTrustRequestContext) {
     const { email, password, rememberMe } = signInDto;
 
     const user = await this.userRepository.findOneBy({
@@ -93,6 +206,11 @@ export class authService {
 
     if (!isMatch) {
       return this.handleExceptionService.handleErrorPasswordException(email);
+    }
+
+    if (trustCtx && (await this.consumeTrustedDeviceIfValid(user, trustCtx))) {
+      const session = await this.issueSessionTokens(user, Boolean(rememberMe));
+      return { ...session, rememberMe: Boolean(rememberMe), trustedDeviceBypass: true as const };
     }
 
     await this.loginOtpRepository
@@ -269,6 +387,7 @@ export class authService {
 
     try {
       await this.userRepository.save(user);
+      await this.revokeTrustedDevicesForUser(user.id);
       return {
         message: 'Contraseña actualizada exitosamente',
         code: 200,
@@ -341,6 +460,7 @@ export class authService {
       user.password = hashedNewPassword;
 
       await this.userRepository.save(user);
+      await this.revokeTrustedDevicesForUser(user.id);
 
       return {
         message: 'Contraseña restablecida exitosamente',
