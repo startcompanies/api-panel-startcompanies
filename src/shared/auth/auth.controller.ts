@@ -5,6 +5,8 @@ import { JwtService } from '@nestjs/jwt';
 import { authService } from './auth.service';
 import { SignUpDto } from './dtos/signup.dto';
 import { SignInDto } from './dtos/signin.dto';
+import { SignInVerifyDto } from './dtos/signin-verify.dto';
+import { SignInResendOtpDto } from './dtos/signin-resend-otp.dto';
 import { ChangePasswordDto } from './dtos/changePassword.dto';
 import { ForgotPasswordDto } from './dtos/forgotPassword.dto';
 import { ResetPasswordDto } from './dtos/resetPassword.dto';
@@ -20,6 +22,27 @@ const cookieOptions = {
   sameSite: (isProduction ? 'none' : 'lax') as 'none' | 'lax',
   path: '/',
 };
+
+const ACCESS_COOKIE_MS = 60 * 60 * 1000;
+const REFRESH_COOKIE_SHORT_MS = 5 * 24 * 60 * 60 * 1000;
+const REFRESH_COOKIE_LONG_MS = 30 * 24 * 60 * 60 * 1000;
+
+function setPanelSessionCookies(
+  res: express.Response,
+  accessToken: string,
+  refreshToken: string,
+  rememberMe: boolean,
+) {
+  const refreshMs = rememberMe ? REFRESH_COOKIE_LONG_MS : REFRESH_COOKIE_SHORT_MS;
+  res.cookie('access_token', accessToken, {
+    ...cookieOptions,
+    maxAge: ACCESS_COOKIE_MS,
+  });
+  res.cookie('refresh_token', refreshToken, {
+    ...cookieOptions,
+    maxAge: refreshMs,
+  });
+}
 
 @ApiTags('Common - Auth')
 @Controller('auth')
@@ -37,28 +60,39 @@ export class AuthController {
 
   @Post('/signin')
   @ApiOperation({
-    summary: 'Iniciar sesión',
-    description: 'Autentica y devuelve user + tokens; además setea cookies HttpOnly (access_token, refresh_token).',
+    summary: 'Iniciar sesión (paso 1)',
+    description:
+      'Valida email y contraseña; envía código OTP al correo. No emite cookies hasta POST /auth/signin/verify.',
   })
   @ApiBody({ type: SignInDto })
-  @ApiResponse({ status: 200, description: 'Inicio de sesión exitoso' })
-  @ApiResponse({ status: 401, description: 'Credenciales inválidas' })
-  async signIn(
-    @Body() signInDto: SignInDto,
+  @ApiResponse({ status: 200, description: 'Segundo factor requerido o error de credenciales (mismo formato histórico)' })
+  async signIn(@Body() signInDto: SignInDto) {
+    return this.authService.signIn(signInDto);
+  }
+
+  @Post('/signin/verify')
+  @ApiOperation({
+    summary: 'Completar inicio de sesión (paso 2)',
+    description: 'Valida el código OTP y emite cookies HttpOnly + tokens.',
+  })
+  @ApiBody({ type: SignInVerifyDto })
+  @ApiResponse({ status: 200, description: 'Sesión iniciada' })
+  async signInVerify(
+    @Body() dto: SignInVerifyDto,
     @Res({ passthrough: true }) res: express.Response,
   ) {
-    const result = await this.authService.signIn(signInDto);
-    if ('token' in result && result.token && result.refreshToken) {
-      res.cookie('access_token', result.token, {
-        ...cookieOptions,
-        maxAge: 60 * 60 * 1000,
-      });
-      res.cookie('refresh_token', result.refreshToken, {
-        ...cookieOptions,
-        maxAge: 5 * 24 * 60 * 60 * 1000,
-      });
-    }
-    return result;
+    const result = await this.authService.signInVerify(dto);
+    const rememberMe = Boolean(result.rememberMe);
+    setPanelSessionCookies(res, result.token, result.refreshToken, rememberMe);
+    const { rememberMe: _rm, ...body } = result;
+    return body;
+  }
+
+  @Post('/signin/resend-otp')
+  @ApiOperation({ summary: 'Reenviar código OTP del login' })
+  @ApiBody({ type: SignInResendOtpDto })
+  async signInResendOtp(@Body() dto: SignInResendOtpDto) {
+    return this.authService.signInResendOtp(dto);
   }
 
   @Get('/me')

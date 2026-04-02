@@ -1,4 +1,4 @@
-import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { SignUpDto } from './dtos/signup.dto';
 import { comparePasswords, encodePassword } from 'src/shared/common/utils/bcrypt';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -6,17 +6,28 @@ import { Repository } from 'typeorm';
 import { User } from 'src/shared/user/entities/user.entity';
 import { HandleExceptionsService } from 'src/shared/common/common.service';
 import { SignInDto } from './dtos/signin.dto';
+import { SignInVerifyDto } from './dtos/signin-verify.dto';
+import { SignInResendOtpDto } from './dtos/signin-resend-otp.dto';
 import { JwtService } from '@nestjs/jwt';
 import { ChangePasswordDto } from './dtos/changePassword.dto';
 import { ForgotPasswordDto } from './dtos/forgotPassword.dto';
 import { ResetPasswordDto } from './dtos/resetPassword.dto';
 import { EmailService } from 'src/shared/common/services/email.service';
+import { LoginOtpChallenge } from './entities/login-otp-challenge.entity';
+import * as crypto from 'crypto';
+import { jwtConstants } from 'src/shared/common/constants/jwtConstants';
+
+const OTP_TTL_MS = 10 * 60 * 1000;
+const MAX_OTP_ATTEMPTS = 5;
+const MAX_OTP_RESENDS = 5;
 
 @Injectable()
 export class authService {
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
+    @InjectRepository(LoginOtpChallenge)
+    private readonly loginOtpRepository: Repository<LoginOtpChallenge>,
     private handleExceptionService: HandleExceptionsService,
     private jwtService: JwtService,
     private emailService: EmailService,
@@ -27,7 +38,7 @@ export class authService {
     const user = this.userRepository.create({
       ...signUpDto,
       password,
-      type: signUpDto.type || 'user', // Asegurar que tenga un valor por defecto
+      type: signUpDto.type || 'user',
     });
     try {
       await this.userRepository.save(user);
@@ -38,24 +49,17 @@ export class authService {
     }
   }
 
-  async signIn(signInDto: SignInDto) {
-    const { email, password } = signInDto;
+  private hashOtpCode(code: string): string {
+    const secret = process.env.LOGIN_OTP_SECRET || jwtConstants.secret;
+    return crypto.createHmac('sha256', secret).update(code).digest('hex');
+  }
 
-    const user = await this.userRepository.findOneBy({
-      email: email ?? undefined,
-    });
+  private generateOtpDigits(): string {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+  }
 
-    if (!user) {
-      return this.handleExceptionService.handleErrorLoginException(email);
-    }
-    
-    const isMatch = await comparePasswords(password, user.password ?? '');
-
-    if (!isMatch) {
-      return this.handleExceptionService.handleErrorPasswordException(email);
-    }
-
-    const infoUser = {
+  private buildInfoUser(user: User) {
+    return {
       id: user.id,
       userName: user.username,
       username: user.username,
@@ -65,13 +69,181 @@ export class authService {
       first_name: user.first_name ?? undefined,
       last_name: user.last_name ?? undefined,
     };
+  }
 
+  /**
+   * Paso 1 del login: valida credenciales y envía OTP por correo. No emite cookies de sesión.
+   */
+  async signIn(signInDto: SignInDto) {
+    const { email, password, rememberMe } = signInDto;
+
+    const user = await this.userRepository.findOneBy({
+      email: email ?? undefined,
+    });
+
+    if (!user) {
+      return this.handleExceptionService.handleErrorLoginException(email);
+    }
+
+    if (!user.status) {
+      return this.handleExceptionService.handleErrorStatusUserException(email);
+    }
+
+    const isMatch = await comparePasswords(password, user.password ?? '');
+
+    if (!isMatch) {
+      return this.handleExceptionService.handleErrorPasswordException(email);
+    }
+
+    await this.loginOtpRepository
+      .createQueryBuilder()
+      .update(LoginOtpChallenge)
+      .set({ consumedAt: new Date() })
+      .where('userId = :uid', { uid: user.id })
+      .andWhere('consumedAt IS NULL')
+      .execute();
+
+    const code = this.generateOtpDigits();
+    const codeHash = this.hashOtpCode(code);
+    const expiresAt = new Date(Date.now() + OTP_TTL_MS);
+
+    const challenge = this.loginOtpRepository.create({
+      userId: user.id,
+      codeHash,
+      rememberMe: Boolean(rememberMe),
+      expiresAt,
+      attemptCount: 0,
+      resendCount: 0,
+      consumedAt: null,
+    });
+    const saved = await this.loginOtpRepository.save(challenge);
+
+    const displayName =
+      `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username;
+    try {
+      await this.emailService.sendPanelLoginOtpEmail(user.email, displayName, code);
+    } catch (e) {
+      await this.loginOtpRepository.delete({ id: saved.id });
+      throw new BadRequestException(
+        'No pudimos enviar el código a tu correo. Revisa la configuración o inténtalo más tarde.',
+      );
+    }
+
+    return {
+      step: 'second_factor' as const,
+      challengeId: saved.id,
+      message: 'Te enviamos un código de 6 dígitos a tu correo.',
+    };
+  }
+
+  async signInVerify(signInVerifyDto: SignInVerifyDto) {
+    const { challengeId, code } = signInVerifyDto;
+
+    const challenge = await this.loginOtpRepository.findOne({
+      where: { id: challengeId },
+    });
+
+    if (!challenge || challenge.consumedAt) {
+      throw new UnauthorizedException('Código inválido o expirado');
+    }
+
+    if (new Date() > challenge.expiresAt) {
+      throw new UnauthorizedException('El código ha expirado. Vuelve a iniciar sesión.');
+    }
+
+    if (challenge.attemptCount >= MAX_OTP_ATTEMPTS) {
+      throw new UnauthorizedException('Demasiados intentos. Vuelve a iniciar sesión.');
+    }
+
+    const expectedHash = this.hashOtpCode(code);
+    let match = false;
+    try {
+      match = crypto.timingSafeEqual(
+        Buffer.from(challenge.codeHash, 'hex'),
+        Buffer.from(expectedHash, 'hex'),
+      );
+    } catch {
+      match = false;
+    }
+
+    if (!match) {
+      challenge.attemptCount += 1;
+      await this.loginOtpRepository.save(challenge);
+      throw new BadRequestException('Código incorrecto');
+    }
+
+    challenge.consumedAt = new Date();
+    await this.loginOtpRepository.save(challenge);
+
+    const user = await this.userRepository.findOne({
+      where: { id: challenge.userId },
+    });
+
+    if (!user || !user.status) {
+      throw new UnauthorizedException('Usuario no encontrado o inactivo');
+    }
+
+    if (!user.emailVerified) {
+      user.emailVerified = true;
+      user.emailVerificationToken = null;
+      await this.userRepository.save(user);
+    }
+
+    const session = await this.issueSessionTokens(user, challenge.rememberMe);
+    return { ...session, rememberMe: challenge.rememberMe };
+  }
+
+  async signInResendOtp(dto: SignInResendOtpDto) {
+    const challenge = await this.loginOtpRepository.findOne({
+      where: { id: dto.challengeId },
+    });
+
+    if (!challenge || challenge.consumedAt) {
+      throw new BadRequestException('Sesión de verificación no válida. Vuelve a iniciar sesión.');
+    }
+
+    if (new Date() > challenge.expiresAt) {
+      throw new BadRequestException('El código expiró. Vuelve a iniciar sesión.');
+    }
+
+    if (challenge.resendCount >= MAX_OTP_RESENDS) {
+      throw new BadRequestException('Límite de reenvíos alcanzado. Vuelve a iniciar sesión.');
+    }
+
+    const user = await this.userRepository.findOne({
+      where: { id: challenge.userId },
+    });
+    if (!user || !user.status) {
+      throw new BadRequestException('Usuario no encontrado o inactivo');
+    }
+
+    const code = this.generateOtpDigits();
+    challenge.codeHash = this.hashOtpCode(code);
+    challenge.expiresAt = new Date(Date.now() + OTP_TTL_MS);
+    challenge.resendCount += 1;
+    challenge.attemptCount = 0;
+
+    await this.loginOtpRepository.save(challenge);
+
+    const displayName =
+      `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username;
+    try {
+      await this.emailService.sendPanelLoginOtpEmail(user.email, displayName, code);
+    } catch {
+      throw new BadRequestException('No pudimos reenviar el correo. Inténtalo más tarde.');
+    }
+
+    return { ok: true, message: 'Código reenviado.' };
+  }
+
+  private async issueSessionTokens(user: User, rememberMe: boolean) {
+    const infoUser = this.buildInfoUser(user);
+    const refreshExpires = rememberMe ? '30d' : '5d';
     const token = await this.jwtService.signAsync(infoUser);
     const refreshToken = await this.jwtService.signAsync(
       { ...infoUser, type: 'refresh' },
-      { expiresIn: '5d' },
+      { expiresIn: refreshExpires },
     );
-
     return { user: infoUser, token, refreshToken };
   }
 
@@ -114,7 +286,6 @@ export class authService {
     });
 
     if (!user) {
-      // Por seguridad, no revelamos si el email existe o no
       return {
         message:
           'Si el email existe en nuestro sistema, recibirás un enlace para restablecer tu contraseña',
@@ -122,19 +293,16 @@ export class authService {
       };
     }
 
-    // Generar token de reset (en producción, debería ser más seguro y almacenarse en BD)
     const resetToken = await this.jwtService.signAsync(
       { id: user.id, email: user.email, type: 'password-reset' },
       { expiresIn: '1h' },
     );
 
-    // Enviar email con el token
     const userName = `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username;
     try {
       await this.emailService.sendPasswordResetEmail(user.email, userName, resetToken);
     } catch (emailError) {
       console.error('Error al enviar email de reset:', emailError);
-      // No fallar si el email falla, pero loguear el error
     }
 
     return {
@@ -148,10 +316,8 @@ export class authService {
     const { token, newPassword } = resetPasswordDto;
 
     try {
-      // Verificar token
       const payload = await this.jwtService.verifyAsync(token);
 
-      // Aceptar tanto tokens de reset como de setup inicial
       if (payload.type !== 'password-reset' && payload.type !== 'password-setup') {
         return {
           message: 'Token inválido',
@@ -171,7 +337,6 @@ export class authService {
         };
       }
 
-      // Actualizar contraseña
       const hashedNewPassword = encodePassword(newPassword);
       user.password = hashedNewPassword;
 
@@ -189,10 +354,6 @@ export class authService {
     }
   }
 
-
-  /**
-   * Refresh token - Renueva el access token usando un refresh token (cookie o body)
-   */
   async refresh(refreshToken: string | undefined) {
     if (!refreshToken) {
       throw new UnauthorizedException('Refresh token requerido');

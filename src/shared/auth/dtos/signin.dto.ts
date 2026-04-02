@@ -1,5 +1,5 @@
-import { IsString } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger'
+import { IsBoolean, IsOptional, IsString } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class SignInDto {
   @ApiProperty({ example: 'john@example.com', description: 'Email del usuario' })
@@ -9,4 +9,11 @@ export class SignInDto {
   @ApiProperty({ example: 'SecurePassword123!', description: 'Contraseña del usuario' })
   @IsString()
   password: string;
+
+  @ApiPropertyOptional({
+    description: 'Sesión larga (refresh ~30 días). Si no se envía, se usa sesión más corta.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  rememberMe?: boolean;
 }

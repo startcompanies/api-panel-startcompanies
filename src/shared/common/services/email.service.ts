@@ -266,6 +266,44 @@ export class EmailService {
   }
 
   /**
+   * Código de un solo uso para el segundo factor del login al panel.
+   */
+  async sendPanelLoginOtpEmail(
+    email: string,
+    name: string,
+    code: string,
+  ): Promise<void> {
+    if (!this.resend) {
+      this.logger.warn(`Email de login 2FA no enviado a ${email} (Resend no configurado)`);
+      return;
+    }
+
+    const bodyHtml = `
+      <p>Hola ${name},</p>
+      <p>Alguien está intentando iniciar sesión en el panel de Start Companies con tu cuenta.</p>
+      <p>Introduce este código para completar el acceso. Caduca en pocos minutos.</p>
+      <p>Si no fuiste tú, ignora este mensaje y tu contraseña sigue siendo necesaria para entrar.</p>
+    `;
+    try {
+      await this.resend.emails.send({
+        from: this.configService.get<string>('RESEND_FROM_EMAIL') || 'Start Companies <noreply@startcompanies.us>',
+        to: email,
+        subject: 'Código de acceso al panel - Start Companies',
+        html: this.getEmailHtml({
+          title: 'Verificación en dos pasos',
+          bodyHtml,
+          codeBlock: code,
+        }),
+      });
+
+      this.logger.log(`Email de login 2FA enviado a ${email}`);
+    } catch (error) {
+      this.logger.error(`Error al enviar email de login 2FA a ${email}:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Envía un email confirmando que la solicitud del wizard fue enviada.
    * Se dispara al pasar el request a status = 'solicitud-recibida'.
    */

@@ -137,7 +137,8 @@ export class WizardService {
     } else {
       return {
         available: false,
-        message: 'El email ya está registrado pero no ha sido confirmado. Por favor, revisa tu correo para confirmar tu cuenta.',
+        message:
+          'Este email ya tiene una cuenta. Inicia sesión en el panel: te enviaremos un código para verificar el acceso.',
         emailVerified: false,
       };
     }
@@ -155,9 +156,6 @@ export class WizardService {
     password: string;
     source?: 'wizard' | 'crm-lead' | 'panel';
   }) {
-    const source = clientData.source || 'wizard';
-    const requiresEmailVerification = source === 'crm-lead';
-    // Verificar si el usuario ya existe
     const existingUser = await this.userRepo.findOne({
       where: { email: clientData.email },
     });
@@ -167,55 +165,23 @@ export class WizardService {
         throw new BadRequestException(
           'El email ya está registrado y confirmado. Por favor, inicia sesión.',
         );
-      } else {
-        // Si el email existe pero no está verificado, reenviar el código de verificación
-        // Actualizar contraseña si es diferente (por si el usuario olvidó su contraseña)
-        const hashedPassword = encodePassword(clientData.password);
-        existingUser.password = hashedPassword;
-        
-        // Actualizar datos del usuario si han cambiado
-        if (clientData.firstName) existingUser.first_name = clientData.firstName;
-        if (clientData.lastName) existingUser.last_name = clientData.lastName;
-        if (clientData.phone) existingUser.phone = clientData.phone;
-        
-        // Generar nuevo código de verificación
-        const emailVerificationToken = this.generateEmailVerificationCode();
-        existingUser.emailVerificationToken = emailVerificationToken;
-        
-        // Guardar cambios
-        await this.userRepo.save(existingUser);
-        this.logger.log(`Código de verificación reenviado para usuario existente: ${existingUser.id} - ${existingUser.email}`);
-        
-        // Solo reenviar código cuando el flujo sí requiere verificación explícita
-        if (requiresEmailVerification) {
-          try {
-            const userName = `${clientData.firstName} ${clientData.lastName}`.trim() || clientData.email;
-            await this.emailService.sendCodeEmailValidation(
-              clientData.email,
-              userName,
-              emailVerificationToken,
-            );
-            this.logger.log(`Correo de validación reenviado a: ${clientData.email}`);
-          } catch (emailError) {
-            this.logger.error(`Error al reenviar correo de validación: ${emailError}`);
-            // No fallar si el email falla, pero loguear el error
-          }
-        }
-        
-        // Retornar respuesta exitosa como si fuera un nuevo registro
-        return {
-          message: requiresEmailVerification
-            ? 'Código de verificación reenviado. Por favor, revisa tu correo para confirmar tu cuenta.'
-            : 'Registro de sesión actualizado exitosamente.',
-          email: existingUser.email,
-          id: existingUser.id,
-          requiresEmailVerification,
-          ...this.generateTokens(existingUser),
-        };
       }
+      const hashedPassword = encodePassword(clientData.password);
+      existingUser.password = hashedPassword;
+      if (clientData.firstName) existingUser.first_name = clientData.firstName;
+      if (clientData.lastName) existingUser.last_name = clientData.lastName;
+      if (clientData.phone) existingUser.phone = clientData.phone;
+      await this.userRepo.save(existingUser);
+      this.logger.log(`Usuario wizard existente actualizado: ${existingUser.id} - ${existingUser.email}`);
+      return {
+        message: 'Registro actualizado. Continúa con tu solicitud.',
+        email: existingUser.email,
+        id: existingUser.id,
+        requiresEmailVerification: false,
+        ...this.generateTokens(existingUser),
+      };
     }
 
-    // Crear nuevo usuario con contraseña
     const hashedPassword = encodePassword(clientData.password);
     const username = clientData.email.split('@')[0] + Math.floor(Math.random() * 1000);
     const emailVerificationToken = this.generateEmailVerificationCode();
@@ -236,42 +202,22 @@ export class WizardService {
     const savedUser = await this.userRepo.save(user);
     this.logger.log(`Usuario creado en wizard: ${savedUser.id} - ${savedUser.email}`);
 
-    // Crear cliente asociado (sin partnerId)
     const client = this.clientRepo.create({
       email: clientData.email,
       full_name: `${clientData.firstName} ${clientData.lastName}`.trim(),
       phone: clientData.phone || '',
       userId: savedUser.id,
-      // NO asociar partnerId en wizard
       status: true,
     });
 
-    const savedClient = await this.clientRepo.save(client);
-    this.logger.log(`Cliente creado en wizard: ${savedClient.id}`);
-
-    // Solo enviar correo de validación cuando el flujo lo requiere
-    if (requiresEmailVerification) {
-      try {
-        const userName = `${clientData.firstName} ${clientData.lastName}`.trim() || clientData.email;
-        await this.emailService.sendCodeEmailValidation(
-          clientData.email,
-          userName,
-          emailVerificationToken,
-        );
-        this.logger.log(`Correo de validación enviado a: ${clientData.email}`);
-      } catch (emailError) {
-        this.logger.error(`Error al enviar correo de validación: ${emailError}`);
-        // No fallar si el email falla, pero loguear el error
-      }
-    }
+    await this.clientRepo.save(client);
+    this.logger.log(`Cliente creado en wizard para usuario ${savedUser.id}`);
 
     return {
-      message: requiresEmailVerification
-        ? 'Usuario registrado exitosamente. Por favor, confirma tu email para continuar.'
-        : 'Usuario registrado exitosamente.',
+      message: 'Usuario registrado exitosamente.',
       email: savedUser.email,
       id: savedUser.id,
-      requiresEmailVerification,
+      requiresEmailVerification: false,
       ...this.generateTokens(savedUser),
     };
   }
@@ -532,14 +478,6 @@ export class WizardService {
 
       if (!user) {
         throw new NotFoundException('Usuario no encontrado');
-      }
-
-      const requiresVerifiedEmailForRequest = source === 'crm-lead';
-
-      if (requiresVerifiedEmailForRequest && !user.emailVerified) {
-        throw new BadRequestException(
-          'Debes confirmar tu email antes de crear una solicitud. Por favor, confirma tu email primero.',
-        );
       }
 
       // currentStepNumber: el flujo sin pago (p. ej. crm-lead) a veces no lo envía en el POST.
