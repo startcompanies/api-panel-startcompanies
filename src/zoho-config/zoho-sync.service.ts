@@ -25,6 +25,8 @@ import {
   ZohoImportAccountsProgressEvent,
   ZohoImportFullSyncMeta,
 } from './zoho-sync.dto';
+import { normalizePublicHttpsWebUrl } from 'src/shared/common/utils/public-web-url.util';
+import { UploadFileService } from 'src/shared/upload-file/upload-file.service';
 
 @Injectable()
 export class ZohoSyncService implements OnModuleInit {
@@ -50,6 +52,7 @@ export class ZohoSyncService implements OnModuleInit {
     @InjectRepository(Client)
     private readonly clientRepo: Repository<Client>,
     private readonly dataSource: DataSource,
+    private readonly uploadFileService: UploadFileService,
   ) {}
 
   async onModuleInit() {
@@ -180,45 +183,11 @@ export class ZohoSyncService implements OnModuleInit {
   }
 
   /**
-   * Zoho CRM rechaza muchos valores que `new URL` acepta (p. ej. localhost, IPs privadas).
-   */
-  private isAcceptableZohoWebsiteHostname(hostname: string): boolean {
-    const h = (hostname || '').toLowerCase();
-    if (!h) return false;
-    if (h === 'localhost' || h.endsWith('.localhost')) return false;
-    if (h === '127.0.0.1' || h === '0.0.0.0' || h === '::1') return false;
-
-    const ipv4Parts = h.split('.');
-    if (ipv4Parts.length === 4 && ipv4Parts.every((p) => /^\d{1,3}$/.test(p))) {
-      const a = parseInt(ipv4Parts[0], 10);
-      const b = parseInt(ipv4Parts[1], 10);
-      if (a === 10) return false;
-      if (a === 127) return false;
-      if (a === 192 && b === 168) return false;
-      if (a === 172 && b >= 16 && b <= 31) return false;
-      if (a === 169 && b === 254) return false;
-    }
-
-    return true;
-  }
-
-  /**
-   * Normaliza URL para campos Zoho de tipo website.
+   * Normaliza URL para campos Zoho de tipo website (siempre https; http → https).
    * Si no es válida o no es aceptable para Zoho (p. ej. localhost), retorna '' y no se envían las claves.
    */
   private normalizeWebsiteUrl(url: string | null | undefined): string {
-    const raw = (url || '').trim();
-    if (!raw) return '';
-
-    const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
-    try {
-      const parsed = new URL(candidate);
-      if (!parsed.hostname) return '';
-      if (!this.isAcceptableZohoWebsiteHostname(parsed.hostname)) return '';
-      return candidate;
-    } catch {
-      return '';
-    }
+    return normalizePublicHttpsWebUrl(url);
   }
 
   /** Stage del módulo Deals (COQL / REST); a veces la clave puede variar. */
@@ -346,6 +315,112 @@ export class ZohoSyncService implements OnModuleInit {
     return typeMap[type] || 'Apertura';
   }
 
+  private collectZohoAccountAttachmentItems(
+    request: Request,
+    members: Member[],
+  ): { url: string; title: string; filenameHint: string }[] {
+    const seen = new Set<string>();
+    const out: { url: string; title: string; filenameHint: string }[] = [];
+    const push = (raw: string | null | undefined, title: string) => {
+      const u = (raw ?? '').trim();
+      if (!u || (!u.startsWith('http://') && !u.startsWith('https://'))) return;
+      if (seen.has(u)) return;
+      seen.add(u);
+      const filenameHint =
+        u.split('/').pop()?.split('?')[0]?.replace(/[^a-zA-Z0-9._-]/g, '_') ||
+        `${title}.bin`;
+      out.push({ url: u, title, filenameHint });
+    };
+
+    push(request.paymentProofUrl, 'payment_proof');
+
+    if (request.aperturaLlcRequest) {
+      const a = request.aperturaLlcRequest;
+      push(a.serviceBillUrl, 'apertura_service_bill');
+      push(a.bankStatementUrl, 'apertura_bank_statement');
+    }
+
+    if (request.renovacionLlcRequest) {
+      const r = request.renovacionLlcRequest;
+      push(r.partnersPassportsFileUrl, 'renovacion_partners_passports');
+      push(r.operatingAgreementAdditionalFileUrl, 'renovacion_operating_agreement_extra');
+      push(r.form147Or575FileUrl, 'renovacion_form_147_575');
+      push(r.articlesOfOrganizationAdditionalFileUrl, 'renovacion_articles_extra');
+      push(r.boiReportFileUrl, 'renovacion_boi_report');
+      push(r.bankStatementsFileUrl, 'renovacion_bank_statements');
+    }
+
+    if (request.cuentaBancariaRequest) {
+      const c = request.cuentaBancariaRequest;
+      push(c.einLetterUrl, 'cuenta_ein_letter');
+      push(
+        c.certificateOfConstitutionOrArticlesUrl,
+        'cuenta_certificate_or_articles',
+      );
+      push(c.operatingAgreementUrl, 'cuenta_operating_agreement');
+      push(c.proofOfAddressUrl, 'cuenta_proof_of_address');
+    }
+
+    members.forEach((m, i) => {
+      const n = i + 1;
+      push(m.scannedPassportUrl, `member_${n}_passport`);
+      push(m.additionalBankDocsUrl, `member_${n}_additional_bank_docs`);
+      push(m.identityDocumentUrl, `member_${n}_identity_document`);
+      push(m.facialPhotographUrl, `member_${n}_facial_photo`);
+    });
+
+    return out;
+  }
+
+  /**
+   * Descarga desde S3 (URLs del dominio de medios) y sube adjuntos al Account en Zoho.
+   * Errores por archivo no bloquean el resto ni el sync principal.
+   */
+  private async uploadRequestMediaFilesToZohoAccount(
+    request: Request,
+    members: Member[],
+    zohoAccountId: string,
+    org: string,
+  ): Promise<void> {
+    const items = this.collectZohoAccountAttachmentItems(request, members);
+    if (items.length === 0) {
+      this.logger.debug(
+        `Zoho Account adjuntos: sin URLs de archivo para request ${request.id}`,
+      );
+      return;
+    }
+
+    for (const item of items) {
+      try {
+        const got = await this.uploadFileService.getObjectBufferFromMediaUrl(
+          item.url,
+        );
+        if (!got) {
+          this.logger.warn(
+            `Zoho Account adjuntos: omitido (no es URL de medios S3 o no leíble) [${item.title}]`,
+          );
+          continue;
+        }
+        const filename =
+          got.filename && got.filename !== 'file' ? got.filename : item.filenameHint;
+        await this.zohoCrmService.uploadAttachment(
+          'Accounts',
+          zohoAccountId,
+          got.buffer,
+          filename,
+          { title: item.title, contentType: got.contentType, org },
+        );
+        this.logger.log(
+          `Zoho Account adjuntos: OK [${item.title}] → Account ${zohoAccountId}`,
+        );
+      } catch (e: any) {
+        this.logger.warn(
+          `Zoho Account adjuntos: falló [${item.title}] (no bloquea sync): ${e?.message ?? e}`,
+        );
+      }
+    }
+  }
+
   /**
    * Sincroniza una solicitud desde BD a Zoho CRM
    * SOLO crea/actualiza Account (NO crea Contacts ni Deals)
@@ -468,6 +543,19 @@ export class ZohoSyncService implements OnModuleInit {
       // Sincronizar también propietarios al módulo Propietarios_LLC (además de subforms en Account)
       if (members.length > 0) {
         await this.syncMembersToPropietariosLlc(accountId, members, org);
+      }
+
+      try {
+        await this.uploadRequestMediaFilesToZohoAccount(
+          request,
+          members,
+          String(accountId),
+          org,
+        );
+      } catch (attachErr: any) {
+        this.logger.error(
+          `Adjuntos Zoho Account: error no bloqueante tras sync request ${requestId}: ${attachErr?.message ?? attachErr}`,
+        );
       }
 
       this.logger.log(`Account sincronizado exitosamente: ${accountId}. zohoAccountId guardado en BD: ${accountId}`);

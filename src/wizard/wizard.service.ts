@@ -26,6 +26,7 @@ import { JwtService } from '@nestjs/jwt';
 import { encodePassword } from '../shared/common/utils/bcrypt';
 import { validateRequestData } from '../panel/requests/validation/request-validation-rules';
 import { RequestSubmittedNotificationsService } from '../panel/notifications/request-submitted-notifications.service';
+import { applyOptionalPublicWebUrlsToObject } from '../shared/common/utils/public-web-url.util';
 import * as crypto from 'crypto';
 
 @Injectable()
@@ -739,6 +740,14 @@ export class WizardService {
           delete aperturaDataRaw.projectOrCompanyUrl;
         }
 
+        const wizAperturaWebErr = applyOptionalPublicWebUrlsToObject(
+          aperturaDataRaw as Record<string, unknown>,
+          ['linkedin', 'projectOrCompanyUrl'],
+        );
+        if (wizAperturaWebErr) {
+          throw new BadRequestException(wizAperturaWebErr);
+        }
+
         const aperturaData = this.aperturaRepo.create({
           requestId: savedRequest.id,
           currentStepNumber: resolvedCurrentStepNumber,
@@ -1153,6 +1162,14 @@ export class WizardService {
           delete cuentaDataToCreate.llcType;
         }
 
+        const wizCuentaWebErr = applyOptionalPublicWebUrlsToObject(
+          cuentaDataToCreate as Record<string, unknown>,
+          ['websiteOrSocialMedia'],
+        );
+        if (wizCuentaWebErr) {
+          throw new BadRequestException(wizCuentaWebErr);
+        }
+
         const cuentaData = this.cuentaRepo.create(cuentaDataToCreate);
         await queryRunner.manager.save(CuentaBancariaRequest, cuentaData);
         
@@ -1496,6 +1513,14 @@ export class WizardService {
             delete aperturaDataRaw.bankAccountLinkedPhone;
             delete aperturaDataRaw.actividadFinancieraEsperada;
             delete aperturaDataRaw.projectOrCompanyUrl;
+          }
+
+          const wizAperturaUpWebErr = applyOptionalPublicWebUrlsToObject(
+            aperturaDataRaw as Record<string, unknown>,
+            ['linkedin', 'projectOrCompanyUrl'],
+          );
+          if (wizAperturaUpWebErr) {
+            throw new BadRequestException(wizAperturaUpWebErr);
           }
 
           Object.assign(aperturaRequest, aperturaDataRaw);
@@ -2014,8 +2039,15 @@ export class WizardService {
           if (dataToSave.validatorAnnualIncome === '' || (typeof dataToSave.validatorAnnualIncome === 'string' && dataToSave.validatorAnnualIncome.trim() === '')) {
             dataToSave.validatorAnnualIncome = null;
           }
-          
-          
+
+          const wizCuentaUpWebErr = applyOptionalPublicWebUrlsToObject(
+            dataToSave as Record<string, unknown>,
+            ['websiteOrSocialMedia'],
+          );
+          if (wizCuentaUpWebErr) {
+            throw new BadRequestException(wizCuentaUpWebErr);
+          }
+
           Object.assign(cuentaRequest, dataToSave);
           
           // Actualizar owners como Members si hay datos

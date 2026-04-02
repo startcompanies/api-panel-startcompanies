@@ -48,7 +48,7 @@ export class UserSeedService implements OnModuleInit {
       this.logger.warn('═══════════════════════════════════════════════════════════');
       this.logger.warn('⚠️  USUARIO ADMINISTRADOR POR DEFECTO CREADO');
       this.logger.warn('═══════════════════════════════════════════════════════════');
-      this.logger.warn(`Email: admin@startcompanies.us`);
+      this.logger.warn(`Email: administracion@startcompanies.io`);
       this.logger.warn(`Password: aa7c5a7a_admin!`);
       this.logger.warn('⚠️  IMPORTANTE: Cambiar la contraseña después del primer inicio de sesión');
       this.logger.warn('═══════════════════════════════════════════════════════════');

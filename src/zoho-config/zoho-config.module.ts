@@ -18,10 +18,12 @@ import { Member } from '../panel/requests/entities/member.entity';
 import { User } from '../shared/user/entities/user.entity';
 import { Client } from '../panel/clients/entities/client.entity';
 import { ZohoDealTimeline } from '../panel/requests/entities/zoho-deal-timeline.entity';
+import { UploadFileModule } from '../shared/upload-file/upload-file.module';
 
 @Module({
   imports: [
     ConfigModule,
+    UploadFileModule,
     TypeOrmModule.forFeature([
       ZohoConfig,
       Request,

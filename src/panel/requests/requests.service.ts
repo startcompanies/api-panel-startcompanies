@@ -39,6 +39,7 @@ import {
   PanelRequestActorUser,
   RequestSubmittedNotificationsService,
 } from '../notifications/request-submitted-notifications.service';
+import { applyOptionalPublicWebUrlsToObject } from '../../shared/common/utils/public-web-url.util';
 export type { RequestType } from './types/request-type';
 
 @Injectable()
@@ -1183,7 +1184,15 @@ export class RequestsService {
         if (aperturaDataToCreate.llcType !== 'single' && aperturaDataToCreate.llcType !== 'multi') {
           delete aperturaDataToCreate.llcType;
         }
-        
+
+        const webErr = applyOptionalPublicWebUrlsToObject(aperturaDataToCreate, [
+          'linkedin',
+          'projectOrCompanyUrl',
+        ]);
+        if (webErr) {
+          throw new BadRequestException(webErr);
+        }
+
         const aperturaData = this.aperturaRepo.create(aperturaDataToCreate);
         await queryRunner.manager.save(AperturaLlcRequest, aperturaData);
 
@@ -1467,7 +1476,15 @@ export class RequestsService {
         if (cuentaDataRaw.llcType === 'single' || cuentaDataRaw.llcType === 'multi') {
           cuentaDataToCreate.llcType = cuentaDataRaw.llcType;
         }
-        
+
+        const cuentaWebErr = applyOptionalPublicWebUrlsToObject(
+          cuentaDataToCreate as Record<string, unknown>,
+          ['websiteOrSocialMedia'],
+        );
+        if (cuentaWebErr) {
+          throw new BadRequestException(cuentaWebErr);
+        }
+
         const cuentaData = this.cuentaRepo.create(cuentaDataToCreate);
         await queryRunner.manager.save(CuentaBancariaRequest, cuentaData);
         
@@ -1946,7 +1963,15 @@ export class RequestsService {
           delete dataToAssign.contrataServiciosUSA;
           delete dataToAssign.propiedadEnUSA;
           delete dataToAssign.tieneCuentasBancarias;
-          
+
+          const aperturaWebErr = applyOptionalPublicWebUrlsToObject(
+            dataToAssign as Record<string, unknown>,
+            ['linkedin', 'projectOrCompanyUrl'],
+          );
+          if (aperturaWebErr) {
+            throw new BadRequestException(aperturaWebErr);
+          }
+
           Object.assign(aperturaRequest, dataToAssign);
         }
 
@@ -2384,10 +2409,18 @@ export class RequestsService {
           // Log para depuración
           this.logger.debug(`Campos de registeredAgent en dataToAssign: street=${dataToAssign.registeredAgentStreet}, unit=${dataToAssign.registeredAgentUnit}, city=${dataToAssign.registeredAgentCity}, state=${dataToAssign.registeredAgentState}, zipCode=${dataToAssign.registeredAgentZipCode}, country=${dataToAssign.registeredAgentCountry}`);
           this.logger.debug(`incorporationMonthYear en dataToAssign: ${dataToAssign.incorporationMonthYear}`);
-          
+
+          const cuentaUpWebErr = applyOptionalPublicWebUrlsToObject(
+            dataToAssign as Record<string, unknown>,
+            ['websiteOrSocialMedia'],
+          );
+          if (cuentaUpWebErr) {
+            throw new BadRequestException(cuentaUpWebErr);
+          }
+
           // El validator ahora se guarda como un member con validatesBankAccount = true
           // No se guarda en cuenta_bancaria_requests
-          
+
           // Asignar todos los campos a la entidad
           Object.assign(cuentaRequest, dataToAssign);
           
