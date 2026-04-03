@@ -135,57 +135,37 @@ export class ZohoWorkDriveService {
   }
 
   /**
-   * Elige fila zoho_config para llamar a la API de WorkDrive:
-   * 1) Si existe configuración `workdrive` (con refresh), úsala.
-   * 2) Si no, usa `crm` (mismo org si aplica, luego cualquiera) — p. ej. refresh con scopes CRM+WorkDrive.
+   * Elige fila zoho_config para llamar a la API de WorkDrive.
+   * Prioridad por service: workdrive → crm.
+   * El org no se usa como criterio porque todas las filas pertenecen al mismo cliente;
+   * lo que varía es el service y los scopes asociados.
    */
-  private pickConfigForWorkDriveApi(all: ZohoConfig[], org?: string): ZohoConfig | undefined {
-    const wd = (o?: string) =>
-      o
-        ? all.find((c) => c.org === o && c.service === 'workdrive' && this.hasRefreshToken(c))
-        : undefined;
-    const crmForOrg = (o: string) =>
-      all.find((c) => c.org === o && c.service === 'crm' && this.hasRefreshToken(c));
-
-    if (org) {
-      const w = wd(org);
-      if (w) {
-        return w;
-      }
-      const c = crmForOrg(org);
-      if (c) {
-        return c;
-      }
-    }
-
-    const wGlobal = all.find((c) => c.service === 'workdrive' && this.hasRefreshToken(c));
-    if (wGlobal) {
-      return wGlobal;
-    }
-
-    return all.find((c) => c.service === 'crm' && this.hasRefreshToken(c));
+  private pickConfigForWorkDriveApi(all: ZohoConfig[]): ZohoConfig | undefined {
+    const withRefresh = all.filter((c) => this.hasRefreshToken(c));
+    return (
+      withRefresh.find((c) => c.service === 'workdrive') ??
+      withRefresh.find((c) => c.service === 'crm')
+    );
   }
 
   /**
    * Obtiene access token y base URL WorkDrive a partir de zoho_config.
    */
-  private async getCredentialsAndToken(org?: string) {
+  private async getCredentialsAndToken() {
     const allConfigs = await this.zohoConfigService.findAllEntities();
-    const config = this.pickConfigForWorkDriveApi(allConfigs, org);
+    const config = this.pickConfigForWorkDriveApi(allConfigs);
 
     if (!config?.refresh_token) {
       throw new HttpException(
         'No hay configuración Zoho WorkDrive con token ni configuración CRM con refresh_token. ' +
-          'En Ajustes → Zoho, crea fila WorkDrive o autoriza CRM incluyendo scopes WorkDrive.',
+          'En Ajustes → Zoho, crea fila service=workdrive o autoriza CRM incluyendo scopes WorkDrive.',
         HttpStatus.NOT_FOUND,
       );
     }
 
-    if (config.service === 'crm') {
-      this.logger.debug(
-        `WorkDrive API: usando refresh de CRM (org=${config.org}, id=${config.id}); no hay fila service=workdrive.`,
-      );
-    }
+    this.logger.debug(
+      `WorkDrive API: usando fila service=${config.service} org=${config.org} id=${config.id}.`,
+    );
 
     const accessToken = await this.getToken(
       config.id,
@@ -206,19 +186,14 @@ export class ZohoWorkDriveService {
   }
 
   /**
-   * Genera un permalink de embed para un archivo o carpeta en WorkDrive
-   * Requiere scopes WorkDrive (p. ej. WorkDrive.files.ALL o equivalentes de sharing).
-   * Usa JSON:API (Accept/Content-Type vnd.api+json). Si POST /permissions falla, intenta POST /links.
-   *
-   * @param resourceId - El ID único del archivo o carpeta en WorkDrive
-   * @param org - Nombre de la organización (opcional, buscará cualquier configuración de WorkDrive disponible)
-   * @returns El permalink o enlace público que puede usarse en un iframe (vía convertPermalinkToEmbedUrl)
+   * Genera un permalink de embed para un archivo o carpeta en WorkDrive.
+   * Usa la fila service=workdrive si existe; si no, cae a crm.
    */
   async generateEmbedPermalink(
     resourceId: string,
     org?: string,
   ): Promise<string> {
-    const ctx = await this.getCredentialsAndToken(org);
+    const ctx = await this.getCredentialsAndToken();
     const { accessToken, baseUrl, zohoConfigId, zohoService, scopesMayIncludeWorkDrive } = ctx;
 
     this.logger.log(`Generando permalink de embed para resource_id: ${resourceId}`);
