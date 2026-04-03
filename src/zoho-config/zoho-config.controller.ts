@@ -10,6 +10,7 @@ import {
   Res,
   UseGuards,
   ParseIntPipe,
+  HttpException,
 } from '@nestjs/common';
 import { ZohoConfigService } from './zoho-config.service';
 import { ApiTags, ApiOperation, ApiQuery, ApiBearerAuth } from '@nestjs/swagger';
@@ -115,14 +116,33 @@ export class ZohoConfigController {
         </html>
       `);
     } catch (error) {
-      return res.status(500).send(`
+      const status = error instanceof HttpException ? error.getStatus() : 500;
+      let message = 'Error al procesar la autenticación';
+      if (error instanceof HttpException) {
+        const r = error.getResponse();
+        if (typeof r === 'string') {
+          message = r;
+        } else if (r && typeof r === 'object' && 'message' in r) {
+          const m = (r as { message: unknown }).message;
+          message = Array.isArray(m) ? m.join(', ') : String(m);
+        } else {
+          message = error.message;
+        }
+      }
+      const postPayload = JSON.stringify({ status: 'error', message });
+      const htmlMsg = String(message)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      return res.status(status).send(`
         <html>
           <body>
             <script type="text/javascript">
-              window.opener.postMessage({status: 'error', message: 'Error al procesar la autenticación'}, '*');
+              window.opener.postMessage(${postPayload}, '*');
               window.close();
             </script>
             <h1>Hubo un error al procesar la autenticación</h1>
+            <p>${htmlMsg}</p>
           </body>
         </html>
       `);

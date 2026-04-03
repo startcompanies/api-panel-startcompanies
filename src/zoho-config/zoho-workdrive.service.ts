@@ -2,6 +2,7 @@ import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
 import { ZohoConfigService } from './zoho-config.service';
+import { ZohoConfig } from './zoho-config.entity';
 
 interface TokenResponse {
   access_token: string;
@@ -51,27 +52,26 @@ export class ZohoWorkDriveService {
    * Implementa caché en memoria para evitar refrescar tokens innecesariamente
    */
   private async getToken(
+    configId: number,
     refresh_token: string,
     client_id: string,
     client_secret: string,
-    org: string,
     region: string,
   ): Promise<string> {
     const grant_type = 'refresh_token';
     const currentTime = new Date().getTime();
     const expirationTime = 30 * 60 * 1000; // 30 minutos
 
-    const tokenKey = `token_${org}_workdrive`;
+    const tokenKey = `zoho_workdrive_access_${configId}`;
 
     // Verificar si hay un token válido en caché
     const tokenData = (global as any)[tokenKey];
     if (tokenData && currentTime < tokenData.expiryTime) {
-      this.logger.debug(`Token válido encontrado en caché para ${org}_workdrive`);
+      this.logger.debug(`Token WorkDrive API en caché (zoho_config id=${configId})`);
       return tokenData.access_token;
     }
 
-    // Generar nuevo token
-    this.logger.log(`Generando nuevo token para ${org}_workdrive`);
+    this.logger.log(`Refrescando access token WorkDrive desde zoho_config id=${configId}`);
     const tokenUrl = this.zohoConfigService.getTokenUrl(region);
     const params = {
       refresh_token,
@@ -104,40 +104,68 @@ export class ZohoWorkDriveService {
     }
   }
 
+  private hasRefreshToken(c: ZohoConfig): boolean {
+    return Boolean(c.refresh_token?.trim());
+  }
+
   /**
-   * Obtiene las credenciales y token para WorkDrive
-   * Busca cualquier configuración de WorkDrive disponible si no se especifica org
+   * Elige fila zoho_config para llamar a la API de WorkDrive:
+   * 1) Si existe configuración `workdrive` (con refresh), úsala.
+   * 2) Si no, usa `crm` (mismo org si aplica, luego cualquiera) — p. ej. refresh con scopes CRM+WorkDrive.
+   */
+  private pickConfigForWorkDriveApi(all: ZohoConfig[], org?: string): ZohoConfig | undefined {
+    const wd = (o?: string) =>
+      o
+        ? all.find((c) => c.org === o && c.service === 'workdrive' && this.hasRefreshToken(c))
+        : undefined;
+    const crmForOrg = (o: string) =>
+      all.find((c) => c.org === o && c.service === 'crm' && this.hasRefreshToken(c));
+
+    if (org) {
+      const w = wd(org);
+      if (w) {
+        return w;
+      }
+      const c = crmForOrg(org);
+      if (c) {
+        return c;
+      }
+    }
+
+    const wGlobal = all.find((c) => c.service === 'workdrive' && this.hasRefreshToken(c));
+    if (wGlobal) {
+      return wGlobal;
+    }
+
+    return all.find((c) => c.service === 'crm' && this.hasRefreshToken(c));
+  }
+
+  /**
+   * Obtiene access token y base URL WorkDrive a partir de zoho_config.
    */
   private async getCredentialsAndToken(org?: string) {
     const allConfigs = await this.zohoConfigService.findAllEntities();
+    const config = this.pickConfigForWorkDriveApi(allConfigs, org);
 
-    let config;
-    if (org) {
-      // 1. Buscar workdrive para el org específico
-      config = allConfigs.find(c => c.org === org && c.service === 'workdrive' && c.refresh_token);
-      // 2. Fallback: crm para el mismo org
-      if (!config) config = allConfigs.find(c => c.org === org && c.service === 'crm' && c.refresh_token);
-    }
-    // 3. Fallback global: cualquier workdrive
-    if (!config) config = allConfigs.find(c => c.service === 'workdrive' && c.refresh_token);
-    // 4. Fallback global: cualquier crm
-    if (!config) config = allConfigs.find(c => c.service === 'crm' && c.refresh_token);
-
-    if (!config || !config.refresh_token) {
+    if (!config?.refresh_token) {
       throw new HttpException(
-        `Configuración de WorkDrive no encontrada o sin refresh_token. Por favor, configura el token primero en Settings → Zoho.`,
+        'No hay configuración Zoho WorkDrive con token ni configuración CRM con refresh_token. ' +
+          'En Ajustes → Zoho, crea fila WorkDrive o autoriza CRM incluyendo scopes WorkDrive.',
         HttpStatus.NOT_FOUND,
       );
     }
 
-    // Usar el org de la configuración encontrada para el token key
-    const configOrg = config.org;
+    if (config.service === 'crm') {
+      this.logger.debug(
+        `WorkDrive API: usando refresh de CRM (org=${config.org}, id=${config.id}); no hay fila service=workdrive.`,
+      );
+    }
 
     const accessToken = await this.getToken(
+      config.id,
       config.refresh_token,
       config.client_id,
       config.client_secret,
-      configOrg,
       config.region,
     );
 

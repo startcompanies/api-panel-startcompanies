@@ -1,4 +1,4 @@
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -46,6 +46,7 @@ function zohoRedirectUriFromApiPublic(config: ConfigService): string {
 
 @Injectable()
 export class ZohoConfigService {
+  private readonly logger = new Logger(ZohoConfigService.name);
   private readonly redirect_uri: string;
 
   constructor(
@@ -85,9 +86,48 @@ export class ZohoConfigService {
     region: string,
     state: number,
   ): string {
-    const url = this.getTokenUrl(region);
-    const responseType = 'code';
-    return `${url}/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=${responseType}&scope=${scopes}&state=${state}&access_type=offline`;
+    const base = this.getTokenUrl(region);
+    /** access_type=offline + prompt=consent: Zoho suele volver a emitir refresh_token al re-autorizar (p. ej. WorkDrive tras CRM). */
+    const q = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: scopes,
+      state: String(state),
+      access_type: 'offline',
+      prompt: 'consent',
+    });
+    return `${base}/auth?${q.toString()}`;
+  }
+
+  /**
+   * Tras canjear el code, Zoho solo envía refresh_token la primera vez por cliente/usuario.
+   * Si falta, reutilizamos el de esta fila o de otra con el mismo client_id (misma app Zoho).
+   */
+  private async resolveRefreshTokenAfterCodeExchange(
+    tokenRecord: ZohoConfig,
+    data: Record<string, unknown>,
+  ): Promise<string | null> {
+    const fromResponse = data['refresh_token'];
+    if (typeof fromResponse === 'string' && fromResponse.trim()) {
+      return fromResponse.trim();
+    }
+    if (tokenRecord.refresh_token?.trim()) {
+      return tokenRecord.refresh_token.trim();
+    }
+    const siblings = await this.zohoConfigRepository.find({
+      where: { client_id: tokenRecord.client_id },
+      order: { id: 'ASC' },
+    });
+    const other = siblings.find((c) => c.id !== tokenRecord.id && c.refresh_token?.trim());
+    const inherited = other?.refresh_token?.trim() ?? null;
+    if (inherited && other) {
+      this.logger.warn(
+        `OAuth sin refresh_token en respuesta; reutilizando refresh de config id=${other.id} (mismo client_id). ` +
+          `Si WorkDrive sigue fallando, autoriza scopes CRM+WorkDrive juntos o usa incremental auth de Zoho.`,
+      );
+    }
+    return inherited;
   }
 
   /**
@@ -181,20 +221,43 @@ export class ZohoConfigService {
       grant_type: 'authorization_code',
     };
 
-    // Realizar petición a Zoho
-    const response = await lastValueFrom(
-      this.httpService.post(`${url_token}/token`, null, { params }),
-    );
-
-    if (!response.data || !response.data.refresh_token) {
+    let response: { data: Record<string, unknown> };
+    try {
+      response = await lastValueFrom(
+        this.httpService.post<{ [k: string]: unknown }>(`${url_token}/token`, null, { params }),
+      );
+    } catch (err: unknown) {
+      const ax = err as { response?: { data?: unknown }; message?: string };
+      const zohoBody = ax.response?.data;
+      const detail =
+        typeof zohoBody === 'object' && zohoBody !== null && 'error_description' in zohoBody
+          ? String((zohoBody as { error_description?: string }).error_description)
+          : typeof zohoBody === 'object' && zohoBody !== null && 'error' in zohoBody
+            ? String((zohoBody as { error?: string }).error)
+            : ax.message ?? 'Error de red';
+      this.logger.error(`Zoho /token (authorization_code) falló: ${detail}`, zohoBody);
       throw new HttpException(
-        'No se recibió refresh_token',
+        `Error al canjear el código con Zoho: ${detail}`,
         HttpStatus.BAD_REQUEST,
       );
     }
 
-    // Guardar refresh_token
-    tokenRecord.refresh_token = response.data.refresh_token;
+    const data = response.data ?? {};
+    if (typeof data['error'] === 'string') {
+      const desc = typeof data['error_description'] === 'string' ? data['error_description'] : data['error'];
+      throw new HttpException(`Zoho: ${desc}`, HttpStatus.BAD_REQUEST);
+    }
+
+    const refresh = await this.resolveRefreshTokenAfterCodeExchange(tokenRecord, data);
+    if (!refresh) {
+      throw new HttpException(
+        'Zoho no devolvió refresh_token y no hay otro guardado con el mismo Client ID. ' +
+          'Es habitual si ya autorizaste esta app antes: vuelve a pulsar Autorizar (ahora forzamos consent) o crea una sola configuración con scopes CRM y WorkDrive.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    tokenRecord.refresh_token = refresh;
     return await this.zohoConfigRepository.save(tokenRecord);
   }
 
