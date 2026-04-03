@@ -24,6 +24,32 @@ interface WorkDrivePermissionResponse {
   };
 }
 
+/** Respuesta POST /links (enlace externo); alternativa al permalink de publish. */
+interface WorkDriveLinksResponse {
+  data: {
+    attributes: {
+      link: string;
+      [key: string]: any;
+    };
+  };
+}
+
+function workDriveJsonApiHeaders(accessToken: string): Record<string, string> {
+  return {
+    Authorization: `Zoho-oauthtoken ${accessToken}`,
+    Accept: 'application/vnd.api+json',
+    'Content-Type': 'application/vnd.api+json',
+  };
+}
+
+function zohoApiErrorsMessage(data: unknown): string | undefined {
+  const err = data as { errors?: Array<{ id?: string; title?: string }> };
+  if (!err?.errors?.length) {
+    return undefined;
+  }
+  return err.errors.map((e) => (e.id && e.title ? `${e.id}: ${e.title}` : e.title || e.id)).join('; ');
+}
+
 @Injectable()
 export class ZohoWorkDriveService {
   private readonly logger = new Logger(ZohoWorkDriveService.name);
@@ -172,83 +198,148 @@ export class ZohoWorkDriveService {
     return {
       accessToken,
       baseUrl: this.getWorkDriveBaseUrl(config.region),
+      zohoConfigId: config.id,
+      zohoService: config.service,
+      zohoOrg: config.org,
+      scopesMayIncludeWorkDrive: /workdrive/i.test(config.scopes || ''),
     };
   }
 
   /**
    * Genera un permalink de embed para un archivo o carpeta en WorkDrive
-   * Scope requerido: WorkDrive.files.sharing.CREATE
-   * 
+   * Requiere scopes WorkDrive (p. ej. WorkDrive.files.ALL o equivalentes de sharing).
+   * Usa JSON:API (Accept/Content-Type vnd.api+json). Si POST /permissions falla, intenta POST /links.
+   *
    * @param resourceId - El ID único del archivo o carpeta en WorkDrive
    * @param org - Nombre de la organización (opcional, buscará cualquier configuración de WorkDrive disponible)
-   * @returns El permalink que puede usarse en un iframe
+   * @returns El permalink o enlace público que puede usarse en un iframe (vía convertPermalinkToEmbedUrl)
    */
   async generateEmbedPermalink(
     resourceId: string,
     org?: string,
   ): Promise<string> {
-    try {
-      const { accessToken, baseUrl } = await this.getCredentialsAndToken(org);
+    const ctx = await this.getCredentialsAndToken(org);
+    const { accessToken, baseUrl, zohoConfigId, zohoService, scopesMayIncludeWorkDrive } = ctx;
 
+    this.logger.log(`Generando permalink de embed para resource_id: ${resourceId}`);
+
+    const permissionBodies = [
+      { role_id: 34, label: 'publish+role_id=34' },
+      { role_id: 6, label: 'publish+role_id=6(view externo documentado)' },
+    ];
+
+    const tryPermissions = async (role_id: number): Promise<string | null> => {
       const requestBody = {
         data: {
+          type: 'permissions',
           attributes: {
             resource_id: resourceId,
             shared_type: 'publish',
-            role_id: 34,
+            role_id,
           },
-          type: 'permissions',
         },
       };
-
-      this.logger.log(`Generando permalink de embed para resource_id: ${resourceId}`);
-
       const response = await lastValueFrom(
-        this.httpService.post<WorkDrivePermissionResponse>(
-          `${baseUrl}/permissions`,
-          requestBody,
-          {
-            headers: {
-              Authorization: `Zoho-oauthtoken ${accessToken}`,
-              'Content-Type': 'application/json',
-            },
-          },
-        ),
+        this.httpService.post<WorkDrivePermissionResponse>(`${baseUrl}/permissions`, requestBody, {
+          headers: workDriveJsonApiHeaders(accessToken),
+        }),
       );
-
-      // Log completo de la respuesta para debugging
-      this.logger.debug('Respuesta completa de WorkDrive API:', JSON.stringify(response.data, null, 2));
-
-      if (
-        response.data?.data?.attributes?.permalink
-      ) {
-        const permalink = response.data.data.attributes.permalink;
-        const resourceIdFromResponse = response.data.data.attributes.resource_id;
-        const sharedType = response.data.data.attributes.shared_type;
-        
-        this.logger.log(`Permalink generado exitosamente: ${permalink}`);
-        this.logger.log(`Resource ID desde respuesta: ${resourceIdFromResponse}`);
-        this.logger.log(`Shared Type: ${sharedType}`);
-        this.logger.log(`Datos completos de attributes:`, JSON.stringify(response.data.data.attributes, null, 2));
-        
+      const permalink = response.data?.data?.attributes?.permalink;
+      if (permalink) {
+        this.logger.debug('Respuesta completa de WorkDrive API:', JSON.stringify(response.data, null, 2));
         return permalink;
-      } else {
-        this.logger.error('Respuesta de WorkDrive no contiene permalink:', JSON.stringify(response.data, null, 2));
-        throw new HttpException(
-          'No se recibió permalink en la respuesta de WorkDrive',
-          HttpStatus.BAD_REQUEST,
-        );
       }
-    } catch (error: any) {
-      this.logger.error(
-        `Error al generar permalink de embed para resource_id ${resourceId}:`,
-        error.response?.data || error.message,
+      this.logger.error('Respuesta de WorkDrive no contiene permalink:', JSON.stringify(response.data, null, 2));
+      return null;
+    };
+
+    const tryExternalShareLink = async (): Promise<string | null> => {
+      const requestBody = {
+        data: {
+          type: 'links',
+          attributes: {
+            resource_id: resourceId,
+            link_name: `portal-${resourceId.slice(0, 12)}`,
+            request_user_data: false,
+            allow_download: true,
+            role_id: 6,
+          },
+        },
+      };
+      const response = await lastValueFrom(
+        this.httpService.post<WorkDriveLinksResponse>(`${baseUrl}/links`, requestBody, {
+          headers: workDriveJsonApiHeaders(accessToken),
+        }),
       );
-      throw new HttpException(
-        `Error al generar permalink de embed: ${error.response?.data?.message || error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
+      const link = response.data?.data?.attributes?.link;
+      if (link) {
+        this.logger.log(`WorkDrive: permalink vía /links (enlace externo) para resource_id=${resourceId}`);
+        return link;
+      }
+      return null;
+    };
+
+    const isUnauthorizedLike = (status: number, data: unknown): boolean => {
+      if (status === 401 || status === 403) {
+        return true;
+      }
+      const msg = zohoApiErrorsMessage(data);
+      return Boolean(msg && /R008/i.test(msg));
+    };
+
+    let lastError: any;
+
+    for (const { role_id, label } of permissionBodies) {
+      try {
+        this.logger.debug(`WorkDrive permissions: intento ${label}`);
+        const permalink = await tryPermissions(role_id);
+        if (permalink) {
+          this.logger.log(`Permalink generado (${label}): ${permalink}`);
+          return permalink;
+        }
+      } catch (err: any) {
+        lastError = err;
+        const status = err.response?.status;
+        const data = err.response?.data;
+        this.logger.warn(
+          `WorkDrive permissions falló (${label}) status=${status}: ${zohoApiErrorsMessage(data) || err.message}`,
+        );
+        if (!isUnauthorizedLike(status, data) && status !== 400) {
+          break;
+        }
+      }
+    }
+
+    if (lastError && isUnauthorizedLike(lastError.response?.status, lastError.response?.data)) {
+      this.logger.warn(
+        `WorkDrive 401/403/R008: zoho_config id=${zohoConfigId} service=${zohoService}; ` +
+          `scopes en fila ${scopesMayIncludeWorkDrive ? 'incluyen texto WorkDrive' : 'NO parecen incluir WorkDrive'} — ` +
+          `reautorizar OAuth con scopes WorkDrive o comprobar que el recurso pertenece al mismo equipo que el usuario del token.`,
       );
     }
+
+    try {
+      const link = await tryExternalShareLink();
+      if (link) {
+        return link;
+      }
+    } catch (err: any) {
+      lastError = err;
+      const data = err.response?.data;
+      this.logger.warn(
+        `WorkDrive /links falló: status=${err.response?.status} ${zohoApiErrorsMessage(data) || err.message}`,
+      );
+    }
+
+    const detail =
+      zohoApiErrorsMessage(lastError?.response?.data) ||
+      lastError?.message ||
+      'sin detalle';
+    this.logger.error(`Error al generar permalink de embed para resource_id ${resourceId}:`, lastError?.response?.data || detail);
+    throw new HttpException(
+      `Error al generar permalink de embed: ${detail}`,
+      HttpStatus.INTERNAL_SERVER_ERROR,
+    );
   }
 
   /**
