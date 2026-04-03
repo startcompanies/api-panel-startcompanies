@@ -62,12 +62,11 @@ export class ZohoSyncService implements OnModuleInit {
 
   private async backfillMissingWorkDrivePermalinks(): Promise<void> {
     try {
-      const pending = await this.requestRepository.find({
-        where: {
-          workDriveId: Not(IsNull()),
-          workDriveUrlExternal: IsNull(),
-        },
-      });
+      const pending = await this.requestRepository
+        .createQueryBuilder('r')
+        .where('r.work_drive_id IS NOT NULL')
+        .andWhere('(r.work_drive_url_external IS NULL OR r.work_drive_url_external = :empty)', { empty: '' })
+        .getMany();
       if (pending.length === 0) {
         this.logger.log('WorkDrive backfill: sin permalinks pendientes');
         return;
