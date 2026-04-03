@@ -30,7 +30,7 @@ export class ZohoConfigController {
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Obtener todas las configuraciones (solo admin)' })
   findAll() {
-    return this.zohoConfigService.findAll();
+    return this.zohoConfigService.listForAdmin();
   }
 
   @Get('search')
@@ -41,7 +41,7 @@ export class ZohoConfigController {
   @ApiQuery({ name: 'org', required: true })
   @ApiQuery({ name: 'service', required: true })
   findOne(@Query('org') org: string, @Query('service') service: string) {
-    return this.zohoConfigService.findByOrgAndService(org, service);
+    return this.zohoConfigService.getByOrgAndServiceForAdmin(org, service);
   }
 
   @Get('redirect')
@@ -53,14 +53,14 @@ export class ZohoConfigController {
   @ApiQuery({ name: 'service', required: true })
   @ApiQuery({ name: 'region', required: true })
   @ApiQuery({ name: 'client_id', required: true })
-  @ApiQuery({ name: 'client_secret', required: true })
+  @ApiQuery({ name: 'client_secret', required: false })
   @ApiQuery({ name: 'scopes', required: true })
   async redirectToZoho(
     @Query('org') org: string,
     @Query('service') service: string,
     @Query('region') region: string,
     @Query('client_id') client_id: string,
-    @Query('client_secret') client_secret: string,
+    @Query('client_secret') client_secret: string | undefined,
     @Query('scopes') scopes: string,
     @Res() res: Response,
   ) {
@@ -135,7 +135,7 @@ export class ZohoConfigController {
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Obtener configuración por ID (solo admin)' })
   findById(@Param('id', ParseIntPipe) id: number) {
-    return this.zohoConfigService.findOne(id);
+    return this.zohoConfigService.getOneForAdmin(id);
   }
 
   @Post()

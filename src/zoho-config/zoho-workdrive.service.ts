@@ -109,7 +109,7 @@ export class ZohoWorkDriveService {
    * Busca cualquier configuración de WorkDrive disponible si no se especifica org
    */
   private async getCredentialsAndToken(org?: string) {
-    const allConfigs = await this.zohoConfigService.findAll();
+    const allConfigs = await this.zohoConfigService.findAllEntities();
 
     let config;
     if (org) {

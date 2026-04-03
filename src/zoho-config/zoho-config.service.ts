@@ -7,6 +7,35 @@ import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
 import { ZohoConfigDto, UpdateZohoConfigDto } from './zoho-config.dto';
 
+/** Respuesta al panel: sin secretos en bruto (el interceptor elimina client_id/secret/refresh_token). */
+export type ZohoConfigAdminResponse = {
+  id: number;
+  org: string;
+  service: string;
+  region: string;
+  scopes: string;
+  createdAt: Date;
+  updatedAt: Date;
+  zohoOAuthClientId: string;
+  zohoOAuthClientSecretConfigured: boolean;
+  hasRefreshToken: boolean;
+};
+
+function toZohoConfigAdminResponse(c: ZohoConfig): ZohoConfigAdminResponse {
+  return {
+    id: c.id,
+    org: c.org,
+    service: c.service,
+    region: c.region,
+    scopes: c.scopes,
+    createdAt: c.createdAt,
+    updatedAt: c.updatedAt,
+    zohoOAuthClientId: c.client_id,
+    zohoOAuthClientSecretConfigured: Boolean(c.client_secret?.trim()),
+    hasRefreshToken: Boolean(c.refresh_token?.trim()),
+  };
+}
+
 /** Callback OAuth Zoho: {API_PUBLIC_URL}/orgTk/callback (registrar exacto en consola Zoho). */
 function zohoRedirectUriFromApiPublic(config: ConfigService): string {
   const base = (
@@ -70,28 +99,45 @@ export class ZohoConfigService {
     region: string,
     scopes: string,
     client_id: string,
-    client_secret: string,
+    client_secret: string | undefined,
   ) {
-    // Buscar si ya existe una configuración
+    const incomingSecret = client_secret?.trim() ?? '';
+
     let tokenRecord = await this.zohoConfigRepository.findOne({
       where: { org, service },
     });
 
+    const resolvedSecret =
+      incomingSecret || tokenRecord?.client_secret?.trim() || '';
+
+    if (!resolvedSecret) {
+      throw new HttpException(
+        'client_secret es obligatorio (o debe existir ya guardado en esta configuración)',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
     if (tokenRecord) {
-      // Actualizar configuración existente
       tokenRecord.region = region;
       tokenRecord.scopes = scopes;
       tokenRecord.client_id = client_id;
-      tokenRecord.client_secret = client_secret;
+      if (incomingSecret) {
+        tokenRecord.client_secret = incomingSecret;
+      }
     } else {
-      // Crear nueva configuración
+      if (!incomingSecret) {
+        throw new HttpException(
+          'client_secret es obligatorio para una configuración nueva',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
       tokenRecord = this.zohoConfigRepository.create({
         org,
         service,
         region,
         scopes,
         client_id,
-        client_secret,
+        client_secret: incomingSecret,
       });
     }
 
@@ -189,12 +235,12 @@ export class ZohoConfigService {
     }
   }
 
-  // Métodos CRUD básicos
-  async findAll(): Promise<ZohoConfig[]> {
+  /** Uso interno (tokens y secretos completos). */
+  async findAllEntities(): Promise<ZohoConfig[]> {
     return this.zohoConfigRepository.find();
   }
 
-  async findOne(id: number): Promise<ZohoConfig> {
+  async findOneEntity(id: number): Promise<ZohoConfig> {
     const config = await this.zohoConfigRepository.findOne({ where: { id } });
     if (!config) {
       throw new HttpException('Configuración no encontrada', HttpStatus.NOT_FOUND);
@@ -202,7 +248,7 @@ export class ZohoConfigService {
     return config;
   }
 
-  async findByOrgAndService(org: string, service: string): Promise<ZohoConfig> {
+  async findByOrgAndServiceEntity(org: string, service: string): Promise<ZohoConfig> {
     const config = await this.zohoConfigRepository.findOne({
       where: { org, service },
     });
@@ -212,24 +258,62 @@ export class ZohoConfigService {
     return config;
   }
 
-  async create(createZohoConfigDto: ZohoConfigDto): Promise<ZohoConfig> {
-    const zohoConfig = this.zohoConfigRepository.create(createZohoConfigDto);
-    return await this.zohoConfigRepository.save(zohoConfig);
+  async listForAdmin(): Promise<ZohoConfigAdminResponse[]> {
+    const rows = await this.findAllEntities();
+    return rows.map(toZohoConfigAdminResponse);
   }
 
-  async update(id: number, updateZohoConfigDto: UpdateZohoConfigDto): Promise<ZohoConfig> {
-    const zohoConfig = await this.zohoConfigRepository.preload({
-      id,
-      ...updateZohoConfigDto,
-    });
-    if (!zohoConfig) {
+  async getOneForAdmin(id: number): Promise<ZohoConfigAdminResponse> {
+    const config = await this.findOneEntity(id);
+    return toZohoConfigAdminResponse(config);
+  }
+
+  async getByOrgAndServiceForAdmin(org: string, service: string): Promise<ZohoConfigAdminResponse> {
+    const config = await this.findByOrgAndServiceEntity(org, service);
+    return toZohoConfigAdminResponse(config);
+  }
+
+  async create(createZohoConfigDto: ZohoConfigDto): Promise<ZohoConfigAdminResponse> {
+    const zohoConfig = this.zohoConfigRepository.create(createZohoConfigDto);
+    const saved = await this.zohoConfigRepository.save(zohoConfig);
+    return toZohoConfigAdminResponse(saved);
+  }
+
+  async update(
+    id: number,
+    updateZohoConfigDto: UpdateZohoConfigDto,
+  ): Promise<ZohoConfigAdminResponse> {
+    const existing = await this.zohoConfigRepository.findOne({ where: { id } });
+    if (!existing) {
       throw new HttpException('Configuración no encontrada', HttpStatus.NOT_FOUND);
     }
-    return await this.zohoConfigRepository.save(zohoConfig);
+
+    if (updateZohoConfigDto.org !== undefined) {
+      existing.org = updateZohoConfigDto.org;
+    }
+    if (updateZohoConfigDto.service !== undefined) {
+      existing.service = updateZohoConfigDto.service;
+    }
+    if (updateZohoConfigDto.region !== undefined) {
+      existing.region = updateZohoConfigDto.region;
+    }
+    if (updateZohoConfigDto.scopes !== undefined) {
+      existing.scopes = updateZohoConfigDto.scopes;
+    }
+    if (updateZohoConfigDto.client_id !== undefined && updateZohoConfigDto.client_id.trim() !== '') {
+      existing.client_id = updateZohoConfigDto.client_id.trim();
+    }
+    const incomingSecret = updateZohoConfigDto.client_secret;
+    if (incomingSecret !== undefined && incomingSecret.trim() !== '') {
+      existing.client_secret = incomingSecret.trim();
+    }
+
+    const saved = await this.zohoConfigRepository.save(existing);
+    return toZohoConfigAdminResponse(saved);
   }
 
   async remove(id: number): Promise<void> {
-    const zohoConfig = await this.findOne(id);
+    const zohoConfig = await this.findOneEntity(id);
     await this.zohoConfigRepository.remove(zohoConfig);
   }
 

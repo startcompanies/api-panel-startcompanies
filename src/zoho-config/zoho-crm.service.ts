@@ -96,7 +96,7 @@ export class ZohoCrmService {
    */
   private async getCredentialsAndToken(org: string = 'startcompanies') {
     const service = 'crm';
-    const config = await this.zohoConfigService.findByOrgAndService(org, service);
+    const config = await this.zohoConfigService.findByOrgAndServiceEntity(org, service);
 
     if (!config || !config.refresh_token) {
       throw new HttpException(
