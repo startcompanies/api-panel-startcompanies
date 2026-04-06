@@ -27,6 +27,7 @@ import { encodePassword } from '../shared/common/utils/bcrypt';
 import { validateRequestData } from '../panel/requests/validation/request-validation-rules';
 import { RequestSubmittedNotificationsService } from '../panel/notifications/request-submitted-notifications.service';
 import { applyOptionalPublicWebUrlsToObject } from '../shared/common/utils/public-web-url.util';
+import { ZohoContactService } from '../zoho-config/zoho-contact.service';
 import * as crypto from 'crypto';
 
 @Injectable()
@@ -55,6 +56,7 @@ export class WizardService {
     private readonly emailService: EmailService,
     private readonly jwtService: JwtService,
     private readonly requestSubmittedNotifications: RequestSubmittedNotificationsService,
+    private readonly zohoContactService: ZohoContactService,
   ) { }
 
   /**
@@ -210,8 +212,10 @@ export class WizardService {
       status: true,
     });
 
-    await this.clientRepo.save(client);
+    const savedClient = await this.clientRepo.save(client);
     this.logger.log(`Cliente creado en wizard para usuario ${savedUser.id}`);
+
+    void this.zohoContactService.findOrCreateContact(savedClient);
 
     return {
       message: 'Usuario registrado exitosamente.',
@@ -2060,6 +2064,17 @@ export class WizardService {
           'cuentaBancariaRequest',
         ],
       });
+
+      // Al enviar solicitud: si el cliente directo aún no tiene Contact en Zoho, misma acción que al aprobar
+      if (
+        previousStatus !== 'solicitud-recibida' &&
+        updatedRequest?.status === 'solicitud-recibida' &&
+        updatedRequest.client &&
+        updatedRequest.client.partnerId == null &&
+        !updatedRequest.client.zohoContactId
+      ) {
+        void this.zohoContactService.findOrCreateContact(updatedRequest.client);
+      }
 
       // Enviar email solo cuando la solicitud pasa a "solicitud-recibida" por primera vez
       try {

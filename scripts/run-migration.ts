@@ -35,7 +35,7 @@ try {
       }
       console.log(`📝 Generando migración: ${migrationName}...`);
       execSync(
-        `npx typeorm-ts-node-commonjs migration:generate migrations/${migrationName} -d src/data-source.ts`,
+        `npx typeorm-ts-node-commonjs migration:generate src/migrations/${migrationName} -d src/data-source.ts`,
         { stdio: 'inherit', cwd: projectRoot },
       );
       console.log(`✅ Migración generada exitosamente`);
@@ -54,7 +54,7 @@ try {
       }
       console.log(`📝 Creando migración vacía: ${migrationName}...`);
       execSync(
-        `npx typeorm-ts-node-commonjs migration:create migrations/${migrationName}`,
+        `npx typeorm-ts-node-commonjs migration:create src/migrations/${migrationName}`,
         { stdio: 'inherit', cwd: projectRoot },
       );
       console.log(`✅ Migración creada exitosamente`);

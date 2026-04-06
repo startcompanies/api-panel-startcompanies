@@ -33,6 +33,7 @@ import { awsConfigService } from '../../config/aws.config.service';
 // ZohoCrmService ya no se usa en findOne - solo se consulta la BD local
 // import { ZohoCrmService } from '../../zoho-config/zoho-crm.service';
 import { ZohoSyncService } from '../../zoho-config/zoho-sync.service';
+import { ZohoContactService } from '../../zoho-config/zoho-contact.service';
 import { applyAperturaClientStageAlias } from '../../zoho-config/zoho-apertura-stage-client';
 import { applyRenovacionClientStageAlias } from '../../zoho-config/zoho-renovacion-stage-client';
 import {
@@ -312,6 +313,7 @@ export class RequestsService {
     // ZohoCrmService ya no se usa - solo consultamos BD local
     // private readonly zohoCrmService: ZohoCrmService,
     private readonly zohoSyncService: ZohoSyncService,
+    private readonly zohoContactService: ZohoContactService,
     private readonly requestSubmittedNotifications: RequestSubmittedNotificationsService,
   ) {}
 
@@ -2594,6 +2596,13 @@ export class RequestsService {
         const clientRow = await this.clientRepo.findOne({
           where: { id: request.clientId },
         });
+        if (
+          clientRow &&
+          clientRow.partnerId == null &&
+          !clientRow.zohoContactId
+        ) {
+          void this.zohoContactService.findOrCreateContact(clientRow);
+        }
         await this.requestSubmittedNotifications.notifyAfterSolicitudRecibida(
           request,
           clientRow,

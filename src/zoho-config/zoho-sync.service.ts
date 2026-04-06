@@ -27,6 +27,7 @@ import {
 } from './zoho-sync.dto';
 import { normalizePublicHttpsWebUrl } from 'src/shared/common/utils/public-web-url.util';
 import { UploadFileService } from 'src/shared/upload-file/upload-file.service';
+import { ZohoContactService } from './zoho-contact.service';
 
 @Injectable()
 export class ZohoSyncService implements OnModuleInit {
@@ -35,6 +36,7 @@ export class ZohoSyncService implements OnModuleInit {
   constructor(
     private readonly zohoCrmService: ZohoCrmService,
     private readonly zohoWorkDriveService: ZohoWorkDriveService,
+    private readonly zohoContactService: ZohoContactService,
     @InjectRepository(Request)
     private readonly requestRepository: Repository<Request>,
     @InjectRepository(AperturaLlcRequest)
@@ -440,6 +442,21 @@ export class ZohoSyncService implements OnModuleInit {
         );
       }
 
+      // Cliente directo sin zoho_contact_id: findOrCreate en Zoho antes del Account (misma acción que registro/alta)
+      if (
+        request.client &&
+        request.client.partnerId == null &&
+        !request.client.zohoContactId
+      ) {
+        await this.zohoContactService.findOrCreateContact(request.client, org);
+        const freshClient = await this.clientRepo.findOne({
+          where: { id: request.clientId },
+        });
+        if (freshClient) {
+          request.client = freshClient;
+        }
+      }
+
       // Obtener miembros de la solicitud (necesarios para el mapeo del Account)
       const members = await this.memberRepo.find({
         where: { requestId },
@@ -539,6 +556,8 @@ export class ZohoSyncService implements OnModuleInit {
       request.zohoAccountId = accountId;
       request.company = companyForBd;
 
+      await this.syncContactAccountLink(request, String(accountId), org);
+
       // Sincronizar también propietarios al módulo Propietarios_LLC (además de subforms en Account)
       if (members.length > 0) {
         await this.syncMembersToPropietariosLlc(accountId, members, org);
@@ -568,6 +587,60 @@ export class ZohoSyncService implements OnModuleInit {
       throw new HttpException(
         error.message || 'Error al sincronizar con Zoho CRM',
         error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * Enlace Contact ↔ Account en módulo ContactsxAccounts (no bloqueante: errores internos solo log).
+   */
+  private async syncContactAccountLink(
+    request: Request,
+    zohoAccountId: string,
+    org: string,
+  ): Promise<void> {
+    try {
+      const client = request.client;
+      if (!client?.zohoContactId) {
+        this.logger.warn(
+          `ContactsxAccounts: request ${request.id} sin client.zohoContactId, se omite enlace`,
+        );
+        return;
+      }
+      const contactId = String(client.zohoContactId).trim();
+      if (!contactId) {
+        return;
+      }
+
+      const criteria = `(LLC:equals:${zohoAccountId}) and (LLC_Asignados:equals:${contactId})`;
+      const search = await this.zohoCrmService.searchRecords(
+        'ContactsxAccounts',
+        { criteria },
+        org,
+      );
+      const rows = Array.isArray(search?.data) ? search.data : [];
+      if (rows.length > 0) {
+        this.logger.log(
+          `ContactsxAccounts: relación ya existente para request ${request.id}`,
+        );
+        return;
+      }
+
+      await this.zohoCrmService.createRecords(
+        'ContactsxAccounts',
+        [
+          {
+            LLC: zohoAccountId,
+            LLC_Asignados: contactId,
+            Email: client.email || '',
+          },
+        ],
+        org,
+      );
+      this.logger.log(`ContactsxAccounts: relación creada para request ${request.id}`);
+    } catch (e: any) {
+      this.logger.error(
+        `ContactsxAccounts: error no bloqueante (request ${request.id}): ${e?.message ?? e}`,
       );
     }
   }
