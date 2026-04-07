@@ -2596,11 +2596,7 @@ export class RequestsService {
         const clientRow = await this.clientRepo.findOne({
           where: { id: request.clientId },
         });
-        if (
-          clientRow &&
-          clientRow.partnerId == null &&
-          !clientRow.zohoContactId
-        ) {
+        if (clientRow && !clientRow.zohoContactId) {
           void this.zohoContactService.findOrCreateContact(clientRow);
         }
         await this.requestSubmittedNotifications.notifyAfterSolicitudRecibida(

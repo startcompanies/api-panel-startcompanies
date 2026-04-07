@@ -2065,12 +2065,11 @@ export class WizardService {
         ],
       });
 
-      // Al enviar solicitud: si el cliente directo aún no tiene Contact en Zoho, misma acción que al aprobar
+      // Al enviar solicitud: si aún no hay Contact en Zoho, misma acción que al aprobar
       if (
         previousStatus !== 'solicitud-recibida' &&
         updatedRequest?.status === 'solicitud-recibida' &&
         updatedRequest.client &&
-        updatedRequest.client.partnerId == null &&
         !updatedRequest.client.zohoContactId
       ) {
         void this.zohoContactService.findOrCreateContact(updatedRequest.client);

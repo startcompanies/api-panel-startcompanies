@@ -74,7 +74,7 @@ export class Client {
   @Column({ type: 'text', nullable: true })
   notes?: string;
 
-  /** ID del Contact en Zoho CRM (solo clientes directos sin partnerId) */
+  /** ID del Contact en Zoho CRM */
   @Column({ name: 'zoho_contact_id', type: 'varchar', length: 100, nullable: true })
   zohoContactId?: string;
 

@@ -442,12 +442,8 @@ export class ZohoSyncService implements OnModuleInit {
         );
       }
 
-      // Cliente directo sin zoho_contact_id: findOrCreate en Zoho antes del Account (misma acción que registro/alta)
-      if (
-        request.client &&
-        request.client.partnerId == null &&
-        !request.client.zohoContactId
-      ) {
+      // Sin zoho_contact_id: findOrCreate en Zoho antes del Account (Cliente o Partner según client.partnerId)
+      if (request.client && !request.client.zohoContactId) {
         await this.zohoContactService.findOrCreateContact(request.client, org);
         const freshClient = await this.clientRepo.findOne({
           where: { id: request.clientId },

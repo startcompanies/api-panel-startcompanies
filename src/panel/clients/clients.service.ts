@@ -317,9 +317,7 @@ export class ClientsService {
       });
 
       const saved = await this.clientRepository.save(client);
-      if (!saved.partnerId) {
-        void this.zohoContactService.findOrCreateContact(saved);
-      }
+      void this.zohoContactService.findOrCreateContact(saved);
       return saved;
     } catch (e) {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
