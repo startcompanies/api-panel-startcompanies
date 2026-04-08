@@ -531,6 +531,126 @@ export class EmailService {
       throw error;
     }
   }
+
+  private static readonly ZOHO_SYNC_CLIENT_WHATSAPP_GROUP =
+    'https://chat.whatsapp.com/LLNt49kM48zCRIKVGnSVGE?mode=gi_t';
+
+  /**
+   * Bienvenida al crear usuario cliente desde import Zoho (cuenta ya creada; falta definir contraseña).
+   */
+  async sendZohoSyncClientWelcomeEmail(params: {
+    email: string;
+    displayName: string;
+    setPasswordUrl: string;
+  }): Promise<void> {
+    const { email, displayName, setPasswordUrl } = params;
+    if (!this.resend) {
+      this.logger.warn(`Email bienvenida sync Zoho (cliente) no enviado a ${email} (Resend no configurado)`);
+      return;
+    }
+
+    const wa = EmailService.ZOHO_SYNC_CLIENT_WHATSAPP_GROUP;
+    const bodyHtml = `
+      <p>Hola ${displayName},</p>
+      <p>Gracias por confiar en nosotros y renovar tu LLC con Start Companies. Para nosotros eso significa mucho y queremos seguir brindándote las mejores soluciones.</p>
+      <p><strong>Tu usuario ya está registrado en la plataforma con este correo.</strong> El primer paso es <strong>definir tu contraseña</strong> y acceder usando el siguiente enlace:</p>
+      <p style="word-break: break-all;"><a href="${setPasswordUrl}">${setPasswordUrl}</a></p>
+      <p>Desde ahí vas a poder:</p>
+      <ul style="margin: 0 0 16px; padding-left: 20px;">
+        <li>Recibir notificaciones importantes de tu LLC</li>
+        <li>Acceder a tus documentos</li>
+        <li>En los próximos días habilitaremos: facturación, videos y documentos clave de tu LLC, y contabilidad automatizada para exportar archivos y ver el estado de resultados de tu empresa</li>
+      </ul>
+      <p>Por confiar en nosotros y seguir creciendo con Start Companies, tenés <strong>6 meses de acceso gratis</strong>. El acceso se activa en las próximas semanas. Si después decidís seguir, son <strong>USD 25/mes</strong>.</p>
+      <p>También te invitamos a unirte a nuestro grupo oficial de WhatsApp, donde hacemos comunicaciones generales e importantes:<br/><a href="${wa}">${wa}</a></p>
+      <p>Cualquier duda, escribinos.</p>
+      <p>El equipo de Start Companies</p>
+    `;
+
+    try {
+      await this.resend.emails.send({
+        from:
+          this.configService.get<string>('RESEND_FROM_EMAIL') ||
+          'Start Companies <noreply@startcompanies.us>',
+        to: email,
+        subject: 'Tu acceso a la plataforma de Start Companies 🚀',
+        html: this.getEmailHtml({
+          title: 'Tu acceso a la plataforma',
+          bodyHtml,
+          button: { text: 'Definir contraseña y acceder', url: setPasswordUrl },
+        }),
+      });
+      this.logger.log(`Email bienvenida sync Zoho (cliente) enviado a ${email}`);
+    } catch (error) {
+      this.logger.error(`Error al enviar email bienvenida sync Zoho (cliente) a ${email}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Bienvenida al crear usuario partner desde import Zoho (cuenta ya creada; falta definir contraseña).
+   */
+  async sendZohoSyncPartnerWelcomeEmail(params: {
+    email: string;
+    displayName: string;
+    setPasswordUrl: string;
+  }): Promise<void> {
+    const { email, displayName, setPasswordUrl } = params;
+    if (!this.resend) {
+      this.logger.warn(`Email bienvenida sync Zoho (partner) no enviado a ${email} (Resend no configurado)`);
+      return;
+    }
+
+    const bodyHtml = `
+      <p>Hola ${displayName},</p>
+      <p>Gracias por confiar en nosotros y ser parte de Start Companies como partner. Para nosotros eso significa mucho y queremos seguir construyendo juntos las mejores soluciones.</p>
+      <p><strong>Tu usuario ya está creado en el portal.</strong> El primer paso es <strong>definir tu contraseña</strong> para entrar usando el siguiente enlace:</p>
+      <p style="word-break: break-all;"><a href="${setPasswordUrl}">${setPasswordUrl}</a></p>
+      <p>Desde ahí vas a poder ver y gestionar todo lo relacionado a tu cuenta.</p>
+      <p>El portal puede tener algunas fallas por ahora — estamos trabajando continuamente para mejorarlo y darte cada vez mejores herramientas.</p>
+      <p>Cualquier duda, escribinos.</p>
+      <p>El equipo de Start Companies</p>
+    `;
+
+    try {
+      await this.resend.emails.send({
+        from:
+          this.configService.get<string>('RESEND_FROM_EMAIL') ||
+          'Start Companies <noreply@startcompanies.us>',
+        to: email,
+        subject: 'Tu acceso al portal de partners de Start Companies 🚀',
+        html: this.getEmailHtml({
+          title: 'Tu acceso al portal de partners',
+          bodyHtml,
+          button: { text: 'Definir contraseña y acceder al portal', url: setPasswordUrl },
+        }),
+      });
+      this.logger.log(`Email bienvenida sync Zoho (partner) enviado a ${email}`);
+    } catch (error) {
+      this.logger.error(`Error al enviar email bienvenida sync Zoho (partner) a ${email}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Texto plano sugerido para WhatsApp (partner). No envía WA; úsalo desde CRM o integración futura.
+   */
+  buildZohoSyncPartnerWhatsAppText(displayName: string, portalUrl: string): string {
+    return [
+      `Hola ${displayName} 👋`,
+      '',
+      'Gracias por confiar en nosotros y ser parte de Start Companies como partner. Para nosotros eso significa mucho.',
+      '',
+      'Te dejamos el acceso a tu portal:',
+      `👉 ${portalUrl}`,
+      '',
+      'Creá tu usuario y contraseña para entrar. Desde ahí vas a poder ver y gestionar todo lo relacionado a tu cuenta.',
+      '',
+      'El portal puede tener algunas fallas por ahora — estamos trabajando continuamente para mejorarlo y darte cada vez mejores soluciones.',
+      '',
+      'Cualquier duda, escribinos 🙌',
+    ].join('\n');
+  }
 }
 
 

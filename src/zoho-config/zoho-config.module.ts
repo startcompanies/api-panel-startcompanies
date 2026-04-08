@@ -10,6 +10,7 @@ import { ZohoWorkDriveService } from './zoho-workdrive.service';
 import { ZohoSyncService } from './zoho-sync.service';
 import { ZohoContactService } from './zoho-contact.service';
 import { ZohoSyncController } from './zoho-sync.controller';
+import { PanelClientAllowlistService } from './panel-client-allowlist.service';
 import { ZohoConfig } from './zoho-config.entity';
 import { Request } from '../panel/requests/entities/request.entity';
 import { AperturaLlcRequest } from '../panel/requests/entities/apertura-llc-request.entity';
@@ -20,10 +21,12 @@ import { User } from '../shared/user/entities/user.entity';
 import { Client } from '../panel/clients/entities/client.entity';
 import { ZohoDealTimeline } from '../panel/requests/entities/zoho-deal-timeline.entity';
 import { UploadFileModule } from '../shared/upload-file/upload-file.module';
+import { CommonModule } from '../shared/common/common.module';
 
 @Module({
   imports: [
     ConfigModule,
+    CommonModule,
     UploadFileModule,
     TypeOrmModule.forFeature([
       ZohoConfig,
@@ -45,6 +48,7 @@ import { UploadFileModule } from '../shared/upload-file/upload-file.module';
     ZohoWorkDriveService,
     ZohoSyncService,
     ZohoContactService,
+    PanelClientAllowlistService,
   ],
   exports: [
     ZohoConfigService,
@@ -52,6 +56,7 @@ import { UploadFileModule } from '../shared/upload-file/upload-file.module';
     ZohoWorkDriveService,
     ZohoSyncService,
     ZohoContactService,
+    PanelClientAllowlistService,
   ],
 })
 export class ZohoConfigModule {}
