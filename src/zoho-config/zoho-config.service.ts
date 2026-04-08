@@ -1,4 +1,4 @@
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -6,6 +6,35 @@ import { ZohoConfig } from './zoho-config.entity';
 import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
 import { ZohoConfigDto, UpdateZohoConfigDto } from './zoho-config.dto';
+
+/** Respuesta al panel: sin secretos en bruto (el interceptor elimina client_id/secret/refresh_token). */
+export type ZohoConfigAdminResponse = {
+  id: number;
+  org: string;
+  service: string;
+  region: string;
+  scopes: string;
+  createdAt: Date;
+  updatedAt: Date;
+  zohoOAuthClientId: string;
+  zohoOAuthClientSecretConfigured: boolean;
+  hasRefreshToken: boolean;
+};
+
+function toZohoConfigAdminResponse(c: ZohoConfig): ZohoConfigAdminResponse {
+  return {
+    id: c.id,
+    org: c.org,
+    service: c.service,
+    region: c.region,
+    scopes: c.scopes,
+    createdAt: c.createdAt,
+    updatedAt: c.updatedAt,
+    zohoOAuthClientId: c.client_id,
+    zohoOAuthClientSecretConfigured: Boolean(c.client_secret?.trim()),
+    hasRefreshToken: Boolean(c.refresh_token?.trim()),
+  };
+}
 
 /** Callback OAuth Zoho: {API_PUBLIC_URL}/orgTk/callback (registrar exacto en consola Zoho). */
 function zohoRedirectUriFromApiPublic(config: ConfigService): string {
@@ -17,6 +46,7 @@ function zohoRedirectUriFromApiPublic(config: ConfigService): string {
 
 @Injectable()
 export class ZohoConfigService {
+  private readonly logger = new Logger(ZohoConfigService.name);
   private readonly redirect_uri: string;
 
   constructor(
@@ -56,9 +86,48 @@ export class ZohoConfigService {
     region: string,
     state: number,
   ): string {
-    const url = this.getTokenUrl(region);
-    const responseType = 'code';
-    return `${url}/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=${responseType}&scope=${scopes}&state=${state}&access_type=offline`;
+    const base = this.getTokenUrl(region);
+    /** access_type=offline + prompt=consent: Zoho suele volver a emitir refresh_token al re-autorizar (p. ej. WorkDrive tras CRM). */
+    const q = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: scopes,
+      state: String(state),
+      access_type: 'offline',
+      prompt: 'consent',
+    });
+    return `${base}/auth?${q.toString()}`;
+  }
+
+  /**
+   * Tras canjear el code, Zoho solo envía refresh_token la primera vez por cliente/usuario.
+   * Si falta, reutilizamos el de esta fila o de otra con el mismo client_id (misma app Zoho).
+   */
+  private async resolveRefreshTokenAfterCodeExchange(
+    tokenRecord: ZohoConfig,
+    data: Record<string, unknown>,
+  ): Promise<string | null> {
+    const fromResponse = data['refresh_token'];
+    if (typeof fromResponse === 'string' && fromResponse.trim()) {
+      return fromResponse.trim();
+    }
+    if (tokenRecord.refresh_token?.trim()) {
+      return tokenRecord.refresh_token.trim();
+    }
+    const siblings = await this.zohoConfigRepository.find({
+      where: { client_id: tokenRecord.client_id },
+      order: { id: 'ASC' },
+    });
+    const other = siblings.find((c) => c.id !== tokenRecord.id && c.refresh_token?.trim());
+    const inherited = other?.refresh_token?.trim() ?? null;
+    if (inherited && other) {
+      this.logger.warn(
+        `OAuth sin refresh_token en respuesta; reutilizando refresh de config id=${other.id} (mismo client_id). ` +
+          `Si WorkDrive sigue fallando, autoriza scopes CRM+WorkDrive juntos o usa incremental auth de Zoho.`,
+      );
+    }
+    return inherited;
   }
 
   /**
@@ -70,28 +139,45 @@ export class ZohoConfigService {
     region: string,
     scopes: string,
     client_id: string,
-    client_secret: string,
+    client_secret: string | undefined,
   ) {
-    // Buscar si ya existe una configuración
+    const incomingSecret = client_secret?.trim() ?? '';
+
     let tokenRecord = await this.zohoConfigRepository.findOne({
       where: { org, service },
     });
 
+    const resolvedSecret =
+      incomingSecret || tokenRecord?.client_secret?.trim() || '';
+
+    if (!resolvedSecret) {
+      throw new HttpException(
+        'client_secret es obligatorio (o debe existir ya guardado en esta configuración)',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
     if (tokenRecord) {
-      // Actualizar configuración existente
       tokenRecord.region = region;
       tokenRecord.scopes = scopes;
       tokenRecord.client_id = client_id;
-      tokenRecord.client_secret = client_secret;
+      if (incomingSecret) {
+        tokenRecord.client_secret = incomingSecret;
+      }
     } else {
-      // Crear nueva configuración
+      if (!incomingSecret) {
+        throw new HttpException(
+          'client_secret es obligatorio para una configuración nueva',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
       tokenRecord = this.zohoConfigRepository.create({
         org,
         service,
         region,
         scopes,
         client_id,
-        client_secret,
+        client_secret: incomingSecret,
       });
     }
 
@@ -135,20 +221,43 @@ export class ZohoConfigService {
       grant_type: 'authorization_code',
     };
 
-    // Realizar petición a Zoho
-    const response = await lastValueFrom(
-      this.httpService.post(`${url_token}/token`, null, { params }),
-    );
-
-    if (!response.data || !response.data.refresh_token) {
+    let response: { data: Record<string, unknown> };
+    try {
+      response = await lastValueFrom(
+        this.httpService.post<{ [k: string]: unknown }>(`${url_token}/token`, null, { params }),
+      );
+    } catch (err: unknown) {
+      const ax = err as { response?: { data?: unknown }; message?: string };
+      const zohoBody = ax.response?.data;
+      const detail =
+        typeof zohoBody === 'object' && zohoBody !== null && 'error_description' in zohoBody
+          ? String((zohoBody as { error_description?: string }).error_description)
+          : typeof zohoBody === 'object' && zohoBody !== null && 'error' in zohoBody
+            ? String((zohoBody as { error?: string }).error)
+            : ax.message ?? 'Error de red';
+      this.logger.error(`Zoho /token (authorization_code) falló: ${detail}`, zohoBody);
       throw new HttpException(
-        'No se recibió refresh_token',
+        `Error al canjear el código con Zoho: ${detail}`,
         HttpStatus.BAD_REQUEST,
       );
     }
 
-    // Guardar refresh_token
-    tokenRecord.refresh_token = response.data.refresh_token;
+    const data = response.data ?? {};
+    if (typeof data['error'] === 'string') {
+      const desc = typeof data['error_description'] === 'string' ? data['error_description'] : data['error'];
+      throw new HttpException(`Zoho: ${desc}`, HttpStatus.BAD_REQUEST);
+    }
+
+    const refresh = await this.resolveRefreshTokenAfterCodeExchange(tokenRecord, data);
+    if (!refresh) {
+      throw new HttpException(
+        'Zoho no devolvió refresh_token y no hay otro guardado con el mismo Client ID. ' +
+          'Es habitual si ya autorizaste esta app antes: vuelve a pulsar Autorizar (ahora forzamos consent) o crea una sola configuración con scopes CRM y WorkDrive.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    tokenRecord.refresh_token = refresh;
     return await this.zohoConfigRepository.save(tokenRecord);
   }
 
@@ -189,12 +298,12 @@ export class ZohoConfigService {
     }
   }
 
-  // Métodos CRUD básicos
-  async findAll(): Promise<ZohoConfig[]> {
+  /** Uso interno (tokens y secretos completos). */
+  async findAllEntities(): Promise<ZohoConfig[]> {
     return this.zohoConfigRepository.find();
   }
 
-  async findOne(id: number): Promise<ZohoConfig> {
+  async findOneEntity(id: number): Promise<ZohoConfig> {
     const config = await this.zohoConfigRepository.findOne({ where: { id } });
     if (!config) {
       throw new HttpException('Configuración no encontrada', HttpStatus.NOT_FOUND);
@@ -202,7 +311,7 @@ export class ZohoConfigService {
     return config;
   }
 
-  async findByOrgAndService(org: string, service: string): Promise<ZohoConfig> {
+  async findByOrgAndServiceEntity(org: string, service: string): Promise<ZohoConfig> {
     const config = await this.zohoConfigRepository.findOne({
       where: { org, service },
     });
@@ -212,24 +321,62 @@ export class ZohoConfigService {
     return config;
   }
 
-  async create(createZohoConfigDto: ZohoConfigDto): Promise<ZohoConfig> {
-    const zohoConfig = this.zohoConfigRepository.create(createZohoConfigDto);
-    return await this.zohoConfigRepository.save(zohoConfig);
+  async listForAdmin(): Promise<ZohoConfigAdminResponse[]> {
+    const rows = await this.findAllEntities();
+    return rows.map(toZohoConfigAdminResponse);
   }
 
-  async update(id: number, updateZohoConfigDto: UpdateZohoConfigDto): Promise<ZohoConfig> {
-    const zohoConfig = await this.zohoConfigRepository.preload({
-      id,
-      ...updateZohoConfigDto,
-    });
-    if (!zohoConfig) {
+  async getOneForAdmin(id: number): Promise<ZohoConfigAdminResponse> {
+    const config = await this.findOneEntity(id);
+    return toZohoConfigAdminResponse(config);
+  }
+
+  async getByOrgAndServiceForAdmin(org: string, service: string): Promise<ZohoConfigAdminResponse> {
+    const config = await this.findByOrgAndServiceEntity(org, service);
+    return toZohoConfigAdminResponse(config);
+  }
+
+  async create(createZohoConfigDto: ZohoConfigDto): Promise<ZohoConfigAdminResponse> {
+    const zohoConfig = this.zohoConfigRepository.create(createZohoConfigDto);
+    const saved = await this.zohoConfigRepository.save(zohoConfig);
+    return toZohoConfigAdminResponse(saved);
+  }
+
+  async update(
+    id: number,
+    updateZohoConfigDto: UpdateZohoConfigDto,
+  ): Promise<ZohoConfigAdminResponse> {
+    const existing = await this.zohoConfigRepository.findOne({ where: { id } });
+    if (!existing) {
       throw new HttpException('Configuración no encontrada', HttpStatus.NOT_FOUND);
     }
-    return await this.zohoConfigRepository.save(zohoConfig);
+
+    if (updateZohoConfigDto.org !== undefined) {
+      existing.org = updateZohoConfigDto.org;
+    }
+    if (updateZohoConfigDto.service !== undefined) {
+      existing.service = updateZohoConfigDto.service;
+    }
+    if (updateZohoConfigDto.region !== undefined) {
+      existing.region = updateZohoConfigDto.region;
+    }
+    if (updateZohoConfigDto.scopes !== undefined) {
+      existing.scopes = updateZohoConfigDto.scopes;
+    }
+    if (updateZohoConfigDto.client_id !== undefined && updateZohoConfigDto.client_id.trim() !== '') {
+      existing.client_id = updateZohoConfigDto.client_id.trim();
+    }
+    const incomingSecret = updateZohoConfigDto.client_secret;
+    if (incomingSecret !== undefined && incomingSecret.trim() !== '') {
+      existing.client_secret = incomingSecret.trim();
+    }
+
+    const saved = await this.zohoConfigRepository.save(existing);
+    return toZohoConfigAdminResponse(saved);
   }
 
   async remove(id: number): Promise<void> {
-    const zohoConfig = await this.findOne(id);
+    const zohoConfig = await this.findOneEntity(id);
     await this.zohoConfigRepository.remove(zohoConfig);
   }
 

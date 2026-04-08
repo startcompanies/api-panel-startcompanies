@@ -10,6 +10,7 @@ import {
   Res,
   UseGuards,
   ParseIntPipe,
+  HttpException,
 } from '@nestjs/common';
 import { ZohoConfigService } from './zoho-config.service';
 import { ApiTags, ApiOperation, ApiQuery, ApiBearerAuth } from '@nestjs/swagger';
@@ -30,7 +31,7 @@ export class ZohoConfigController {
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Obtener todas las configuraciones (solo admin)' })
   findAll() {
-    return this.zohoConfigService.findAll();
+    return this.zohoConfigService.listForAdmin();
   }
 
   @Get('search')
@@ -41,7 +42,7 @@ export class ZohoConfigController {
   @ApiQuery({ name: 'org', required: true })
   @ApiQuery({ name: 'service', required: true })
   findOne(@Query('org') org: string, @Query('service') service: string) {
-    return this.zohoConfigService.findByOrgAndService(org, service);
+    return this.zohoConfigService.getByOrgAndServiceForAdmin(org, service);
   }
 
   @Get('redirect')
@@ -53,14 +54,14 @@ export class ZohoConfigController {
   @ApiQuery({ name: 'service', required: true })
   @ApiQuery({ name: 'region', required: true })
   @ApiQuery({ name: 'client_id', required: true })
-  @ApiQuery({ name: 'client_secret', required: true })
+  @ApiQuery({ name: 'client_secret', required: false })
   @ApiQuery({ name: 'scopes', required: true })
   async redirectToZoho(
     @Query('org') org: string,
     @Query('service') service: string,
     @Query('region') region: string,
     @Query('client_id') client_id: string,
-    @Query('client_secret') client_secret: string,
+    @Query('client_secret') client_secret: string | undefined,
     @Query('scopes') scopes: string,
     @Res() res: Response,
   ) {
@@ -115,14 +116,33 @@ export class ZohoConfigController {
         </html>
       `);
     } catch (error) {
-      return res.status(500).send(`
+      const status = error instanceof HttpException ? error.getStatus() : 500;
+      let message = 'Error al procesar la autenticación';
+      if (error instanceof HttpException) {
+        const r = error.getResponse();
+        if (typeof r === 'string') {
+          message = r;
+        } else if (r && typeof r === 'object' && 'message' in r) {
+          const m = (r as { message: unknown }).message;
+          message = Array.isArray(m) ? m.join(', ') : String(m);
+        } else {
+          message = error.message;
+        }
+      }
+      const postPayload = JSON.stringify({ status: 'error', message });
+      const htmlMsg = String(message)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+      return res.status(status).send(`
         <html>
           <body>
             <script type="text/javascript">
-              window.opener.postMessage({status: 'error', message: 'Error al procesar la autenticación'}, '*');
+              window.opener.postMessage(${postPayload}, '*');
               window.close();
             </script>
             <h1>Hubo un error al procesar la autenticación</h1>
+            <p>${htmlMsg}</p>
           </body>
         </html>
       `);
@@ -135,7 +155,7 @@ export class ZohoConfigController {
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Obtener configuración por ID (solo admin)' })
   findById(@Param('id', ParseIntPipe) id: number) {
-    return this.zohoConfigService.findOne(id);
+    return this.zohoConfigService.getOneForAdmin(id);
   }
 
   @Post()

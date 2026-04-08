@@ -20,8 +20,18 @@ export class GeoService {
 
   /**
    * IP del cliente para lookup (evita SSRF: solo literales IP).
+   * Tras Cloudflare, el primer valor de X-Forwarded-For puede ser una IP del edge de CF;
+   * la IP del visitante va en CF-Connecting-IP → priorizarla.
    */
   extractClientIp(req: Request): string | null {
+    const cf = req.headers['cf-connecting-ip'];
+    if (typeof cf === 'string' && cf.length > 0) {
+      const n = this.normalizeIp(cf.trim());
+      if (isIP(n)) {
+        return n;
+      }
+    }
+
     const xf = req.headers['x-forwarded-for'];
     if (typeof xf === 'string' && xf.length > 0) {
       const first = xf.split(',')[0]?.trim();
@@ -84,6 +94,18 @@ export class GeoService {
       ? `https://ipapi.co/${encodeURIComponent(ip!)}/json/`
       : 'https://ipapi.co/json/';
 
+    const xff = req.headers['x-forwarded-for'];
+    const xfStr = typeof xff === 'string' ? xff.split(',')[0]?.trim() : undefined;
+    const cfRaw = req.headers['cf-connecting-ip'];
+    const cfStr = typeof cfRaw === 'string' ? cfRaw.trim() : undefined;
+    const socketIp = req.socket?.remoteAddress;
+
+    this.logger.log(
+      `[Geo] extractedIp=${ip ?? 'null'} publicForLookup=${useIp} ` +
+        `mode=${useIp ? 'ipapi_by_client_ip' : 'ipapi_server_egress'} ` +
+        `xffFirst=${xfStr ?? '—'} cfConnectingIp=${cfStr ?? '—'} socket=${socketIp ?? '—'}`,
+    );
+
     try {
       const { data } = await firstValueFrom(
         this.http.get<IpApiResponse>(url, {
@@ -93,13 +115,16 @@ export class GeoService {
       );
 
       if (!data || data.error) {
-        this.logger.debug(
-          `ipapi sin país útil (${useIp ? 'ip cliente' : 'salida servidor'}): ${data?.reason ?? 'unknown'}`,
+        this.logger.warn(
+          `[Geo] ipapi sin país útil (${useIp ? 'ip cliente' : 'salida servidor'}): ${data?.reason ?? 'unknown'} → fallback us`,
         );
         return { countryCode: 'us' };
       }
 
       const code = (data.country_code || 'US').toString().toLowerCase();
+      this.logger.log(
+        `[Geo] resultado ipapi: countryCode=${code} countryName=${data.country_name ?? '—'} (sin fallback)`,
+      );
       return {
         countryCode: code,
         countryName: data.country_name,

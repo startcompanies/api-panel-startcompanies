@@ -66,26 +66,47 @@ export function toInternalUserResponse(
 }
 
 export function sanitizeSensitiveResponseData<T>(input: T): T {
-  return sanitizeSensitiveResponseDataInner(input) as T;
+  return sanitizeSensitiveResponseDataInner(input, new WeakMap()) as T;
 }
 
-function sanitizeSensitiveResponseDataInner(input: unknown): unknown {
-  if (Array.isArray(input)) {
-    return input.map((item) => sanitizeSensitiveResponseDataInner(item));
-  }
-
-  if (!input || typeof input !== 'object') {
+/**
+ * Elimina claves sensibles recursivamente. Usa WeakMap para evitar bucle infinito
+ * con referencias circulares (p. ej. entidades TypeORM con relaciones bidireccionales).
+ */
+function sanitizeSensitiveResponseDataInner(
+  input: unknown,
+  memo: WeakMap<object, unknown>,
+): unknown {
+  if (input === null || input === undefined) {
     return input;
   }
 
-  const record = input as Record<string, unknown>;
-  const sanitized: Record<string, unknown> = {};
+  if (typeof input !== 'object') {
+    return input;
+  }
 
+  if (input instanceof Date) {
+    return input;
+  }
+
+  if (Array.isArray(input)) {
+    return input.map((item) => sanitizeSensitiveResponseDataInner(item, memo));
+  }
+
+  const obj = input as object;
+  if (memo.has(obj)) {
+    return memo.get(obj);
+  }
+
+  const sanitized: Record<string, unknown> = {};
+  memo.set(obj, sanitized);
+
+  const record = input as Record<string, unknown>;
   for (const [key, value] of Object.entries(record)) {
     if (SENSITIVE_RESPONSE_KEYS.has(key)) {
       continue;
     }
-    sanitized[key] = sanitizeSensitiveResponseDataInner(value);
+    sanitized[key] = sanitizeSensitiveResponseDataInner(value, memo);
   }
 
   return sanitized;

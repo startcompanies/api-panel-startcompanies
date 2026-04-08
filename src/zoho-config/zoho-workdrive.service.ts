@@ -2,6 +2,7 @@ import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
 import { ZohoConfigService } from './zoho-config.service';
+import { ZohoConfig } from './zoho-config.entity';
 
 interface TokenResponse {
   access_token: string;
@@ -9,6 +10,7 @@ interface TokenResponse {
   expires_in?: number;
 }
 
+/** Respuesta POST /permissions de WorkDrive. */
 interface WorkDrivePermissionResponse {
   data: {
     id: string;
@@ -21,6 +23,14 @@ interface WorkDrivePermissionResponse {
       [key: string]: any;
     };
   };
+}
+
+function zohoApiErrorsMessage(data: unknown): string | undefined {
+  const err = data as { errors?: Array<{ id?: string; title?: string }> };
+  if (!err?.errors?.length) {
+    return undefined;
+  }
+  return err.errors.map((e) => (e.id && e.title ? `${e.id}: ${e.title}` : e.title || e.id)).join('; ');
 }
 
 @Injectable()
@@ -51,27 +61,26 @@ export class ZohoWorkDriveService {
    * Implementa caché en memoria para evitar refrescar tokens innecesariamente
    */
   private async getToken(
+    configId: number,
     refresh_token: string,
     client_id: string,
     client_secret: string,
-    org: string,
     region: string,
   ): Promise<string> {
     const grant_type = 'refresh_token';
     const currentTime = new Date().getTime();
     const expirationTime = 30 * 60 * 1000; // 30 minutos
 
-    const tokenKey = `token_${org}_workdrive`;
+    const tokenKey = `zoho_workdrive_access_${configId}`;
 
     // Verificar si hay un token válido en caché
     const tokenData = (global as any)[tokenKey];
     if (tokenData && currentTime < tokenData.expiryTime) {
-      this.logger.debug(`Token válido encontrado en caché para ${org}_workdrive`);
+      this.logger.debug(`Token WorkDrive API en caché (zoho_config id=${configId})`);
       return tokenData.access_token;
     }
 
-    // Generar nuevo token
-    this.logger.log(`Generando nuevo token para ${org}_workdrive`);
+    this.logger.log(`Refrescando access token WorkDrive desde zoho_config id=${configId}`);
     const tokenUrl = this.zohoConfigService.getTokenUrl(region);
     const params = {
       refresh_token,
@@ -94,6 +103,10 @@ export class ZohoWorkDriveService {
         expiryTime,
       };
 
+      this.logger.debug(
+        `[WorkDrive token] zoho_config id=${configId} access_token=${tokenResponse.access_token}`,
+      );
+
       return tokenResponse.access_token;
     } catch (error: any) {
       this.logger.error('Error al obtener token de Zoho WorkDrive:', error.response?.data || error.message);
@@ -104,124 +117,125 @@ export class ZohoWorkDriveService {
     }
   }
 
+  private hasRefreshToken(c: ZohoConfig): boolean {
+    return Boolean(c.refresh_token?.trim());
+  }
+
   /**
-   * Obtiene las credenciales y token para WorkDrive
-   * Busca cualquier configuración de WorkDrive disponible si no se especifica org
+   * Elige fila zoho_config para llamar a la API de WorkDrive.
+   * Prioridad por service: workdrive → crm.
+   * El org no se usa como criterio porque todas las filas pertenecen al mismo cliente;
+   * lo que varía es el service y los scopes asociados.
    */
-  private async getCredentialsAndToken(org?: string) {
-    const allConfigs = await this.zohoConfigService.findAll();
+  private pickConfigForWorkDriveApi(all: ZohoConfig[]): ZohoConfig | undefined {
+    const withRefresh = all.filter((c) => this.hasRefreshToken(c));
+    return (
+      withRefresh.find((c) => c.service === 'workdrive') ??
+      withRefresh.find((c) => c.service === 'crm')
+    );
+  }
 
-    let config;
-    if (org) {
-      // 1. Buscar workdrive para el org específico
-      config = allConfigs.find(c => c.org === org && c.service === 'workdrive' && c.refresh_token);
-      // 2. Fallback: crm para el mismo org
-      if (!config) config = allConfigs.find(c => c.org === org && c.service === 'crm' && c.refresh_token);
-    }
-    // 3. Fallback global: cualquier workdrive
-    if (!config) config = allConfigs.find(c => c.service === 'workdrive' && c.refresh_token);
-    // 4. Fallback global: cualquier crm
-    if (!config) config = allConfigs.find(c => c.service === 'crm' && c.refresh_token);
+  /**
+   * Obtiene access token y base URL WorkDrive a partir de zoho_config.
+   */
+  private async getCredentialsAndToken() {
+    const allConfigs = await this.zohoConfigService.findAllEntities();
+    const config = this.pickConfigForWorkDriveApi(allConfigs);
 
-    if (!config || !config.refresh_token) {
+    if (!config?.refresh_token) {
       throw new HttpException(
-        `Configuración de WorkDrive no encontrada o sin refresh_token. Por favor, configura el token primero en Settings → Zoho.`,
+        'No hay configuración Zoho WorkDrive con token ni configuración CRM con refresh_token. ' +
+          'En Ajustes → Zoho, crea fila service=workdrive o autoriza CRM incluyendo scopes WorkDrive.',
         HttpStatus.NOT_FOUND,
       );
     }
 
-    // Usar el org de la configuración encontrada para el token key
-    const configOrg = config.org;
+    this.logger.debug(
+      `WorkDrive API: usando fila service=${config.service} org=${config.org} id=${config.id}.`,
+    );
 
     const accessToken = await this.getToken(
+      config.id,
       config.refresh_token,
       config.client_id,
       config.client_secret,
-      configOrg,
       config.region,
     );
 
     return {
       accessToken,
       baseUrl: this.getWorkDriveBaseUrl(config.region),
+      zohoConfigId: config.id,
+      zohoService: config.service,
+      zohoOrg: config.org,
+      scopesMayIncludeWorkDrive: /workdrive/i.test(config.scopes || ''),
     };
   }
 
   /**
-   * Genera un permalink de embed para un archivo o carpeta en WorkDrive
-   * Scope requerido: WorkDrive.files.sharing.CREATE
-   * 
-   * @param resourceId - El ID único del archivo o carpeta en WorkDrive
-   * @param org - Nombre de la organización (opcional, buscará cualquier configuración de WorkDrive disponible)
-   * @returns El permalink que puede usarse en un iframe
+   * Genera un permalink de embed para un archivo o carpeta en WorkDrive.
+   * Endpoint: POST /workdrive/api/v1/permissions con shared_type=publish, role_id=34.
    */
   async generateEmbedPermalink(
     resourceId: string,
     org?: string,
   ): Promise<string> {
-    try {
-      const { accessToken, baseUrl } = await this.getCredentialsAndToken(org);
+    const { accessToken, baseUrl } = await this.getCredentialsAndToken();
 
-      const requestBody = {
-        data: {
-          attributes: {
-            resource_id: resourceId,
-            shared_type: 'publish',
-            role_id: 34,
-          },
-          type: 'permissions',
+    const requestBody = {
+      data: {
+        type: 'permissions',
+        attributes: {
+          resource_id: resourceId,
+          shared_type: 'publish',
+          role_id: 34,
         },
-      };
+      },
+    };
 
-      this.logger.log(`Generando permalink de embed para resource_id: ${resourceId}`);
+    this.logger.debug(
+      `[WorkDrive curl]\ncurl --location '${baseUrl}/permissions' \\\n` +
+        `  --header 'Authorization: Zoho-oauthtoken ${accessToken}' \\\n` +
+        `  --header 'Accept: application/vnd.api+json' \\\n` +
+        `  --header 'Content-Type: application/json' \\\n` +
+        `  --data '${JSON.stringify(requestBody)}'`,
+    );
 
+    try {
       const response = await lastValueFrom(
-        this.httpService.post<WorkDrivePermissionResponse>(
-          `${baseUrl}/permissions`,
-          requestBody,
-          {
-            headers: {
-              Authorization: `Zoho-oauthtoken ${accessToken}`,
-              'Content-Type': 'application/json',
-            },
+        this.httpService.post<WorkDrivePermissionResponse>(`${baseUrl}/permissions`, requestBody, {
+          headers: {
+            Authorization: `Zoho-oauthtoken ${accessToken}`,
+            Accept: 'application/vnd.api+json',
+            'Content-Type': 'application/json',
           },
-        ),
+        }),
       );
 
-      // Log completo de la respuesta para debugging
-      this.logger.debug('Respuesta completa de WorkDrive API:', JSON.stringify(response.data, null, 2));
-
-      if (
-        response.data?.data?.attributes?.permalink
-      ) {
-        const permalink = response.data.data.attributes.permalink;
-        const resourceIdFromResponse = response.data.data.attributes.resource_id;
-        const sharedType = response.data.data.attributes.shared_type;
-        
-        this.logger.log(`Permalink generado exitosamente: ${permalink}`);
-        this.logger.log(`Resource ID desde respuesta: ${resourceIdFromResponse}`);
-        this.logger.log(`Shared Type: ${sharedType}`);
-        this.logger.log(`Datos completos de attributes:`, JSON.stringify(response.data.data.attributes, null, 2));
-        
+      const permalink = response.data?.data?.attributes?.permalink;
+      if (permalink) {
+        this.logger.log(`Permalink generado para resource_id=${resourceId}: ${permalink}`);
         return permalink;
-      } else {
-        this.logger.error('Respuesta de WorkDrive no contiene permalink:', JSON.stringify(response.data, null, 2));
-        throw new HttpException(
-          'No se recibió permalink en la respuesta de WorkDrive',
-          HttpStatus.BAD_REQUEST,
-        );
       }
+
+      this.logger.error('Respuesta de WorkDrive no contiene permalink:', JSON.stringify(response.data, null, 2));
+      throw new HttpException('No se recibió permalink en la respuesta de WorkDrive', HttpStatus.BAD_GATEWAY);
     } catch (error: any) {
+      if (error instanceof HttpException) throw error;
+      const status = error.response?.status;
+      const data = error.response?.data;
+      const detail = zohoApiErrorsMessage(data) || error.message || 'sin detalle';
       this.logger.error(
-        `Error al generar permalink de embed para resource_id ${resourceId}:`,
-        error.response?.data || error.message,
+        `Error al generar permalink de embed para resource_id ${resourceId} (status=${status}):`,
+        data || detail,
       );
       throw new HttpException(
-        `Error al generar permalink de embed: ${error.response?.data?.message || error.message}`,
+        `Error al generar permalink de embed: ${detail}`,
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
   }
+
 
   /**
    * Convierte un permalink de WorkDrive a URL de embed para iframe

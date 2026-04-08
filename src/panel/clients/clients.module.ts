@@ -6,11 +6,15 @@ import { Client } from './entities/client.entity';
 import { Request } from '../requests/entities/request.entity';
 import { User } from '../../shared/user/entities/user.entity';
 import { RolesGuard } from '../../shared/auth/roles.guard';
+import { ZohoConfigModule } from '../../zoho-config/zoho-config.module';
 
 @Module({
   controllers: [ClientsController],
   providers: [ClientsService, RolesGuard],
-  imports: [TypeOrmModule.forFeature([Client, Request, User])],
+  imports: [
+    TypeOrmModule.forFeature([Client, Request, User]),
+    ZohoConfigModule,
+  ],
   exports: [ClientsService],
 })
 export class ClientsModule {}

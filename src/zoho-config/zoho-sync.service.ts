@@ -1,4 +1,12 @@
-import { Injectable, Logger, HttpException, HttpStatus, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  HttpException,
+  HttpStatus,
+  OnModuleInit,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, Not, IsNull } from 'typeorm';
 import { ZohoCrmService } from './zoho-crm.service';
@@ -25,6 +33,11 @@ import {
   ZohoImportAccountsProgressEvent,
   ZohoImportFullSyncMeta,
 } from './zoho-sync.dto';
+import { normalizePublicHttpsWebUrl } from 'src/shared/common/utils/public-web-url.util';
+import { UploadFileService } from 'src/shared/upload-file/upload-file.service';
+import { ZohoContactService } from './zoho-contact.service';
+import { PanelClientAllowlistService } from './panel-client-allowlist.service';
+import { EmailService } from 'src/shared/common/services/email.service';
 
 @Injectable()
 export class ZohoSyncService implements OnModuleInit {
@@ -33,6 +46,7 @@ export class ZohoSyncService implements OnModuleInit {
   constructor(
     private readonly zohoCrmService: ZohoCrmService,
     private readonly zohoWorkDriveService: ZohoWorkDriveService,
+    private readonly zohoContactService: ZohoContactService,
     @InjectRepository(Request)
     private readonly requestRepository: Repository<Request>,
     @InjectRepository(AperturaLlcRequest)
@@ -50,6 +64,11 @@ export class ZohoSyncService implements OnModuleInit {
     @InjectRepository(Client)
     private readonly clientRepo: Repository<Client>,
     private readonly dataSource: DataSource,
+    private readonly uploadFileService: UploadFileService,
+    private readonly panelClientAllowlistService: PanelClientAllowlistService,
+    private readonly emailService: EmailService,
+    private readonly jwtService: JwtService,
+    private readonly configService: ConfigService,
   ) {}
 
   async onModuleInit() {
@@ -59,12 +78,11 @@ export class ZohoSyncService implements OnModuleInit {
 
   private async backfillMissingWorkDrivePermalinks(): Promise<void> {
     try {
-      const pending = await this.requestRepository.find({
-        where: {
-          workDriveId: Not(IsNull()),
-          workDriveUrlExternal: IsNull(),
-        },
-      });
+      const pending = await this.requestRepository
+        .createQueryBuilder('r')
+        .where('r.work_drive_id IS NOT NULL')
+        .andWhere('(r.work_drive_url_external IS NULL OR r.work_drive_url_external = :empty)', { empty: '' })
+        .getMany();
       if (pending.length === 0) {
         this.logger.log('WorkDrive backfill: sin permalinks pendientes');
         return;
@@ -180,45 +198,11 @@ export class ZohoSyncService implements OnModuleInit {
   }
 
   /**
-   * Zoho CRM rechaza muchos valores que `new URL` acepta (p. ej. localhost, IPs privadas).
-   */
-  private isAcceptableZohoWebsiteHostname(hostname: string): boolean {
-    const h = (hostname || '').toLowerCase();
-    if (!h) return false;
-    if (h === 'localhost' || h.endsWith('.localhost')) return false;
-    if (h === '127.0.0.1' || h === '0.0.0.0' || h === '::1') return false;
-
-    const ipv4Parts = h.split('.');
-    if (ipv4Parts.length === 4 && ipv4Parts.every((p) => /^\d{1,3}$/.test(p))) {
-      const a = parseInt(ipv4Parts[0], 10);
-      const b = parseInt(ipv4Parts[1], 10);
-      if (a === 10) return false;
-      if (a === 127) return false;
-      if (a === 192 && b === 168) return false;
-      if (a === 172 && b >= 16 && b <= 31) return false;
-      if (a === 169 && b === 254) return false;
-    }
-
-    return true;
-  }
-
-  /**
-   * Normaliza URL para campos Zoho de tipo website.
+   * Normaliza URL para campos Zoho de tipo website (siempre https; http → https).
    * Si no es válida o no es aceptable para Zoho (p. ej. localhost), retorna '' y no se envían las claves.
    */
   private normalizeWebsiteUrl(url: string | null | undefined): string {
-    const raw = (url || '').trim();
-    if (!raw) return '';
-
-    const candidate = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
-    try {
-      const parsed = new URL(candidate);
-      if (!parsed.hostname) return '';
-      if (!this.isAcceptableZohoWebsiteHostname(parsed.hostname)) return '';
-      return candidate;
-    } catch {
-      return '';
-    }
+    return normalizePublicHttpsWebUrl(url);
   }
 
   /** Stage del módulo Deals (COQL / REST); a veces la clave puede variar. */
@@ -227,6 +211,48 @@ export class ZohoSyncService implements OnModuleInit {
     const raw = deal['Stage'] ?? deal['stage'];
     if (raw == null) return '';
     return String(raw).trim();
+  }
+
+  /**
+   * Texto de picklist o string tal como viene de Zoho API (string u objeto con name / display_value).
+   */
+  private extractZohoPicklistOrString(value: unknown): string {
+    if (value == null || value === '') return '';
+    if (typeof value === 'string') return value.trim();
+    if (typeof value === 'object') {
+      const o = value as Record<string, unknown>;
+      const fromName = o.name;
+      if (fromName != null && String(fromName).trim() !== '') return String(fromName).trim();
+      const dv = o.display_value;
+      if (dv != null && String(dv).trim() !== '') return String(dv).trim();
+    }
+    return '';
+  }
+
+  /**
+   * Clasifica picklist Empresa del Account Zoho para import BD.
+   * Start Companies: "Start Companies", "Startcompanies", "startcompanie" (typo), case-insensitive, espacios colapsables.
+   * `unknown` (vacío o valor no mapeado) se importa como flujo cliente, igual que Start Companies.
+   */
+  private classifyAccountEmpresa(
+    empresaRaw: unknown,
+  ): 'partner' | 'start_companies' | 'unknown' {
+    const label = this.extractZohoPicklistOrString(empresaRaw);
+    if (!label) return 'unknown';
+    const compact = label.toLowerCase().replace(/\s+/g, '');
+    if (compact === 'partner') return 'partner';
+    if (
+      compact === 'startcompanies' ||
+      compact === 'startcompanie' ||
+      compact.startsWith('startcompanies')
+    ) {
+      return 'start_companies';
+    }
+    const spaced = label.toLowerCase().replace(/\s+/g, ' ').trim();
+    if (spaced === 'start companies' || spaced.startsWith('start companies ')) {
+      return 'start_companies';
+    }
+    return 'unknown';
   }
 
   /**
@@ -346,6 +372,112 @@ export class ZohoSyncService implements OnModuleInit {
     return typeMap[type] || 'Apertura';
   }
 
+  private collectZohoAccountAttachmentItems(
+    request: Request,
+    members: Member[],
+  ): { url: string; title: string; filenameHint: string }[] {
+    const seen = new Set<string>();
+    const out: { url: string; title: string; filenameHint: string }[] = [];
+    const push = (raw: string | null | undefined, title: string) => {
+      const u = (raw ?? '').trim();
+      if (!u || (!u.startsWith('http://') && !u.startsWith('https://'))) return;
+      if (seen.has(u)) return;
+      seen.add(u);
+      const filenameHint =
+        u.split('/').pop()?.split('?')[0]?.replace(/[^a-zA-Z0-9._-]/g, '_') ||
+        `${title}.bin`;
+      out.push({ url: u, title, filenameHint });
+    };
+
+    push(request.paymentProofUrl, 'payment_proof');
+
+    if (request.aperturaLlcRequest) {
+      const a = request.aperturaLlcRequest;
+      push(a.serviceBillUrl, 'apertura_service_bill');
+      push(a.bankStatementUrl, 'apertura_bank_statement');
+    }
+
+    if (request.renovacionLlcRequest) {
+      const r = request.renovacionLlcRequest;
+      push(r.partnersPassportsFileUrl, 'renovacion_partners_passports');
+      push(r.operatingAgreementAdditionalFileUrl, 'renovacion_operating_agreement_extra');
+      push(r.form147Or575FileUrl, 'renovacion_form_147_575');
+      push(r.articlesOfOrganizationAdditionalFileUrl, 'renovacion_articles_extra');
+      push(r.boiReportFileUrl, 'renovacion_boi_report');
+      push(r.bankStatementsFileUrl, 'renovacion_bank_statements');
+    }
+
+    if (request.cuentaBancariaRequest) {
+      const c = request.cuentaBancariaRequest;
+      push(c.einLetterUrl, 'cuenta_ein_letter');
+      push(
+        c.certificateOfConstitutionOrArticlesUrl,
+        'cuenta_certificate_or_articles',
+      );
+      push(c.operatingAgreementUrl, 'cuenta_operating_agreement');
+      push(c.proofOfAddressUrl, 'cuenta_proof_of_address');
+    }
+
+    members.forEach((m, i) => {
+      const n = i + 1;
+      push(m.scannedPassportUrl, `member_${n}_passport`);
+      push(m.additionalBankDocsUrl, `member_${n}_additional_bank_docs`);
+      push(m.identityDocumentUrl, `member_${n}_identity_document`);
+      push(m.facialPhotographUrl, `member_${n}_facial_photo`);
+    });
+
+    return out;
+  }
+
+  /**
+   * Descarga desde S3 (URLs del dominio de medios) y sube adjuntos al Account en Zoho.
+   * Errores por archivo no bloquean el resto ni el sync principal.
+   */
+  private async uploadRequestMediaFilesToZohoAccount(
+    request: Request,
+    members: Member[],
+    zohoAccountId: string,
+    org: string,
+  ): Promise<void> {
+    const items = this.collectZohoAccountAttachmentItems(request, members);
+    if (items.length === 0) {
+      this.logger.debug(
+        `Zoho Account adjuntos: sin URLs de archivo para request ${request.id}`,
+      );
+      return;
+    }
+
+    for (const item of items) {
+      try {
+        const got = await this.uploadFileService.getObjectBufferFromMediaUrl(
+          item.url,
+        );
+        if (!got) {
+          this.logger.warn(
+            `Zoho Account adjuntos: omitido (no es URL de medios S3 o no leíble) [${item.title}]`,
+          );
+          continue;
+        }
+        const filename =
+          got.filename && got.filename !== 'file' ? got.filename : item.filenameHint;
+        await this.zohoCrmService.uploadAttachment(
+          'Accounts',
+          zohoAccountId,
+          got.buffer,
+          filename,
+          { title: item.title, contentType: got.contentType, org },
+        );
+        this.logger.log(
+          `Zoho Account adjuntos: OK [${item.title}] → Account ${zohoAccountId}`,
+        );
+      } catch (e: any) {
+        this.logger.warn(
+          `Zoho Account adjuntos: falló [${item.title}] (no bloquea sync): ${e?.message ?? e}`,
+        );
+      }
+    }
+  }
+
   /**
    * Sincroniza una solicitud desde BD a Zoho CRM
    * SOLO crea/actualiza Account (NO crea Contacts ni Deals)
@@ -364,6 +496,17 @@ export class ZohoSyncService implements OnModuleInit {
           `Solicitud ${requestId} no encontrada`,
           HttpStatus.NOT_FOUND,
         );
+      }
+
+      // Sin zoho_contact_id: findOrCreate en Zoho antes del Account (Cliente o Partner según client.partnerId)
+      if (request.client && !request.client.zohoContactId) {
+        await this.zohoContactService.findOrCreateContact(request.client, org);
+        const freshClient = await this.clientRepo.findOne({
+          where: { id: request.clientId },
+        });
+        if (freshClient) {
+          request.client = freshClient;
+        }
       }
 
       // Obtener miembros de la solicitud (necesarios para el mapeo del Account)
@@ -465,9 +608,24 @@ export class ZohoSyncService implements OnModuleInit {
       request.zohoAccountId = accountId;
       request.company = companyForBd;
 
+      await this.syncContactAccountLink(request, String(accountId), org);
+
       // Sincronizar también propietarios al módulo Propietarios_LLC (además de subforms en Account)
       if (members.length > 0) {
         await this.syncMembersToPropietariosLlc(accountId, members, org);
+      }
+
+      try {
+        await this.uploadRequestMediaFilesToZohoAccount(
+          request,
+          members,
+          String(accountId),
+          org,
+        );
+      } catch (attachErr: any) {
+        this.logger.error(
+          `Adjuntos Zoho Account: error no bloqueante tras sync request ${requestId}: ${attachErr?.message ?? attachErr}`,
+        );
       }
 
       this.logger.log(`Account sincronizado exitosamente: ${accountId}. zohoAccountId guardado en BD: ${accountId}`);
@@ -481,6 +639,60 @@ export class ZohoSyncService implements OnModuleInit {
       throw new HttpException(
         error.message || 'Error al sincronizar con Zoho CRM',
         error.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * Enlace Contact ↔ Account en módulo ContactsxAccounts (no bloqueante: errores internos solo log).
+   */
+  private async syncContactAccountLink(
+    request: Request,
+    zohoAccountId: string,
+    org: string,
+  ): Promise<void> {
+    try {
+      const client = request.client;
+      if (!client?.zohoContactId) {
+        this.logger.warn(
+          `ContactsxAccounts: request ${request.id} sin client.zohoContactId, se omite enlace`,
+        );
+        return;
+      }
+      const contactId = String(client.zohoContactId).trim();
+      if (!contactId) {
+        return;
+      }
+
+      const criteria = `(LLC:equals:${zohoAccountId}) and (LLC_Asignados:equals:${contactId})`;
+      const search = await this.zohoCrmService.searchRecords(
+        'ContactsxAccounts',
+        { criteria },
+        org,
+      );
+      const rows = Array.isArray(search?.data) ? search.data : [];
+      if (rows.length > 0) {
+        this.logger.log(
+          `ContactsxAccounts: relación ya existente para request ${request.id}`,
+        );
+        return;
+      }
+
+      await this.zohoCrmService.createRecords(
+        'ContactsxAccounts',
+        [
+          {
+            LLC: zohoAccountId,
+            LLC_Asignados: contactId,
+            Email: client.email || '',
+          },
+        ],
+        org,
+      );
+      this.logger.log(`ContactsxAccounts: relación creada para request ${request.id}`);
+    } catch (e: any) {
+      this.logger.error(
+        `ContactsxAccounts: error no bloqueante (request ${request.id}): ${e?.message ?? e}`,
       );
     }
   }
@@ -1490,6 +1702,7 @@ export class ZohoSyncService implements OnModuleInit {
     total: number;
     imported: number;
     updated: number;
+    skipped: number;
     errors: any[];
     details: any[];
   }> {
@@ -1498,6 +1711,7 @@ export class ZohoSyncService implements OnModuleInit {
     const results = {
       imported: 0,
       updated: 0,
+      skipped: 0,
       errors: [] as any[],
       details: [] as any[],
     };
@@ -1557,7 +1771,9 @@ export class ZohoSyncService implements OnModuleInit {
       });
       try {
         const result = await this.importAccountToRequest(account, metadata, org);
-        if (result.created) {
+        if (result.skipped) {
+          results.skipped++;
+        } else if (result.created) {
           results.imported++;
         } else {
           results.updated++;
@@ -1660,6 +1876,9 @@ export class ZohoSyncService implements OnModuleInit {
     await queryRunner.connect();
     await queryRunner.startTransaction();
 
+    let welcomeNewPartnerUser: User | null = null;
+    let welcomeNewClientUser: User | null = null;
+
     try {
       // Validar Pick Lists
       if (!this.validatePickListValue(account.Tipo, ['Apertura', 'Renovación', 'Cuenta Bancaria'], 'Tipo')) {
@@ -1731,78 +1950,27 @@ export class ZohoSyncService implements OnModuleInit {
 
       const isNew = !existingRequest;
 
+      const empresaDisplayLabel = this.extractZohoPicklistOrString(account.Empresa);
+      const empresaRole = this.classifyAccountEmpresa(account.Empresa);
+
       // Crear o actualizar Request base
       let request: Request;
       if (existingRequest) {
         request = existingRequest;
         request.zohoAccountId = account.id;
-        // Actualizar company desde Zoho si viene
-        if (account.Empresa) {
-          request.company = account.Empresa;
+        if (empresaDisplayLabel) {
+          request.company = empresaDisplayLabel;
         }
       } else {
         request = this.requestRepository.create({
           type: requestType,
           status: 'pendiente', // Se actualizará con el Deal
           zohoAccountId: account.id,
-          company: account.Empresa || 'Start Companies',
+          company: empresaDisplayLabel || 'Start Companies',
         });
       }
 
-      // PRIMERO: Partner (si aplica), luego Deal → User cliente y fila en `clients` (FK requests.client_id)
-      // Nota: En este flujo de sync Zoho -> BD NO se envían correos de bienvenida.
       let partnerUserId: number | undefined;
-
-      if (account.Empresa === 'Partner') {
-        if (!account.Partner_Email) {
-          throw new Error(`Account ${account.id} tiene Empresa=Partner pero no tiene Partner_Email`);
-        }
-
-        let partnerUser = await this.userRepo.findOne({
-          where: { email: account.Partner_Email },
-        });
-
-        if (!partnerUser) {
-          let username = account.Partner_Email.split('@')[0];
-          let existingUserByUsername = await queryRunner.manager.findOne(User, {
-            where: { username },
-          });
-          let counter = 1;
-          while (existingUserByUsername) {
-            username = `${account.Partner_Email.split('@')[0]}${counter}`;
-            existingUserByUsername = await queryRunner.manager.findOne(User, {
-              where: { username },
-            });
-            counter++;
-          }
-
-          const defaultPassword = this.generateTemporaryPassword();
-          const hashedPassword = encodePassword(defaultPassword);
-
-          partnerUser = queryRunner.manager.create(User, {
-            username,
-            email: account.Partner_Email,
-            password: hashedPassword,
-            phone: this.normalizePhoneNumber(account.Partner_Phone) || '',
-            type: 'partner',
-            status: true,
-          });
-
-          partnerUser = await queryRunner.manager.save(User, partnerUser);
-          if (partnerUser) {
-            this.logger.log(`Usuario partner creado: ${partnerUser.id}`);
-          }
-        }
-
-        if (partnerUser) {
-          request.partnerId = partnerUser.id;
-          partnerUserId = partnerUser.id;
-        }
-      }
-
-      if (account.Empresa === 'Partner' && partnerUserId == null) {
-        throw new Error(`No se pudo obtener/crear usuario partner para Account ${account.id}`);
-      }
 
       // Si hay Deal en Zoho, debe existir Contact_Name y poder cargarse; el cliente es ese Contact (correo vacío se puede completar desde Account).
       let contactEmail = '';
@@ -1907,7 +2075,132 @@ export class ZohoSyncService implements OnModuleInit {
         );
       }
 
+      const createPartnerUsersOnZohoImport =
+        String(this.configService.get('ZOHO_IMPORT_CREATE_PARTNER_USERS') || '').toLowerCase() ===
+        'true';
+
+      if (this.panelClientAllowlistService.isEnabled()) {
+        // Empresa vacía o no mapeada se trata como cliente (mismo flujo que Start Companies).
+        if (empresaRole === 'unknown') {
+          this.logger.debug(
+            `Account ${account.id} (${account.Account_Name}): Empresa Zoho no reconocida (${JSON.stringify(account.Empresa)}); flujo cliente + allowlist de clientes activos.`,
+          );
+        }
+        if (createPartnerUsersOnZohoImport && empresaRole === 'partner') {
+          if (!this.panelClientAllowlistService.isPartnerEmailAllowed(contactEmail)) {
+            await queryRunner.rollbackTransaction();
+            this.logger.log(
+              `Account ${account.id} (${account.Account_Name}): omitido por allowlist de partners (correo del Contact del Deal no listado en partners-panel.json): ${contactEmail}`,
+            );
+            return {
+              skipped: true,
+              reason: 'partner_allowlist',
+              created: false,
+              accountId: account.id,
+              accountName: account.Account_Name,
+            };
+          }
+        } else if (!this.panelClientAllowlistService.isClientEmailAllowed(contactEmail)) {
+          await queryRunner.rollbackTransaction();
+          this.logger.log(
+            `Account ${account.id} (${account.Account_Name}): omitido por allowlist de clientes activos (email no listado en clientes-activos-panel.json): ${contactEmail}`,
+          );
+          return {
+            skipped: true,
+            reason: 'client_allowlist',
+            created: false,
+            accountId: account.id,
+            accountName: account.Account_Name,
+          };
+        }
+      } else if (empresaRole === 'unknown') {
+        this.logger.warn(
+          `Account ${account.id}: Empresa Zoho no reconocida (${JSON.stringify(account.Empresa)}); se importa como flujo cliente (sin partner).`,
+        );
+      }
+
+      // Sin ZOHO_IMPORT_CREATE_PARTNER_USERS=true solo se crean usuarios cliente (Empresa Partner en CRM no crea User partner).
+      const effectiveEmpresaRole: 'partner' | 'start_companies' =
+        empresaRole === 'unknown'
+          ? 'start_companies'
+          : createPartnerUsersOnZohoImport && empresaRole === 'partner'
+            ? 'partner'
+            : 'start_companies';
+
+      if (
+        effectiveEmpresaRole !== 'partner' &&
+        this.panelClientAllowlistService.contactEmailLooksLikePartner(contactEmail)
+      ) {
+        this.logger.warn(
+          `Account ${account.id}: el email del Contact del Deal (${contactEmail}) coincide con un partner en partners-panel.json; revisar en Zoho si el Contact debe ser el cliente final.`,
+        );
+      }
+
       const normalizedContactPhone = this.normalizePhoneNumber(contactPhone) || '';
+
+      // Partner: tras allowlist (Contact del Deal en partners-panel.json). Email usuario partner = Partner_Email si viene; si no, contactEmail.
+      if (effectiveEmpresaRole === 'partner') {
+        const partnerEmailRaw = this.extractZohoPicklistOrString(account.Partner_Email);
+        const partnerEmailFromAccount =
+          partnerEmailRaw ||
+          (account.Partner_Email != null && String(account.Partner_Email).trim() !== ''
+            ? String(account.Partner_Email).trim()
+            : '') ||
+          contactEmail;
+        if (!partnerEmailFromAccount) {
+          throw new Error(
+            `Account ${account.id} tiene Empresa Partner pero no hay Partner_Email ni correo de Contact para usuario partner`,
+          );
+        }
+
+        let partnerUser = await this.userRepo.findOne({
+          where: { email: partnerEmailFromAccount },
+        });
+
+        if (!partnerUser) {
+          let username = partnerEmailFromAccount.split('@')[0];
+          let existingUserByUsername = await queryRunner.manager.findOne(User, {
+            where: { username },
+          });
+          let counter = 1;
+          while (existingUserByUsername) {
+            username = `${partnerEmailFromAccount.split('@')[0]}${counter}`;
+            existingUserByUsername = await queryRunner.manager.findOne(User, {
+              where: { username },
+            });
+            counter++;
+          }
+
+          const defaultPassword = this.generateTemporaryPassword();
+          const hashedPassword = encodePassword(defaultPassword);
+          const partnerPhone =
+            this.normalizePhoneNumber(account.Partner_Phone) || normalizedContactPhone || '';
+
+          partnerUser = queryRunner.manager.create(User, {
+            username,
+            email: partnerEmailFromAccount,
+            password: hashedPassword,
+            phone: partnerPhone,
+            type: 'partner',
+            status: true,
+          });
+
+          partnerUser = await queryRunner.manager.save(User, partnerUser);
+          if (partnerUser) {
+            this.logger.log(`Usuario partner creado: ${partnerUser.id}`);
+            welcomeNewPartnerUser = partnerUser;
+          }
+        }
+
+        if (partnerUser) {
+          request.partnerId = partnerUser.id;
+          partnerUserId = partnerUser.id;
+        }
+      }
+
+      if (effectiveEmpresaRole === 'partner' && partnerUserId == null) {
+        throw new Error(`No se pudo obtener/crear usuario partner para Account ${account.id}`);
+      }
       const resolvedFullName = dealContactLoaded
         ? `${contactFirstName} ${contactLastName}`.trim() || contactEmail
         : `${contactFirstName} ${contactLastName}`.trim() ||
@@ -1973,6 +2266,7 @@ export class ZohoSyncService implements OnModuleInit {
         clientUser = await queryRunner.manager.save(User, clientUser);
         if (clientUser) {
           this.logger.log(`Usuario cliente creado: ${clientUser.id} (desde Deal)`);
+          welcomeNewClientUser = clientUser;
         }
       } else {
         let userUpdated = false;
@@ -2079,18 +2373,27 @@ export class ZohoSyncService implements OnModuleInit {
       }
 
       // Procesar Members desde subformularios (después de guardar Request para tener request.id)
-      await this.processMembersFromAccount(account, request, queryRunner, org);
+      await this.processMembersFromAccount(
+        account,
+        request,
+        queryRunner,
+        org,
+        effectiveEmpresaRole === 'partner',
+      );
 
       await queryRunner.commitTransaction();
 
       // Obtener Deals relacionados y actualizar status y stage
       await this.updateRequestStatusFromDeals(request, org);
 
+      await this.sendZohoWelcomeEmailsAfterCommit(welcomeNewPartnerUser, welcomeNewClientUser);
+
       return {
         created: isNew,
         requestId: request.id,
         accountId: account.id,
         accountName: account.Account_Name,
+        skipped: false as const,
       };
     } catch (error: any) {
       await queryRunner.rollbackTransaction();
@@ -2100,6 +2403,106 @@ export class ZohoSyncService implements OnModuleInit {
     }
   }
 
+  private isZohoSyncWelcomeEmailsEnabled(): boolean {
+    const v = this.configService.get<string>('ZOHO_SYNC_WELCOME_EMAILS_ENABLED');
+    return String(v || '').toLowerCase() === 'true';
+  }
+
+  private displayNameForZohoWelcomeUser(user: User): string {
+    const n = `${user.first_name || ''} ${user.last_name || ''}`.trim();
+    if (n) return n;
+    if (user.username?.trim()) return user.username.trim();
+    const email = user.email || '';
+    return email.split('@')[0] || email || 'ahí';
+  }
+
+  /**
+   * Correos de bienvenida solo si se creó usuario nuevo en este import (post-commit).
+   * Incluye plantilla WhatsApp (texto en log) para partners.
+   */
+  private async sendZohoWelcomeEmailsAfterCommit(
+    newPartner: User | null,
+    newClient: User | null,
+  ): Promise<void> {
+    if (!this.isZohoSyncWelcomeEmailsEnabled()) {
+      return;
+    }
+
+    const frontendUrl =
+      this.configService.get<string>('FRONTEND_URL') || 'http://localhost:4200';
+
+    const buildSetPasswordUrl = async (user: User): Promise<string> => {
+      const token = await this.jwtService.signAsync(
+        { id: user.id, email: user.email, type: 'password-setup' },
+        { expiresIn: '24h' },
+      );
+      return `${frontendUrl}/panel/set-password?token=${encodeURIComponent(token)}`;
+    };
+
+    if (newPartner && newClient && newPartner.id === newClient.id) {
+      try {
+        const setPasswordUrl = await buildSetPasswordUrl(newPartner);
+        const displayName = this.displayNameForZohoWelcomeUser(newPartner);
+        await this.emailService.sendZohoSyncPartnerWelcomeEmail({
+          email: newPartner.email,
+          displayName,
+          setPasswordUrl,
+        });
+        const waText = this.emailService.buildZohoSyncPartnerWhatsAppText(
+          displayName,
+          setPasswordUrl,
+        );
+        const phoneHint = (newPartner.phone || '').trim();
+        this.logger.log(
+          `[ZohoSync] Plantilla WhatsApp sugerida (partner)${phoneHint ? ` — tel: ${phoneHint}` : ''}:\n${waText}`,
+        );
+      } catch (e: any) {
+        this.logger.warn(
+          `No se pudo enviar email bienvenida (usuario único partner/cliente sync Zoho) a ${newPartner.email}: ${e?.message || e}`,
+        );
+      }
+      return;
+    }
+
+    if (newPartner) {
+      try {
+        const setPasswordUrl = await buildSetPasswordUrl(newPartner);
+        const displayName = this.displayNameForZohoWelcomeUser(newPartner);
+        await this.emailService.sendZohoSyncPartnerWelcomeEmail({
+          email: newPartner.email,
+          displayName,
+          setPasswordUrl,
+        });
+        const waText = this.emailService.buildZohoSyncPartnerWhatsAppText(
+          displayName,
+          setPasswordUrl,
+        );
+        const phoneHint = (newPartner.phone || '').trim();
+        this.logger.log(
+          `[ZohoSync] Plantilla WhatsApp sugerida (partner)${phoneHint ? ` — tel: ${phoneHint}` : ''}:\n${waText}`,
+        );
+      } catch (e: any) {
+        this.logger.warn(
+          `No se pudo enviar email/plantilla bienvenida partner (sync Zoho) a ${newPartner.email}: ${e?.message || e}`,
+        );
+      }
+    }
+
+    if (newClient) {
+      try {
+        const setPasswordUrl = await buildSetPasswordUrl(newClient);
+        await this.emailService.sendZohoSyncClientWelcomeEmail({
+          email: newClient.email,
+          displayName: this.displayNameForZohoWelcomeUser(newClient),
+          setPasswordUrl,
+        });
+      } catch (e: any) {
+        this.logger.warn(
+          `No se pudo enviar email bienvenida cliente (sync Zoho) a ${newClient.email}: ${e?.message || e}`,
+        );
+      }
+    }
+  }
 
   /**
    * Sincroniza múltiples solicitudes a Zoho
@@ -2420,6 +2823,7 @@ export class ZohoSyncService implements OnModuleInit {
     request: Request,
     queryRunner: any,
     org: string,
+    accountEmpresaIsPartner: boolean,
   ) {
     // Deshabilitar temporalmente el trigger de validación de porcentajes
     // para permitir eliminar y guardar miembros sin validación durante la importación
@@ -2528,9 +2932,13 @@ export class ZohoSyncService implements OnModuleInit {
       if (request.type === 'cuenta-bancaria') {
         email = propietario.Correo_electr_nico_Propietario || account.Email_Laboral || account.Correo_electr_nico || '';
         phone = propietario.Tel_fono_Contacto_Propietario || account.Phone || '';
-      } else if (account.Empresa === 'Partner') {
+      } else if (accountEmpresaIsPartner) {
         // Para Apertura y Renovación con Partner
-        email = account.Partner_Email || propietario.Correo_electr_nico_Propietario || '';
+        email =
+          this.extractZohoPicklistOrString(account.Partner_Email) ||
+          String(account.Partner_Email || '').trim() ||
+          propietario.Correo_electr_nico_Propietario ||
+          '';
         phone = account.Partner_Phone || propietario.Tel_fono_Contacto_Propietario || '';
       } else {
         // Para Apertura y Renovación sin Partner
@@ -3188,6 +3596,7 @@ export class ZohoSyncService implements OnModuleInit {
             total: 0,
             imported: 0,
             updated: 0,
+            skipped: 0,
             errors: [],
             details: [],
           },
@@ -3222,10 +3631,11 @@ export class ZohoSyncService implements OnModuleInit {
           total: batchResult.total,
           imported: batchResult.imported,
           updated: batchResult.updated,
+          skipped: batchResult.skipped,
           errors: batchResult.errors,
           details: batchResult.details,
         },
-        message: `Sincronización completa finalizada. Se procesaron ${batchResult.total} Accounts (${batchResult.imported} nuevos, ${batchResult.updated} actualizados). Los contactos y deals se procesaron automáticamente con cada Account.`,
+        message: `Sincronización completa finalizada. Se procesaron ${batchResult.total} Accounts (${batchResult.imported} nuevos, ${batchResult.updated} actualizados, ${batchResult.skipped} omitidos por allowlist de clientes o partners). Los contactos y deals se procesaron automáticamente con cada Account.`,
       };
     } catch (error: any) {
       this.logger.error('Error en sincronización completa:', error);

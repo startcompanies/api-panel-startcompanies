@@ -26,6 +26,8 @@ import { JwtService } from '@nestjs/jwt';
 import { encodePassword } from '../shared/common/utils/bcrypt';
 import { validateRequestData } from '../panel/requests/validation/request-validation-rules';
 import { RequestSubmittedNotificationsService } from '../panel/notifications/request-submitted-notifications.service';
+import { applyOptionalPublicWebUrlsToObject } from '../shared/common/utils/public-web-url.util';
+import { ZohoContactService } from '../zoho-config/zoho-contact.service';
 import * as crypto from 'crypto';
 
 @Injectable()
@@ -54,6 +56,7 @@ export class WizardService {
     private readonly emailService: EmailService,
     private readonly jwtService: JwtService,
     private readonly requestSubmittedNotifications: RequestSubmittedNotificationsService,
+    private readonly zohoContactService: ZohoContactService,
   ) { }
 
   /**
@@ -136,7 +139,8 @@ export class WizardService {
     } else {
       return {
         available: false,
-        message: 'El email ya está registrado pero no ha sido confirmado. Por favor, revisa tu correo para confirmar tu cuenta.',
+        message:
+          'Este email ya tiene una cuenta. Inicia sesión en el panel: te enviaremos un código para verificar el acceso.',
         emailVerified: false,
       };
     }
@@ -154,9 +158,6 @@ export class WizardService {
     password: string;
     source?: 'wizard' | 'crm-lead' | 'panel';
   }) {
-    const source = clientData.source || 'wizard';
-    const requiresEmailVerification = source === 'crm-lead';
-    // Verificar si el usuario ya existe
     const existingUser = await this.userRepo.findOne({
       where: { email: clientData.email },
     });
@@ -166,55 +167,23 @@ export class WizardService {
         throw new BadRequestException(
           'El email ya está registrado y confirmado. Por favor, inicia sesión.',
         );
-      } else {
-        // Si el email existe pero no está verificado, reenviar el código de verificación
-        // Actualizar contraseña si es diferente (por si el usuario olvidó su contraseña)
-        const hashedPassword = encodePassword(clientData.password);
-        existingUser.password = hashedPassword;
-        
-        // Actualizar datos del usuario si han cambiado
-        if (clientData.firstName) existingUser.first_name = clientData.firstName;
-        if (clientData.lastName) existingUser.last_name = clientData.lastName;
-        if (clientData.phone) existingUser.phone = clientData.phone;
-        
-        // Generar nuevo código de verificación
-        const emailVerificationToken = this.generateEmailVerificationCode();
-        existingUser.emailVerificationToken = emailVerificationToken;
-        
-        // Guardar cambios
-        await this.userRepo.save(existingUser);
-        this.logger.log(`Código de verificación reenviado para usuario existente: ${existingUser.id} - ${existingUser.email}`);
-        
-        // Solo reenviar código cuando el flujo sí requiere verificación explícita
-        if (requiresEmailVerification) {
-          try {
-            const userName = `${clientData.firstName} ${clientData.lastName}`.trim() || clientData.email;
-            await this.emailService.sendCodeEmailValidation(
-              clientData.email,
-              userName,
-              emailVerificationToken,
-            );
-            this.logger.log(`Correo de validación reenviado a: ${clientData.email}`);
-          } catch (emailError) {
-            this.logger.error(`Error al reenviar correo de validación: ${emailError}`);
-            // No fallar si el email falla, pero loguear el error
-          }
-        }
-        
-        // Retornar respuesta exitosa como si fuera un nuevo registro
-        return {
-          message: requiresEmailVerification
-            ? 'Código de verificación reenviado. Por favor, revisa tu correo para confirmar tu cuenta.'
-            : 'Registro de sesión actualizado exitosamente.',
-          email: existingUser.email,
-          id: existingUser.id,
-          requiresEmailVerification,
-          ...this.generateTokens(existingUser),
-        };
       }
+      const hashedPassword = encodePassword(clientData.password);
+      existingUser.password = hashedPassword;
+      if (clientData.firstName) existingUser.first_name = clientData.firstName;
+      if (clientData.lastName) existingUser.last_name = clientData.lastName;
+      if (clientData.phone) existingUser.phone = clientData.phone;
+      await this.userRepo.save(existingUser);
+      this.logger.log(`Usuario wizard existente actualizado: ${existingUser.id} - ${existingUser.email}`);
+      return {
+        message: 'Registro actualizado. Continúa con tu solicitud.',
+        email: existingUser.email,
+        id: existingUser.id,
+        requiresEmailVerification: false,
+        ...this.generateTokens(existingUser),
+      };
     }
 
-    // Crear nuevo usuario con contraseña
     const hashedPassword = encodePassword(clientData.password);
     const username = clientData.email.split('@')[0] + Math.floor(Math.random() * 1000);
     const emailVerificationToken = this.generateEmailVerificationCode();
@@ -235,42 +204,24 @@ export class WizardService {
     const savedUser = await this.userRepo.save(user);
     this.logger.log(`Usuario creado en wizard: ${savedUser.id} - ${savedUser.email}`);
 
-    // Crear cliente asociado (sin partnerId)
     const client = this.clientRepo.create({
       email: clientData.email,
       full_name: `${clientData.firstName} ${clientData.lastName}`.trim(),
       phone: clientData.phone || '',
       userId: savedUser.id,
-      // NO asociar partnerId en wizard
       status: true,
     });
 
     const savedClient = await this.clientRepo.save(client);
-    this.logger.log(`Cliente creado en wizard: ${savedClient.id}`);
+    this.logger.log(`Cliente creado en wizard para usuario ${savedUser.id}`);
 
-    // Solo enviar correo de validación cuando el flujo lo requiere
-    if (requiresEmailVerification) {
-      try {
-        const userName = `${clientData.firstName} ${clientData.lastName}`.trim() || clientData.email;
-        await this.emailService.sendCodeEmailValidation(
-          clientData.email,
-          userName,
-          emailVerificationToken,
-        );
-        this.logger.log(`Correo de validación enviado a: ${clientData.email}`);
-      } catch (emailError) {
-        this.logger.error(`Error al enviar correo de validación: ${emailError}`);
-        // No fallar si el email falla, pero loguear el error
-      }
-    }
+    void this.zohoContactService.findOrCreateContact(savedClient);
 
     return {
-      message: requiresEmailVerification
-        ? 'Usuario registrado exitosamente. Por favor, confirma tu email para continuar.'
-        : 'Usuario registrado exitosamente.',
+      message: 'Usuario registrado exitosamente.',
       email: savedUser.email,
       id: savedUser.id,
-      requiresEmailVerification,
+      requiresEmailVerification: false,
       ...this.generateTokens(savedUser),
     };
   }
@@ -533,26 +484,41 @@ export class WizardService {
         throw new NotFoundException('Usuario no encontrado');
       }
 
-      const requiresVerifiedEmailForRequest = source === 'crm-lead';
-
-      if (requiresVerifiedEmailForRequest && !user.emailVerified) {
-        throw new BadRequestException(
-          'Debes confirmar tu email antes de crear una solicitud. Por favor, confirma tu email primero.',
-        );
-      }
-
-      // Validar currentStepNumber según el tipo
+      // currentStepNumber: el flujo sin pago (p. ej. crm-lead) a veces no lo envía en el POST.
+      // Sin valor, la columna NOT NULL en BD queda NULL. Coerción + fallback a último paso del tipo.
       const maxSteps = {
         'apertura-llc': 6,
         'renovacion-llc': 6,
         'cuenta-bancaria': 7,
+      } as const;
+      const dto = createWizardRequestDto;
+      const coerceStepNumber = (v: unknown): number | undefined => {
+        if (typeof v === 'number' && !Number.isNaN(v)) return v;
+        if (typeof v === 'string' && v.trim() !== '') {
+          const n = Number(v);
+          if (!Number.isNaN(n)) return n;
+        }
+        return undefined;
       };
+      const nestedSection =
+        dto.type === 'apertura-llc'
+          ? (dto.aperturaLlcData as any)?.currentSection
+          : dto.type === 'renovacion-llc'
+            ? (dto.renovacionLlcData as any)?.currentSection
+            : dto.type === 'cuenta-bancaria'
+              ? (dto.cuentaBancariaData as any)?.currentSection
+              : undefined;
+      const resolvedCurrentStepNumber =
+        coerceStepNumber(dto.currentStepNumber) ??
+        coerceStepNumber(nestedSection) ??
+        maxSteps[dto.type];
+
       if (
-        createWizardRequestDto.currentStepNumber < 1 ||
-        createWizardRequestDto.currentStepNumber > maxSteps[createWizardRequestDto.type]
+        resolvedCurrentStepNumber < 1 ||
+        resolvedCurrentStepNumber > maxSteps[dto.type]
       ) {
         throw new BadRequestException(
-          `currentStepNumber debe estar entre 1 y ${maxSteps[createWizardRequestDto.type]} para tipo ${createWizardRequestDto.type}`,
+          `currentStepNumber debe estar entre 1 y ${maxSteps[dto.type]} para tipo ${dto.type}`,
         );
       }
 
@@ -657,7 +623,7 @@ export class WizardService {
         validateRequestData(
           serviceData,
           createWizardRequestDto.type,
-          createWizardRequestDto.currentStepNumber,
+          resolvedCurrentStepNumber,
           requestStatus,
         );
       } catch (error) {
@@ -698,7 +664,7 @@ export class WizardService {
         }
 
         const { members, ...aperturaDataFields } = createWizardRequestDto.aperturaLlcData;
-        const currentStep = createWizardRequestDto.currentStepNumber;
+        const currentStep = resolvedCurrentStepNumber;
 
         // Preparar datos según la sección actual (igual que en panel)
         const aperturaDataRaw: any = { ...aperturaDataFields };
@@ -716,9 +682,17 @@ export class WizardService {
           delete aperturaDataRaw.projectOrCompanyUrl;
         }
 
+        const wizAperturaWebErr = applyOptionalPublicWebUrlsToObject(
+          aperturaDataRaw as Record<string, unknown>,
+          ['linkedin', 'projectOrCompanyUrl'],
+        );
+        if (wizAperturaWebErr) {
+          throw new BadRequestException(wizAperturaWebErr);
+        }
+
         const aperturaData = this.aperturaRepo.create({
           requestId: savedRequest.id,
-          currentStepNumber: createWizardRequestDto.currentStepNumber,
+          currentStepNumber: resolvedCurrentStepNumber,
           ...aperturaDataRaw,
         });
         await queryRunner.manager.save(AperturaLlcRequest, aperturaData);
@@ -773,7 +747,7 @@ export class WizardService {
 
         const renovacionDataRaw = createWizardRequestDto.renovacionLlcData as any;
         const { members, owners, ...renovacionDataFields } = renovacionDataRaw;
-        const currentStep = createWizardRequestDto.currentStepNumber;
+        const currentStep = resolvedCurrentStepNumber;
 
         // Preparar datos según la sección actual
         const dataToSave: any = { ...renovacionDataFields };
@@ -810,7 +784,7 @@ export class WizardService {
 
         const renovacionData = this.renovacionRepo.create({
           requestId: savedRequest.id,
-          currentStepNumber: createWizardRequestDto.currentStepNumber,
+          currentStepNumber: resolvedCurrentStepNumber,
           ...dataToSave,
         });
         await queryRunner.manager.save(RenovacionLlcRequest, renovacionData);
@@ -874,7 +848,7 @@ export class WizardService {
 
         const cuentaDataRaw = createWizardRequestDto.cuentaBancariaData as any;
         const { owners, validators, ...cuentaDataFields } = cuentaDataRaw;
-        const currentStep = createWizardRequestDto.currentStepNumber;
+        const currentStep = resolvedCurrentStepNumber;
 
         // Preparar datos según la sección actual (igual que en panel)
         const dataToSave: any = { ...cuentaDataFields };
@@ -1120,7 +1094,7 @@ export class WizardService {
         // Preparar datos para crear
         const cuentaDataToCreate: any = {
           requestId: savedRequest.id,
-          currentStepNumber: createWizardRequestDto.currentStepNumber,
+          currentStepNumber: resolvedCurrentStepNumber,
           ...dataToSave,
         };
         
@@ -1128,6 +1102,14 @@ export class WizardService {
         // Solo incluir llcType si tiene un valor válido
         if (dataToSave.llcType !== 'single' && dataToSave.llcType !== 'multi') {
           delete cuentaDataToCreate.llcType;
+        }
+
+        const wizCuentaWebErr = applyOptionalPublicWebUrlsToObject(
+          cuentaDataToCreate as Record<string, unknown>,
+          ['websiteOrSocialMedia'],
+        );
+        if (wizCuentaWebErr) {
+          throw new BadRequestException(wizCuentaWebErr);
         }
 
         const cuentaData = this.cuentaRepo.create(cuentaDataToCreate);
@@ -1399,6 +1381,20 @@ export class WizardService {
         request.notes = updateRequestDto.notes;
       }
 
+      // Paridad con panel (requests.service): persistir campos raíz del DTO en Request
+      if (updateRequestDto.signatureUrl !== undefined) {
+        request.signatureUrl = updateRequestDto.signatureUrl;
+      }
+      if (updateRequestDto.plan !== undefined) {
+        request.plan = updateRequestDto.plan;
+      }
+      if (
+        request.type === 'apertura-llc' &&
+        updateRequestDto.aperturaLlcData?.plan !== undefined
+      ) {
+        request.plan = (updateRequestDto.aperturaLlcData as any).plan;
+      }
+
       await queryRunner.manager.save(Request, request);
 
       // Actualizar la solicitud específica según el tipo
@@ -1413,18 +1409,45 @@ export class WizardService {
           );
         }
 
-        const currentStep = updateRequestDto.currentStepNumber ?? aperturaRequest.currentStepNumber;
-        
+        // Paso/sección del formulario LLC: puede venir en el DTO raíz, en BD, o en
+        // aperturaLlcData.currentSection (wizard guarda la sub-sección 1–3 del paso "Información").
+        // Si solo miramos current_step_number de BD (=1 tras el POST de pago), se borraban
+        // URLs y datos de la sección bancaria aunque el payload los trajera completo.
+        let effectiveSection = Math.max(
+          updateRequestDto.currentStepNumber ?? 0,
+          aperturaRequest.currentStepNumber ?? 0,
+        );
+
         if (updateRequestDto.currentStepNumber !== undefined) {
           aperturaRequest.currentStepNumber = updateRequestDto.currentStepNumber;
+          effectiveSection = Math.max(
+            effectiveSection,
+            updateRequestDto.currentStepNumber,
+          );
         }
 
         if (updateRequestDto.aperturaLlcData) {
-          const { members, ...aperturaDataFields } = updateRequestDto.aperturaLlcData;
+          const { members, currentSection, ...aperturaDataFields } =
+            updateRequestDto.aperturaLlcData as any;
           const aperturaDataRaw: any = { ...aperturaDataFields };
-          
-          // Sección 3 (apertura bancaria) - solo procesar si currentStep >= 3
-          if (currentStep < 3) {
+
+          if (typeof currentSection === 'number') {
+            effectiveSection = Math.max(effectiveSection, currentSection);
+          }
+
+          const hasBankingSectionPayload = [
+            aperturaDataRaw.serviceBillUrl,
+            aperturaDataRaw.bankStatementUrl,
+            aperturaDataRaw.periodicIncome10k,
+            aperturaDataRaw.bankAccountLinkedEmail,
+            aperturaDataRaw.bankAccountLinkedPhone,
+            aperturaDataRaw.actividadFinancieraEsperada,
+            aperturaDataRaw.projectOrCompanyUrl,
+          ].some((v) => v !== undefined && v !== null && String(v).trim() !== '');
+
+          // Sección bancaria (última del formulario LLC): no descartar si ya hay datos en el payload
+          // o si la sección efectiva es >= 3.
+          if (effectiveSection < 3 && !hasBankingSectionPayload) {
             delete aperturaDataRaw.serviceBillUrl;
             delete aperturaDataRaw.bankStatementUrl;
             delete aperturaDataRaw.periodicIncome10k;
@@ -1433,9 +1456,24 @@ export class WizardService {
             delete aperturaDataRaw.actividadFinancieraEsperada;
             delete aperturaDataRaw.projectOrCompanyUrl;
           }
-          
+
+          const wizAperturaUpWebErr = applyOptionalPublicWebUrlsToObject(
+            aperturaDataRaw as Record<string, unknown>,
+            ['linkedin', 'projectOrCompanyUrl'],
+          );
+          if (wizAperturaUpWebErr) {
+            throw new BadRequestException(wizAperturaUpWebErr);
+          }
+
           Object.assign(aperturaRequest, aperturaDataRaw);
-          
+
+          if (typeof currentSection === 'number') {
+            aperturaRequest.currentStepNumber = Math.max(
+              aperturaRequest.currentStepNumber ?? 0,
+              currentSection,
+            );
+          }
+
           // Actualizar miembros si están presentes
           if (members && members.length > 0) {
             // Eliminar miembros existentes
@@ -1943,8 +1981,15 @@ export class WizardService {
           if (dataToSave.validatorAnnualIncome === '' || (typeof dataToSave.validatorAnnualIncome === 'string' && dataToSave.validatorAnnualIncome.trim() === '')) {
             dataToSave.validatorAnnualIncome = null;
           }
-          
-          
+
+          const wizCuentaUpWebErr = applyOptionalPublicWebUrlsToObject(
+            dataToSave as Record<string, unknown>,
+            ['websiteOrSocialMedia'],
+          );
+          if (wizCuentaUpWebErr) {
+            throw new BadRequestException(wizCuentaUpWebErr);
+          }
+
           Object.assign(cuentaRequest, dataToSave);
           
           // Actualizar owners como Members si hay datos
@@ -2020,6 +2065,16 @@ export class WizardService {
         ],
       });
 
+      // Al enviar solicitud: si aún no hay Contact en Zoho, misma acción que al aprobar
+      if (
+        previousStatus !== 'solicitud-recibida' &&
+        updatedRequest?.status === 'solicitud-recibida' &&
+        updatedRequest.client &&
+        !updatedRequest.client.zohoContactId
+      ) {
+        void this.zohoContactService.findOrCreateContact(updatedRequest.client);
+      }
+
       // Enviar email solo cuando la solicitud pasa a "solicitud-recibida" por primera vez
       try {
         if (
@@ -2030,6 +2085,7 @@ export class WizardService {
           if (clientEmail) {
             const clientName = updatedRequest.client?.full_name || clientEmail;
             const paymentAmountNum = Number(updatedRequest.paymentAmount || 0);
+            // Lead (crm-lead, sin pago inicial): solo email de solicitud. Wizard /apertura-llc con pago: CTA de activación de cuenta.
             const isLeadAperturaFlow =
               updatedRequest.type === 'apertura-llc' &&
               updatedRequest.createdFrom === 'wizard' &&

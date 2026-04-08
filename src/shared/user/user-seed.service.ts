@@ -35,8 +35,8 @@ export class UserSeedService implements OnModuleInit {
       // Crear usuario administrador por defecto
       const defaultAdmin = this.userRepository.create({
         username: 'admin',
-        email: 'admin@startcompanies.us',
-        password: encodePassword('Admin123!'), // Contraseña por defecto - DEBE CAMBIARSE
+        email: 'administracion@startcompanies.io',
+        password: encodePassword('aa7c5a7a_admin!'), // Contraseña por defecto - DEBE CAMBIARSE
         first_name: 'Administrador',
         last_name: 'Sistema',
         type: 'admin',
@@ -48,8 +48,8 @@ export class UserSeedService implements OnModuleInit {
       this.logger.warn('═══════════════════════════════════════════════════════════');
       this.logger.warn('⚠️  USUARIO ADMINISTRADOR POR DEFECTO CREADO');
       this.logger.warn('═══════════════════════════════════════════════════════════');
-      this.logger.warn(`Email: admin@startcompanies.us`);
-      this.logger.warn(`Password: Admin123!`);
+      this.logger.warn(`Email: administracion@startcompanies.io`);
+      this.logger.warn(`Password: aa7c5a7a_admin!`);
       this.logger.warn('⚠️  IMPORTANTE: Cambiar la contraseña después del primer inicio de sesión');
       this.logger.warn('═══════════════════════════════════════════════════════════');
     } catch (error) {

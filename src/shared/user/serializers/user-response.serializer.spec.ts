@@ -41,6 +41,17 @@ describe('user-response.serializer', () => {
     expect(sanitizedRows[1].value).toBe('ok');
   });
 
+  it('no revienta con referencias circulares (p. ej. respuestas ORM)', () => {
+    const a: Record<string, unknown> = { name: 'a' };
+    const b: Record<string, unknown> = { name: 'b', ref: a };
+    a['back'] = b;
+
+    expect(() => sanitizeSensitiveResponseData(a)).not.toThrow();
+    const out = sanitizeSensitiveResponseData(a) as Record<string, unknown>;
+    expect(out['name']).toBe('a');
+    expect(out['back']).toBeDefined();
+  });
+
   it('mapea usuario público con campos básicos', () => {
     const mapped = toPublicUserResponse({
       id: 15,

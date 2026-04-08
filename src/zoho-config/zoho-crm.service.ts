@@ -1,6 +1,7 @@
 import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
+import axios from 'axios';
 import { ZohoConfigService } from './zoho-config.service';
 
 interface TokenResponse {
@@ -95,7 +96,7 @@ export class ZohoCrmService {
    */
   private async getCredentialsAndToken(org: string = 'startcompanies') {
     const service = 'crm';
-    const config = await this.zohoConfigService.findByOrgAndService(org, service);
+    const config = await this.zohoConfigService.findByOrgAndServiceEntity(org, service);
 
     if (!config || !config.refresh_token) {
       throw new HttpException(
@@ -527,6 +528,56 @@ export class ZohoCrmService {
       this.logger.error(`Error al obtener Stages de Deals:`, error.response?.data || error.message);
       throw new HttpException(
         error.response?.data || 'Error al obtener Stages de Zoho CRM',
+        error.response?.status || HttpStatus.BAD_REQUEST,
+      );
+    }
+  }
+
+  /**
+   * Sube un adjunto a un registro CRM (multipart). Requiere scope OAuth
+   * ZohoCRM.modules.attachments.ALL (o CREATE) además de permisos del módulo.
+   * @see https://www.zoho.com/crm/developer/docs/api/v8/upload-attachment.html
+   */
+  async uploadAttachment(
+    module: string,
+    accountCrmId: string,
+    file: Buffer,
+    filename: string,
+    options?: {
+      title?: string;
+      contentType?: string;
+      org?: string;
+    },
+  ): Promise<unknown> {
+    const org = options?.org ?? 'startcompanies';
+    const { token, baseUrl } = await this.getCredentialsAndToken(org);
+    const url = `${baseUrl}/${module}/${accountCrmId}/Attachments`;
+    const contentType = options?.contentType || 'application/octet-stream';
+    const blob = new Blob([new Uint8Array(file)], { type: contentType });
+    const form = new FormData();
+    form.append('file', blob, filename);
+    if (options?.title) {
+      form.append('title', options.title);
+    }
+
+    this.logger.log(`Subiendo adjunto a Zoho ${module}/${accountCrmId}: ${filename}`);
+
+    try {
+      const response = await axios.post(url, form, {
+        headers: {
+          Authorization: `Zoho-oauthtoken ${token}`,
+        },
+        maxBodyLength: Infinity,
+        maxContentLength: Infinity,
+      });
+      return response.data;
+    } catch (error: any) {
+      this.logger.error(
+        `Error al subir adjunto Zoho ${module}/${accountCrmId}:`,
+        error.response?.data || error.message,
+      );
+      throw new HttpException(
+        error.response?.data || 'Error al subir adjunto a Zoho CRM',
         error.response?.status || HttpStatus.BAD_REQUEST,
       );
     }

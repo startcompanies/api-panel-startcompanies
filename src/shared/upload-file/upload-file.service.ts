@@ -3,6 +3,7 @@ import {
   S3Client,
   CopyObjectCommand,
   DeleteObjectCommand,
+  GetObjectCommand,
   ListObjectsV2Command,
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
@@ -29,6 +30,80 @@ export class UploadFileService {
     this.bucketName = awsConfigService.getBucketName();
     this.region = awsConfigService.getRegion();
     this.mediaDomain = awsConfigService.getMediaDomain();
+  }
+
+  /**
+   * Si la URL pertenece al dominio de medios configurado, devuelve la key S3 (pathname sin / inicial).
+   */
+  extractS3KeyFromMediaUrl(url: string): string | null {
+    const trimmed = (url || '').trim();
+    if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+      return null;
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(trimmed);
+    } catch {
+      return null;
+    }
+    let mediaParsed: URL;
+    try {
+      mediaParsed = new URL(this.mediaDomain);
+    } catch {
+      return null;
+    }
+    if (parsed.hostname.toLowerCase() !== mediaParsed.hostname.toLowerCase()) {
+      return null;
+    }
+    let key = parsed.pathname.replace(/^\//, '');
+    try {
+      key = decodeURIComponent(key);
+    } catch {
+      /* usar key sin decode */
+    }
+    return key || null;
+  }
+
+  /**
+   * Descarga el objeto desde S3 cuando la URL apunta al bucket de medios configurado.
+   * @returns null si la URL no es del dominio de medios o el objeto no existe.
+   */
+  async getObjectBufferFromMediaUrl(
+    url: string,
+  ): Promise<{ buffer: Buffer; contentType: string; filename: string } | null> {
+    const key = this.extractS3KeyFromMediaUrl(url);
+    if (!key) {
+      return null;
+    }
+
+    try {
+      const out = await this.s3Client.send(
+        new GetObjectCommand({
+          Bucket: this.bucketName,
+          Key: key,
+        }),
+      );
+      const body = out.Body;
+      if (!body) {
+        this.logger.warn(`GetObject sin body para key=${key}`);
+        return null;
+      }
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of body as AsyncIterable<Uint8Array>) {
+        chunks.push(chunk);
+      }
+      const buffer = Buffer.concat(chunks);
+      const contentType =
+        out.ContentType?.split(';')[0]?.trim() || 'application/octet-stream';
+      const lastSeg = key.split('/').pop() || 'file';
+      const filename = lastSeg.includes('.') ? lastSeg : `${lastSeg}.bin`;
+      return { buffer, contentType, filename };
+    } catch (error: any) {
+      this.logger.warn(
+        `No se pudo leer S3 para adjunto Zoho (key=${key}): ${error?.message ?? error}`,
+      );
+      return null;
+    }
   }
 
   async uploadFile(

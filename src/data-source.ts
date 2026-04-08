@@ -66,9 +66,8 @@ export const dataSourceOptions: DataSourceOptions = {
     ZohoConfig,
   ],
   migrations: [
-    // Ruta relativa desde el directorio raíz del proyecto
-    'migrations/*.ts',
-    'migrations/*.js',
+    // Compiladas junto a src → dist/src/migrations (npm run migration:run / migration:run:prod)
+    path.join(__dirname, 'migrations', '*.{ts,js}'),
   ],
   migrationsTableName: 'migrations',
   synchronize: false, // NUNCA usar synchronize en producción

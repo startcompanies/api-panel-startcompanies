@@ -33,12 +33,14 @@ import { awsConfigService } from '../../config/aws.config.service';
 // ZohoCrmService ya no se usa en findOne - solo se consulta la BD local
 // import { ZohoCrmService } from '../../zoho-config/zoho-crm.service';
 import { ZohoSyncService } from '../../zoho-config/zoho-sync.service';
+import { ZohoContactService } from '../../zoho-config/zoho-contact.service';
 import { applyAperturaClientStageAlias } from '../../zoho-config/zoho-apertura-stage-client';
 import { applyRenovacionClientStageAlias } from '../../zoho-config/zoho-renovacion-stage-client';
 import {
   PanelRequestActorUser,
   RequestSubmittedNotificationsService,
 } from '../notifications/request-submitted-notifications.service';
+import { applyOptionalPublicWebUrlsToObject } from '../../shared/common/utils/public-web-url.util';
 export type { RequestType } from './types/request-type';
 
 @Injectable()
@@ -311,6 +313,7 @@ export class RequestsService {
     // ZohoCrmService ya no se usa - solo consultamos BD local
     // private readonly zohoCrmService: ZohoCrmService,
     private readonly zohoSyncService: ZohoSyncService,
+    private readonly zohoContactService: ZohoContactService,
     private readonly requestSubmittedNotifications: RequestSubmittedNotificationsService,
   ) {}
 
@@ -318,54 +321,43 @@ export class RequestsService {
     let requests: Request[];
 
     if (role === 'client') {
-      let client = await this.clientRepo.findOne({
-        where: { userId },
+      // Una sola consulta: (client.userId = usuario) OR (email del Client = email del User).
+      // Antes, si había un Client con userId pero la solicitud quedó ligada a otro Client (mismo email,
+      // userId null o duplicados de flujo), solo se listaba por client.id del primero → lista vacía.
+      const user = await this.userRepo.findOne({
+        where: { id: userId },
       });
-      this.logger.log(`[findAllByUser] role=client userId=${userId} clientByUserId=${client?.id ?? 'null'}`);
-
-      if (client) {
-        requests = await this.requestRepository.find({
-          where: { clientId: client.id },
-          order: { createdAt: 'DESC' },
-          relations: [
-            'client',
-            'partner',
-            'aperturaLlcRequest',
-            'renovacionLlcRequest',
-            'cuentaBancariaRequest',
-          ],
-        });
-        this.logger.log(
-          `[findAllByUser] requests by clientId=${client.id} count=${requests.length}`,
-        );
+      const email = user?.email?.trim();
+      if (!email) {
+        this.logger.log(`[findAllByUser] role=client userId=${userId} sin email en User → []`);
+        requests = [];
       } else {
-        // Respaldo: solicitudes creadas desde wizard pueden tener Client por email sin userId; buscar por email del usuario
-        const user = await this.userRepo.findOne({
-          where: { id: userId },
-        });
-        this.logger.log(`[findAllByUser] fallback user id=${userId} email=${user?.email ?? 'null'}`);
-        if (!user?.email) {
-          requests = [];
-        } else {
-          const qb = this.requestRepository
-            .createQueryBuilder('request')
-            .innerJoinAndSelect('request.client', 'client')
-            .leftJoinAndSelect('request.partner', 'partner')
-            .leftJoinAndSelect('request.aperturaLlcRequest', 'aperturaLlcRequest')
-            .leftJoinAndSelect('request.renovacionLlcRequest', 'renovacionLlcRequest')
-            .leftJoinAndSelect('request.cuentaBancariaRequest', 'cuentaBancariaRequest')
-            .where('client.email = :email', { email: user.email })
-            .orderBy('request.createdAt', 'DESC');
-          requests = await qb.getMany();
-          this.logger.log(`[findAllByUser] fallback by client.email=${user.email} count=${requests.length}`);
-          // Actualizar Client.userId para que la próxima vez se encuentre por userId
-          const clientByEmail = await this.clientRepo.findOne({
-            where: { email: user.email },
-          });
-          if (clientByEmail && clientByEmail.userId == null) {
-            await this.clientRepo.update(clientByEmail.id, { userId });
-          }
-        }
+        const emailNorm = email.toLowerCase();
+        const qb = this.requestRepository
+          .createQueryBuilder('request')
+          .innerJoinAndSelect('request.client', 'client')
+          .leftJoinAndSelect('request.partner', 'partner')
+          .leftJoinAndSelect('request.aperturaLlcRequest', 'aperturaLlcRequest')
+          .leftJoinAndSelect('request.renovacionLlcRequest', 'renovacionLlcRequest')
+          .leftJoinAndSelect('request.cuentaBancariaRequest', 'cuentaBancariaRequest')
+          .where(
+            '(client.userId = :uid OR LOWER(TRIM(client.email)) = :emailNorm)',
+            { uid: userId, emailNorm },
+          )
+          .andWhere('request.partnerId IS NULL')
+          .orderBy('request.createdAt', 'DESC');
+        requests = await qb.getMany();
+        this.logger.log(
+          `[findAllByUser] role=client userId=${userId} email=${email} unified count=${requests.length}`,
+        );
+        // Vincular Client al User cuando coincide el email y aún no hay user_id
+        await this.clientRepo
+          .createQueryBuilder()
+          .update(Client)
+          .set({ userId })
+          .where('LOWER(TRIM(email)) = :emailNorm', { emailNorm })
+          .andWhere('user_id IS NULL')
+          .execute();
       }
     } else {
       requests = await this.requestRepository.find({
@@ -1194,7 +1186,15 @@ export class RequestsService {
         if (aperturaDataToCreate.llcType !== 'single' && aperturaDataToCreate.llcType !== 'multi') {
           delete aperturaDataToCreate.llcType;
         }
-        
+
+        const webErr = applyOptionalPublicWebUrlsToObject(aperturaDataToCreate, [
+          'linkedin',
+          'projectOrCompanyUrl',
+        ]);
+        if (webErr) {
+          throw new BadRequestException(webErr);
+        }
+
         const aperturaData = this.aperturaRepo.create(aperturaDataToCreate);
         await queryRunner.manager.save(AperturaLlcRequest, aperturaData);
 
@@ -1478,7 +1478,15 @@ export class RequestsService {
         if (cuentaDataRaw.llcType === 'single' || cuentaDataRaw.llcType === 'multi') {
           cuentaDataToCreate.llcType = cuentaDataRaw.llcType;
         }
-        
+
+        const cuentaWebErr = applyOptionalPublicWebUrlsToObject(
+          cuentaDataToCreate as Record<string, unknown>,
+          ['websiteOrSocialMedia'],
+        );
+        if (cuentaWebErr) {
+          throw new BadRequestException(cuentaWebErr);
+        }
+
         const cuentaData = this.cuentaRepo.create(cuentaDataToCreate);
         await queryRunner.manager.save(CuentaBancariaRequest, cuentaData);
         
@@ -1957,7 +1965,15 @@ export class RequestsService {
           delete dataToAssign.contrataServiciosUSA;
           delete dataToAssign.propiedadEnUSA;
           delete dataToAssign.tieneCuentasBancarias;
-          
+
+          const aperturaWebErr = applyOptionalPublicWebUrlsToObject(
+            dataToAssign as Record<string, unknown>,
+            ['linkedin', 'projectOrCompanyUrl'],
+          );
+          if (aperturaWebErr) {
+            throw new BadRequestException(aperturaWebErr);
+          }
+
           Object.assign(aperturaRequest, dataToAssign);
         }
 
@@ -2395,10 +2411,18 @@ export class RequestsService {
           // Log para depuración
           this.logger.debug(`Campos de registeredAgent en dataToAssign: street=${dataToAssign.registeredAgentStreet}, unit=${dataToAssign.registeredAgentUnit}, city=${dataToAssign.registeredAgentCity}, state=${dataToAssign.registeredAgentState}, zipCode=${dataToAssign.registeredAgentZipCode}, country=${dataToAssign.registeredAgentCountry}`);
           this.logger.debug(`incorporationMonthYear en dataToAssign: ${dataToAssign.incorporationMonthYear}`);
-          
+
+          const cuentaUpWebErr = applyOptionalPublicWebUrlsToObject(
+            dataToAssign as Record<string, unknown>,
+            ['websiteOrSocialMedia'],
+          );
+          if (cuentaUpWebErr) {
+            throw new BadRequestException(cuentaUpWebErr);
+          }
+
           // El validator ahora se guarda como un member con validatesBankAccount = true
           // No se guarda en cuenta_bancaria_requests
-          
+
           // Asignar todos los campos a la entidad
           Object.assign(cuentaRequest, dataToAssign);
           
@@ -2572,6 +2596,9 @@ export class RequestsService {
         const clientRow = await this.clientRepo.findOne({
           where: { id: request.clientId },
         });
+        if (clientRow && !clientRow.zohoContactId) {
+          void this.zohoContactService.findOrCreateContact(clientRow);
+        }
         await this.requestSubmittedNotifications.notifyAfterSolicitudRecibida(
           request,
           clientRow,

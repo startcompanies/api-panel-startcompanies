@@ -11,6 +11,7 @@ import { CreateClientDto } from './dtos/create-client.dto';
 import { UpdateClientDto } from './dtos/update-client.dto';
 import { Request } from '../requests/entities/request.entity';
 import { User } from '../../shared/user/entities/user.entity';
+import { ZohoContactService } from '../../zoho-config/zoho-contact.service';
 
 @Injectable()
 export class ClientsService {
@@ -21,6 +22,7 @@ export class ClientsService {
     private requestRepository: Repository<Request>,
     @InjectRepository(User)
     private userRepository: Repository<User>,
+    private readonly zohoContactService: ZohoContactService,
   ) {}
 
   /**
@@ -314,7 +316,9 @@ export class ClientsService {
         status: createClientDto.status !== undefined ? createClientDto.status : true,
       });
 
-      return await this.clientRepository.save(client);
+      const saved = await this.clientRepository.save(client);
+      void this.zohoContactService.findOrCreateContact(saved);
+      return saved;
     } catch (e) {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
         throw e;
