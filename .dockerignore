@@ -41,8 +41,9 @@ jest-e2e.json
 README.md
 *.md
 
-# Database
+# Database — excluir .sql sueltos salvo el que usa db:wipe-panel.cjs
 *.sql
+!scripts/sql/panel-wipe-keep-blog-staff.sql
 
 # Other
 docker-compose.yml
