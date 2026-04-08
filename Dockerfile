@@ -47,6 +47,10 @@ COPY --from=builder --chown=nestjs:nodejs /app/package*.json ./
 RUN npm install --only=production --legacy-peer-deps && \
     npm cache clean --force
 
+# Script de wipe del panel (npm run db:wipe-panel / db:wipe-panel:prod) + SQL
+COPY --from=builder --chown=nestjs:nodejs /app/scripts/db-wipe-panel.cjs ./scripts/db-wipe-panel.cjs
+COPY --from=builder --chown=nestjs:nodejs /app/scripts/sql/panel-wipe-keep-blog-staff.sql ./scripts/sql/panel-wipe-keep-blog-staff.sql
+
 # Cambiar al usuario no-root
 USER nestjs
 
