@@ -18,6 +18,7 @@ import { TrustedLoginDevice } from './entities/trusted-login-device.entity';
 import { LOGIN_TRUST_MAX_AGE_MS } from './constants/login-trust.constants';
 import * as crypto from 'crypto';
 import { jwtConstants } from 'src/shared/common/constants/jwtConstants';
+import { normalizeAuthEmail } from 'src/shared/common/utils/normalize-auth-email';
 
 export interface LoginTrustRequestContext {
   deviceCookie?: string;
@@ -45,8 +46,10 @@ export class authService {
 
   async signUp(signUpDto: SignUpDto) {
     const password = encodePassword(signUpDto.password);
+    const email = normalizeAuthEmail(signUpDto.email);
     const user = this.userRepository.create({
       ...signUpDto,
+      email,
       password,
       type: signUpDto.type || 'user',
     });
@@ -188,10 +191,11 @@ export class authService {
    * Si no, envía OTP por correo. No emite cookies aquí salvo bypass (el controlador las setea).
    */
   async signIn(signInDto: SignInDto, trustCtx?: LoginTrustRequestContext) {
-    const { email, password, rememberMe } = signInDto;
+    const { password, rememberMe } = signInDto;
+    const email = normalizeAuthEmail(signInDto.email);
 
     const user = await this.userRepository.findOneBy({
-      email: email ?? undefined,
+      email: email || undefined,
     });
 
     if (!user) {
@@ -366,10 +370,11 @@ export class authService {
   }
 
   async changePassword(changePasswordDto: ChangePasswordDto) {
-    const { email, oldPassword, newPassword } = changePasswordDto;
+    const { oldPassword, newPassword } = changePasswordDto;
+    const email = normalizeAuthEmail(changePasswordDto.email);
 
     const user = await this.userRepository.findOneBy({
-      email: email ?? undefined,
+      email: email || undefined,
     });
 
     if (!user) {
@@ -398,10 +403,10 @@ export class authService {
   }
 
   async forgotPassword(forgotPasswordDto: ForgotPasswordDto) {
-    const { email } = forgotPasswordDto;
+    const email = normalizeAuthEmail(forgotPasswordDto.email);
 
     const user = await this.userRepository.findOneBy({
-      email: email ?? undefined,
+      email: email || undefined,
     });
 
     if (!user) {
