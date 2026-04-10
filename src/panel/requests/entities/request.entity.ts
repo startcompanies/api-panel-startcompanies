@@ -100,7 +100,7 @@ export class Request {
     name: 'created_from',
     type: 'varchar',
     length: 20,
-    default: "'panel'",
+    default: 'panel',
   })
   createdFrom: 'panel' | 'wizard';
 
