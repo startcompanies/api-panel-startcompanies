@@ -617,21 +617,25 @@ export class WizardService {
 
       // PASO 3: Validar datos del servicio
       const serviceData = this.getServiceData(createWizardRequestDto);
-      const requestStatus = 'pendiente'; // Siempre pendiente al crear desde wizard
+      const initialRequestStatus: 'pendiente' | 'solicitud-recibida' = hasPayment
+        ? 'pendiente'
+        : resolvedCurrentStepNumber === maxSteps[dto.type]
+          ? 'solicitud-recibida'
+          : 'pendiente';
 
-      /*try {
+      try {
         validateRequestData(
           serviceData,
           createWizardRequestDto.type,
           resolvedCurrentStepNumber,
-          requestStatus,
+          initialRequestStatus,
         );
       } catch (error) {
         if (error instanceof BadRequestException) {
           throw error;
         }
         throw new BadRequestException(`Error de validación: ${error.message}`);
-      }*/
+      }
 
       // PASO 4: Crear la solicitud base con pago ya asociado
       const plan = createWizardRequestDto.type === 'apertura-llc' && createWizardRequestDto.aperturaLlcData
@@ -639,7 +643,7 @@ export class WizardService {
         : undefined;
       const request = this.requestRepository.create({
         type: createWizardRequestDto.type,
-        status: 'pendiente', // Siempre pendiente al crear desde wizard
+        status: initialRequestStatus,
         currentStep: createWizardRequestDto.currentStep || 1,
         createdFrom: source === 'panel' ? 'panel' : 'wizard',
         clientId: client.id,
@@ -1326,6 +1330,12 @@ export class WizardService {
     let transactionCommitted = false;
 
     try {
+      const maxStepsByType = {
+        'apertura-llc': 6,
+        'renovacion-llc': 6,
+        'cuenta-bancaria': 7,
+      } as const;
+
       // Buscar la solicitud existente
       const request = await this.requestRepository.findOne({
         where: { id },
@@ -1350,7 +1360,19 @@ export class WizardService {
       // Validación dinámica según tipo de servicio y sección (si se proporcionan datos)
       if (updateRequestDto.currentStepNumber !== undefined) {
         const serviceData = await this.getServiceDataForValidation(updateRequestDto, request);
-        const requestStatus = updateRequestDto.status || request.status || 'pendiente';
+        const amountNum = Number(request.paymentAmount);
+        const hadPaymentAtCreation =
+          !!request.stripeChargeId ||
+          (amountNum > 0 && !!request.paymentMethod);
+        let requestStatus = (updateRequestDto.status ||
+          request.status ||
+          'pendiente') as 'pendiente' | 'solicitud-recibida';
+        if (
+          !hadPaymentAtCreation &&
+          updateRequestDto.currentStepNumber === maxStepsByType[request.type]
+        ) {
+          requestStatus = 'solicitud-recibida';
+        }
 
         try {
           validateRequestData(
@@ -1393,6 +1415,20 @@ export class WizardService {
         updateRequestDto.aperturaLlcData?.plan !== undefined
       ) {
         request.plan = (updateRequestDto.aperturaLlcData as any).plan;
+      }
+
+      // Sin cobro inicial en creación: si el último PATCH llega sin status, cerrar como recibida
+      const amountNumPersist = Number(request.paymentAmount);
+      const hadPaymentAtCreationPersist =
+        !!request.stripeChargeId ||
+        (amountNumPersist > 0 && !!request.paymentMethod);
+      if (
+        updateRequestDto.currentStepNumber !== undefined &&
+        updateRequestDto.currentStepNumber === maxStepsByType[request.type] &&
+        request.status === 'pendiente' &&
+        !hadPaymentAtCreationPersist
+      ) {
+        request.status = 'solicitud-recibida';
       }
 
       await queryRunner.manager.save(Request, request);

@@ -102,6 +102,25 @@ export class RequestsService {
     }
   }
 
+  private static readonly WIZARD_MAX_STEPS_BY_TYPE: Record<
+    'apertura-llc' | 'renovacion-llc' | 'cuenta-bancaria',
+    number
+  > = {
+    'apertura-llc': 6,
+    'renovacion-llc': 6,
+    'cuenta-bancaria': 7,
+  };
+
+  private maxWizardStepForType(
+    type: 'apertura-llc' | 'renovacion-llc' | 'cuenta-bancaria',
+  ): number {
+    return RequestsService.WIZARD_MAX_STEPS_BY_TYPE[type];
+  }
+
+  private isPartnerContext(partnerId?: number | null): boolean {
+    return partnerId != null;
+  }
+
   /** Misma normalización que UploadFileService para servicio en rutas S3 */
   private normalizeServicioForUpload(servicio: string): string {
     return servicio
@@ -978,11 +997,7 @@ export class RequestsService {
       }
 
       // Validar currentStepNumber según el tipo (omitido en borrador → 1)
-      const maxSteps = {
-        'apertura-llc': 6,
-        'renovacion-llc': 6,
-        'cuenta-bancaria': 7,
-      };
+      const maxSteps = RequestsService.WIZARD_MAX_STEPS_BY_TYPE;
       const sectionStep =
         createRequestDto.currentStepNumber == null
           ? 1
@@ -996,12 +1011,22 @@ export class RequestsService {
         );
       }
 
-      // Determinar el status: si hay pago, será 'solicitud-recibida', sino 'pendiente'
-      // Durante el flujo del wizard, siempre es 'pendiente' hasta que se procesa el pago
+      // Prioridad: pago en este request → solicitud-recibida (o status explícito);
+      // partner + último paso sin pago → solicitud-recibida; si no → pendiente.
       const willProcessPayment = !!(createRequestDto.stripeToken && createRequestDto.paymentAmount);
-      const requestStatus = willProcessPayment 
-        ? (createRequestDto.status || 'solicitud-recibida')
-        : 'pendiente'; // Siempre pendiente durante el flujo del wizard
+      let requestStatus: 'pendiente' | 'solicitud-recibida';
+      if (willProcessPayment) {
+        requestStatus = (createRequestDto.status || 'solicitud-recibida') as
+          | 'pendiente'
+          | 'solicitud-recibida';
+      } else if (
+        this.isPartnerContext(createRequestDto.partnerId) &&
+        sectionStep === this.maxWizardStepForType(createRequestDto.type)
+      ) {
+        requestStatus = 'solicitud-recibida';
+      } else {
+        requestStatus = 'pendiente';
+      }
 
       // Validación dinámica según tipo de servicio y sección
       // Si se va a procesar el pago, validar todo estrictamente
@@ -1671,10 +1696,23 @@ export class RequestsService {
         const hasStripePayment = !!(updateRequestDto.stripeToken && updateRequestDto.paymentAmount);
         const hasTransferPayment = !!(updateRequestDto.paymentMethod === 'transferencia' && updateRequestDto.paymentAmount);
         const willProcessPayment = hasStripePayment || hasTransferPayment;
-        const requestStatus = willProcessPayment 
-          ? (updateRequestDto.status || 'solicitud-recibida')
-          : (updateRequestDto.status || request.status || 'pendiente'); // Mantener pendiente durante wizard
-        
+        let requestStatus: 'pendiente' | 'solicitud-recibida';
+        if (willProcessPayment) {
+          requestStatus = (updateRequestDto.status || 'solicitud-recibida') as
+            | 'pendiente'
+            | 'solicitud-recibida';
+        } else if (
+          request.partnerId != null &&
+          updateRequestDto.currentStepNumber ===
+            this.maxWizardStepForType(request.type)
+        ) {
+          requestStatus = 'solicitud-recibida';
+        } else {
+          requestStatus = (updateRequestDto.status ||
+            request.status ||
+            'pendiente') as 'pendiente' | 'solicitud-recibida';
+        }
+
         try {
           validateRequestData(
             serviceData,
@@ -1804,6 +1842,17 @@ export class RequestsService {
       } else {
         // Si no hay pago y no se especifica status, mantener 'pendiente' (borrador)
         request.status = request.status || 'pendiente';
+      }
+
+      // Partner: último paso sin pago en este update → solicitud-recibida si aún está pendiente
+      if (
+        request.partnerId != null &&
+        updateRequestDto.currentStepNumber !== undefined &&
+        updateRequestDto.currentStepNumber ===
+          this.maxWizardStepForType(request.type) &&
+        request.status === 'pendiente'
+      ) {
+        request.status = 'solicitud-recibida';
       }
 
       this.logger.log(`[Update Request ${id}] Datos de pago a guardar:`, {
