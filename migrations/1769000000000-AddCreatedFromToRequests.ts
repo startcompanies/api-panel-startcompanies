@@ -9,7 +9,7 @@ export class AddCreatedFromToRequests1769000000000 implements MigrationInterface
         type: 'varchar',
         length: '20',
         isNullable: false,
-        default: "'panel'",
+        default: 'panel',
       }),
     );
   }

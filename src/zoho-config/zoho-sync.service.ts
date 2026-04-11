@@ -498,8 +498,22 @@ export class ZohoSyncService implements OnModuleInit {
         );
       }
 
-      // Sin zoho_contact_id: findOrCreate en Zoho antes del Account (Cliente o Partner según client.partnerId)
-      if (request.client && !request.client.zohoContactId) {
+      // Solicitud de partner: asegurar Contact Zoho del partner (no del cliente dependiente).
+      if (request.partnerId != null) {
+        let partnerUser = await this.resolvePartnerUser(request);
+        if (partnerUser && !partnerUser.zohoContactId) {
+          await this.zohoContactService.findOrCreatePartnerContact(partnerUser, org);
+          const freshPartner = await this.userRepo.findOne({
+            where: { id: partnerUser.id },
+          });
+          if (freshPartner) {
+            partnerUser = freshPartner;
+          }
+        }
+        if (partnerUser) {
+          request.partner = partnerUser;
+        }
+      } else if (request.client && !request.client.zohoContactId) {
         await this.zohoContactService.findOrCreateContact(request.client, org);
         const freshClient = await this.clientRepo.findOne({
           where: { id: request.clientId },
@@ -653,13 +667,32 @@ export class ZohoSyncService implements OnModuleInit {
   ): Promise<void> {
     try {
       const client = request.client;
-      if (!client?.zohoContactId) {
-        this.logger.warn(
-          `ContactsxAccounts: request ${request.id} sin client.zohoContactId, se omite enlace`,
-        );
-        return;
+      let contactId: string | null = null;
+      let linkEmail = '';
+
+      if (request.partnerId != null) {
+        const partner =
+          request.partner ?? (await this.resolvePartnerUser(request));
+        const raw = partner?.zohoContactId?.trim();
+        contactId = raw && raw.length > 0 ? raw : null;
+        linkEmail = (partner?.email || client?.email || '').trim();
+        if (!contactId) {
+          this.logger.warn(
+            `ContactsxAccounts: request ${request.id} (partner) sin zohoContactId del partner, se omite enlace`,
+          );
+          return;
+        }
+      } else {
+        if (!client?.zohoContactId) {
+          this.logger.warn(
+            `ContactsxAccounts: request ${request.id} sin client.zohoContactId, se omite enlace`,
+          );
+          return;
+        }
+        contactId = String(client.zohoContactId).trim();
+        linkEmail = (client.email || '').trim();
       }
-      const contactId = String(client.zohoContactId).trim();
+
       if (!contactId) {
         return;
       }
@@ -684,7 +717,7 @@ export class ZohoSyncService implements OnModuleInit {
           {
             LLC: zohoAccountId,
             LLC_Asignados: contactId,
-            Email: client.email || '',
+            Email: linkEmail,
           },
         ],
         org,

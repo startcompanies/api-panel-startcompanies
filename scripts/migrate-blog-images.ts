@@ -1,8 +1,8 @@
 /**
  * Script para migrar imágenes de los posts del blog:
  * - Recorre todos los posts
- * - image_url (imagen destacada): si es externa o está en media sin /blog/, la sube a blog/ y actualiza
- * - content: detecta <img src="..."> con URLs externas (ej. businessenusa.com), las sube a blog/ y reemplaza
+ * - image_url (imagen destacada): si es externa o está en media sin /blog/, la sube a blog/{slug}/ y actualiza
+ * - content: detecta <img src="..."> con URLs externas (ej. businessenusa.com), las sube a blog/{slug}/ y reemplaza
  *
  * Uso: npm run migrate:blog-images
  */
@@ -48,7 +48,7 @@ async function run() {
   const blogPrefix = `${mediaDomain}/blog/`;
 
   const posts = await postRepo.find({
-    select: ['id', 'title', 'content', 'image_url'],
+    select: ['id', 'title', 'slug', 'content', 'image_url'],
   });
 
   console.log(`Total de posts: ${posts.length}\n`);
@@ -63,9 +63,10 @@ async function run() {
     oldUrl: string,
     postId: number,
     title: string,
+    folder: string,
   ): Promise<string | null> => {
     try {
-      const { url: newUrl } = await uploadService.uploadFromUrl(oldUrl, 'blog');
+      const { url: newUrl } = await uploadService.uploadFromUrl(oldUrl, folder);
       return newUrl && newUrl !== oldUrl ? newUrl : null;
     } catch (err: any) {
       const msg = err?.message || String(err);
@@ -80,16 +81,23 @@ async function run() {
     let newContent: string | null = null;
     let contentReplaced = 0;
     const postTitle = (post.title || '').slice(0, 50);
+    const slug = (post.slug || '').trim();
+    const folder = slug
+      ? uploadService.buildBlogImageFolder(slug)
+      : 'blog';
+    if (!slug) {
+      console.warn(`Post ${post.id} sin slug; usando carpeta "blog" para migración.`);
+    }
 
     // 1) Imagen destacada (image_url): migrar si es externa o no está en blog/
     const currentFeatured = post.image_url;
     if (currentFeatured && typeof currentFeatured === 'string' && shouldMigrateUrl(currentFeatured, blogPrefix)) {
-      const migrated = await tryMigrateUrl(currentFeatured, post.id, postTitle);
+      const migrated = await tryMigrateUrl(currentFeatured, post.id, postTitle, folder);
       if (migrated) {
         newImageUrl = migrated;
         featuredImagesMigrated += 1;
         totalImagesMigrated += 1;
-        console.log(`Post ${post.id} - "${postTitle}..." → image_url migrada a blog/`);
+        console.log(`Post ${post.id} - "${postTitle}..." → image_url migrada a ${folder}/`);
       }
     }
 
@@ -103,7 +111,7 @@ async function run() {
       if (!newImageUrl) console.log(`Post ${post.id} - "${postTitle}..." → ${external.length} imagen(es) en content`);
       newContent = content;
       for (const oldUrl of external) {
-        const newUrl = await tryMigrateUrl(oldUrl, post.id, postTitle);
+        const newUrl = await tryMigrateUrl(oldUrl, post.id, postTitle, folder);
         if (newUrl) {
           newContent = newContent!.split(oldUrl).join(newUrl);
           contentReplaced += 1;

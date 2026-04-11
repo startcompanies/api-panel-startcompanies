@@ -29,7 +29,9 @@
     "sync:post-descriptions": "ts-node --project tsconfig.json -r tsconfig-paths/register scripts/sync-post-descriptions-from-migration-meta.ts",
     "fetch:post-titles": "ts-node --project tsconfig.json -r tsconfig-paths/register scripts/fetch-post-titles-from-businessenusa.ts",
     "db:wipe-panel": "node -r dotenv/config scripts/db-wipe-panel.cjs",
-    "db:wipe-panel:prod": "NODE_ENV=production node -r dotenv/config scripts/db-wipe-panel.cjs"
+    "db:wipe-panel:prod": "NODE_ENV=production node -r dotenv/config scripts/db-wipe-panel.cjs",
+    "posts:export": "ts-node --project tsconfig.json scripts/posts-portable.ts export",
+    "posts:import": "ts-node --project tsconfig.json scripts/posts-portable.ts import"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.890.0",

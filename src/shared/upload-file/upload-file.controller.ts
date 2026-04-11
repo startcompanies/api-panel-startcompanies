@@ -30,7 +30,8 @@ export class UploadFileController {
   })
   @ApiOperation({
     summary: 'Subir un archivo',
-    description: 'Sube un archivo al bucket S3. Si se proporcionan servicio y requestUuid, el archivo se guardará en request/{servicio}/{requestUuid}/. Si no, se guardará en la raíz del bucket.',
+    description:
+      'Sube un archivo al bucket S3. Si se proporcionan servicio y requestUuid: request/{servicio}/{requestUuid}/. Si body.folder (multipart): p. ej. blog/{slug} para imágenes de post. Si no, raíz del bucket.',
   })
   async uploadFile(
     @UploadedFile() file: Express.Multer.File,
@@ -62,7 +63,7 @@ export class UploadFileController {
   @ApiOperation({
     summary: 'Subir imagen desde URL',
     description:
-      'Descarga la imagen desde la URL (en el servidor, sin CORS) y la sube a S3. Si la URL ya es de media.startcompanies.us/blog/ devuelve la misma URL. Carpeta por defecto: blog.',
+      'Descarga la imagen desde la URL (en el servidor, sin CORS) y la sube a S3. Si la URL ya es de media.../blog/ devuelve la misma URL. Carpeta por defecto: blog; para posts usar blog/{slug}. El nombre de archivo conserva el de la URL (sanitizado).',
   })
   @ApiBody({ type: UploadFromUrlDto })
   async uploadFromUrl(@Body() body: UploadFromUrlDto) {
