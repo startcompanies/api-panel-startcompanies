@@ -33,6 +33,62 @@ export class UploadFileService {
   }
 
   /**
+   * Segmento de carpeta bajo `blog/` para imágenes de un post (solo [a-z0-9-]).
+   */
+  normalizeBlogFolderSlug(slug: string): string {
+    return (slug || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+  }
+
+  /**
+   * Prefijo S3 para imágenes de un post: `blog/{slug}`.
+   * Si el slug queda vacío tras normalizar, devuelve `blog` (comportamiento anterior).
+   */
+  buildBlogImageFolder(slug: string): string {
+    const n = this.normalizeBlogFolderSlug(slug);
+    return n ? `blog/${n}` : 'blog';
+  }
+
+  /**
+   * Nombre de archivo para subidas desde URL: último segmento del path, sanitizado.
+   */
+  private deriveFilenameFromImageUrl(urlStr: string, contentType: string): string {
+    const safeExtFromCt = (): string => {
+      const raw = contentType.split('/')[1]?.split(';')[0]?.trim() || 'png';
+      const ext = raw.replace(/[^a-z0-9]/gi, '');
+      return /^[a-z0-9]+$/i.test(ext) ? ext : 'png';
+    };
+
+    let pathname: string;
+    try {
+      pathname = new URL(urlStr).pathname;
+    } catch {
+      return `${Date.now()}-image.${safeExtFromCt()}`;
+    }
+
+    const segments = pathname.split('/').filter(Boolean);
+    let base = segments.length ? segments[segments.length - 1]! : '';
+    try {
+      base = decodeURIComponent(base);
+    } catch {
+      /* usar sin decode */
+    }
+    base = base.split('?')[0].split('#')[0];
+    base = base.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/^\.+/, '').trim();
+    if (!base || base.length > 220) {
+      return `${Date.now()}-image.${safeExtFromCt()}`;
+    }
+    if (!/\.[a-zA-Z0-9]{1,8}$/.test(base)) {
+      base = `${base}.${safeExtFromCt()}`;
+    }
+    return base;
+  }
+
+  /**
    * Si la URL pertenece al dominio de medios configurado, devuelve la key S3 (pathname sin / inicial).
    */
   extractS3KeyFromMediaUrl(url: string): string | null {
@@ -253,10 +309,7 @@ export class UploadFileService {
       : Buffer.from(response.data);
     const contentType =
       response.headers['content-type']?.split(';')[0]?.trim() || 'image/png';
-    const ext =
-      contentType.split('/')[1] || url.split('.').pop()?.split('?')[0] || 'png';
-    const safeExt = /^[a-z0-9]+$/i.test(ext) ? ext : 'png';
-    const filename = `image.${safeExt}`;
+    const filename = this.deriveFilenameFromImageUrl(url, contentType);
 
     const file: Express.Multer.File = {
       fieldname: 'file',

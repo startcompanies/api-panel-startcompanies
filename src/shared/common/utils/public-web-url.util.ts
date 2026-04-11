@@ -29,6 +29,13 @@ export function isAcceptablePublicWebHostname(hostname: string): boolean {
   return true;
 }
 
+/** FQDN mínimo (al menos un punto); alineado con el portal (`web-url.validator.ts`). */
+export function looksLikePublicFqdnHostname(hostname: string): boolean {
+  const h = (hostname || '').trim().toLowerCase();
+  if (!h) return false;
+  return h.includes('.');
+}
+
 /**
  * Devuelve URL con esquema https o cadena vacía si no es válida / no aceptable.
  */
@@ -64,6 +71,7 @@ export function normalizePublicHttpsWebUrl(
     const parsed = new URL(ustr);
     if (parsed.protocol !== 'https:') return '';
     if (!parsed.hostname) return '';
+    if (!looksLikePublicFqdnHostname(parsed.hostname)) return '';
     if (!isAcceptablePublicWebHostname(parsed.hostname)) return '';
     return parsed.href;
   } catch {

@@ -26,9 +26,10 @@ export class UploadFileDto {
 
   @ApiProperty({
     type: 'string',
-    description: 'Carpeta destino (opcional). Ej: "blog" guarda en blog/{timestamp}-{filename}. Ignora servicio/requestUuid si se usa.',
+    description:
+      'Carpeta destino (opcional). "blog" → blog/{timestamp}-{filename}. Para imágenes de un post del blog usar "blog/{slug}" (p. ej. blog/mi-articulo-llc). Ignora servicio/requestUuid si se usa.',
     required: false,
-    example: 'blog',
+    example: 'blog/mi-articulo-llc',
   })
   folder?: string;
 }
