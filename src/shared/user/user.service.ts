@@ -16,6 +16,7 @@ import { Client } from '../../panel/clients/entities/client.entity';
 import { encodePassword } from '../common/utils/bcrypt';
 import { EmailService } from '../common/services/email.service';
 import { JwtService } from '@nestjs/jwt';
+import { ZohoContactService } from '../../zoho-config/zoho-contact.service';
 
 @Injectable()
 export class UserService {
@@ -28,6 +29,7 @@ export class UserService {
     private clientRepository: Repository<Client>,
     private emailService: EmailService,
     private jwtService: JwtService,
+    private readonly zohoContactService: ZohoContactService,
   ) {}
 
   /**
@@ -133,7 +135,11 @@ export class UserService {
       });
 
       const savedUser = await this.userRepository.save(newUser);
-      
+
+      if (savedUser.type === 'partner') {
+        void this.zohoContactService.findOrCreatePartnerContact(savedUser);
+      }
+
       // Generar token para establecer contraseña (válido por 24 horas)
       const resetToken = await this.jwtService.signAsync(
         { id: savedUser.id, email: savedUser.email, type: 'password-setup' },

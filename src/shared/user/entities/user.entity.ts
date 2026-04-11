@@ -46,6 +46,10 @@ export class User {
   @Column({ default: false })
   emailVerified: boolean;
 
+  /** ID del Contact en Zoho CRM (flujo partner: Tipo Partner). */
+  @Column({ name: 'zoho_contact_id', type: 'varchar', length: 100, nullable: true })
+  zohoContactId: string | null;
+
   @Column({ type: 'varchar', nullable: true })
   emailVerificationToken: string | null;
 

@@ -2106,6 +2106,7 @@ export class WizardService {
         previousStatus !== 'solicitud-recibida' &&
         updatedRequest?.status === 'solicitud-recibida' &&
         updatedRequest.client &&
+        !updatedRequest.client.partnerId &&
         !updatedRequest.client.zohoContactId
       ) {
         void this.zohoContactService.findOrCreateContact(updatedRequest.client);

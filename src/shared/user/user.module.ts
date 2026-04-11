@@ -11,12 +11,14 @@ import { RolesGuard } from '../../shared/auth/roles.guard';
 import { CommonModule } from '../common/common.module';
 import { JwtModule } from '@nestjs/jwt';
 import { jwtConstants } from '../common/constants/jwtConstants';
+import { ZohoConfigModule } from '../../zoho-config/zoho-config.module';
 
 @Module({
   controllers: [UserController],
   providers: [UserService, UserSeedService, RolesGuard],
   imports: [
     TypeOrmModule.forFeature([User, Post, Request, Client]),
+    ZohoConfigModule,
     CommonModule,
     JwtModule.register({
       secret: jwtConstants.secret,
