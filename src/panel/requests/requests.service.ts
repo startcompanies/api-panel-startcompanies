@@ -3127,7 +3127,7 @@ export class RequestsService {
   }
 
   /**
-   * Aprobar una solicitud - cambia de 'solicitud-recibida' a 'en-proceso' con etapa inicial del blueprint
+   * Aprobar una solicitud - desde 'pendiente' o 'solicitud-recibida' a 'en-proceso' con etapa inicial del blueprint
    */
   async approveRequest(id: number, approveDto: ApproveRequestDto) {
     const request = await this.requestRepository.findOne({
@@ -3138,9 +3138,9 @@ export class RequestsService {
       throw new NotFoundException(`Solicitud con ID ${id} no encontrada`);
     }
 
-    if (request.status !== 'solicitud-recibida') {
+    if (request.status !== 'solicitud-recibida' && request.status !== 'pendiente') {
       throw new BadRequestException(
-        'Solo se pueden aprobar solicitudes en estado "Solicitud Recibida"',
+        'Solo se pueden aprobar solicitudes en estado "Pendiente" o "Solicitud Recibida"',
       );
     }
 
@@ -3208,7 +3208,7 @@ export class RequestsService {
   }
 
   /**
-   * Rechazar una solicitud - cambia de 'solicitud-recibida' a 'rechazada'
+   * Rechazar una solicitud - desde 'pendiente' o 'solicitud-recibida' a 'rechazada'
    */
   async rejectRequest(id: number, rejectDto: RejectRequestDto) {
     const request = await this.requestRepository.findOne({
@@ -3219,9 +3219,9 @@ export class RequestsService {
       throw new NotFoundException(`Solicitud con ID ${id} no encontrada`);
     }
 
-    if (request.status !== 'solicitud-recibida') {
+    if (request.status !== 'solicitud-recibida' && request.status !== 'pendiente') {
       throw new BadRequestException(
-        'Solo se pueden rechazar solicitudes en estado "Solicitud Recibida"',
+        'Solo se pueden rechazar solicitudes en estado "Pendiente" o "Solicitud Recibida"',
       );
     }
 

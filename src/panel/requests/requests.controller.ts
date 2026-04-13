@@ -249,13 +249,14 @@ export class RequestsController {
     return this.requestsService.getClientAperturas(undefined, email);
   }
 
-  // Aprobar solicitud (solo admin) - cambia de 'solicitud-recibida' a 'en-proceso' con etapa inicial
+  // Aprobar solicitud (solo admin) - desde pendiente o solicitud-recibida a en-proceso
   @Post(':id/approve')
   @UseGuards(RolesGuard)
   @Roles('admin')
   @ApiOperation({
     summary: 'Aprobar una solicitud (Admin)',
-    description: 'Aprueba una solicitud cambiando su estado de "solicitud-recibida" a "en-proceso" con una etapa inicial. Solo disponible para administradores.',
+    description:
+      'Aprueba una solicitud en estado "pendiente" o "solicitud-recibida", pasándola a "en-proceso" con etapa inicial (tras sincronización Zoho). Solo administradores.',
   })
   @ApiParam({ name: 'id', type: Number, description: 'ID de la solicitud' })
   @ApiBody({ type: ApproveRequestDto })
@@ -269,7 +270,7 @@ export class RequestsController {
     return this.requestsService.approveRequest(id, approveDto);
   }
 
-  // Rechazar solicitud (solo admin) - cambia de 'solicitud-recibida' a 'rechazada'
+  // Rechazar solicitud (solo admin) - desde pendiente o solicitud-recibida a rechazada
   @Post(':id/reject')
   @UseGuards(RolesGuard)
   @Roles('admin')
