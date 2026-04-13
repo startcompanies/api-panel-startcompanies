@@ -5,6 +5,7 @@ import {
   IsOptional,
   IsString,
   ValidateNested,
+  ValidateIf,
   Min,
   Max,
   IsEmail,
@@ -131,17 +132,26 @@ export class CreateWizardRequestDto {
   @IsString()
   notes?: string;
 
-  // Información de pago (requerido en wizard)
-  @ApiProperty({
-    description: 'Token de Stripe generado en el frontend para procesar el pago',
+  /**
+   * Renovación LLC: creación «borrador» tras selección de estado (pago en paso posterior)
+   * con paymentAmount = 0 — token y método de pago no aplican hasta el PATCH de pago.
+   */
+  @ApiPropertyOptional({
+    description:
+      'Token de Stripe. Opcional si type=renovacion-llc y paymentAmount=0 (pago diferido al PATCH).',
     example: 'tok_visa_4242',
   })
+  @ValidateIf(
+    (o: CreateWizardRequestDto) =>
+      !(o.type === 'renovacion-llc' && Number(o.paymentAmount ?? -1) === 0),
+  )
   @IsString()
   @IsNotEmpty()
-  stripeToken: string;
+  stripeToken?: string;
 
   @ApiProperty({
-    description: 'Monto del pago en USD (puede ser 0 para cuenta gratuita)',
+    description:
+      'Monto en USD (0 = renovación LLC sin cobro aún; el cobro se registra en PATCH).',
     example: 99.0,
     minimum: 0,
   })
@@ -149,14 +159,19 @@ export class CreateWizardRequestDto {
   @Min(0)
   paymentAmount: number;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     enum: ['transferencia', 'stripe'],
-    description: 'Método de pago seleccionado',
+    description:
+      'Método de pago. Opcional si type=renovacion-llc y paymentAmount=0 (se asume stripe en servidor).',
     example: 'stripe',
   })
+  @ValidateIf(
+    (o: CreateWizardRequestDto) =>
+      !(o.type === 'renovacion-llc' && Number(o.paymentAmount ?? -1) === 0),
+  )
   @IsString()
   @IsIn(['transferencia', 'stripe'])
-  paymentMethod: 'transferencia' | 'stripe';
+  paymentMethod?: 'transferencia' | 'stripe';
 
   @ApiPropertyOptional({
     description: 'URL del comprobante de transferencia bancaria',

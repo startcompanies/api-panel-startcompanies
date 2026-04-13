@@ -492,6 +492,15 @@ export class WizardService {
         'cuenta-bancaria': 7,
       } as const;
       const dto = createWizardRequestDto;
+      // Renovación: POST inicial sin cobro (paymentAmount 0) antes del paso de pago del wizard
+      if (dto.type === 'renovacion-llc' && Number(dto.paymentAmount) === 0) {
+        if (!dto.stripeToken || String(dto.stripeToken).trim() === '') {
+          (dto as any).stripeToken = 'no-payment';
+        }
+        if (!dto.paymentMethod) {
+          (dto as any).paymentMethod = 'stripe';
+        }
+      }
       const coerceStepNumber = (v: unknown): number | undefined => {
         if (typeof v === 'number' && !Number.isNaN(v)) return v;
         if (typeof v === 'string' && v.trim() !== '') {
@@ -1320,8 +1329,8 @@ export class WizardService {
   }
 
   /**
-   * Actualiza una solicitud del wizard
-   * En wizard NO se procesan pagos al actualizar (ya se procesaron al crear)
+   * Actualiza una solicitud del wizard.
+   * El cobro Stripe puede aplicarse aquí si el POST inicial fue sin pago (renovación LLC).
    */
   async updateWizardRequest(id: number, updateRequestDto: UpdateRequestDto) {
     const queryRunner = this.dataSource.createQueryRunner();
@@ -1355,6 +1364,61 @@ export class WizardService {
       // Validar que NO tenga partnerId (wizard no tiene partners)
       if (request.partnerId) {
         throw new BadRequestException('Esta solicitud no pertenece al flujo wizard');
+      }
+
+      // Pago diferido (p. ej. renovación LLC): cobrar con Stripe en PATCH si aún no hay charge
+      const paymentAlreadyProcessed = !!(
+        request.stripeChargeId && request.paymentMethod === 'stripe'
+      );
+      const stripeTokenIncoming =
+        updateRequestDto.stripeToken &&
+        String(updateRequestDto.stripeToken).trim() !== '' &&
+        updateRequestDto.stripeToken !== 'no-payment';
+      const payAmtIncoming = Number(updateRequestDto.paymentAmount ?? 0);
+      if (
+        stripeTokenIncoming &&
+        payAmtIncoming > 0 &&
+        !paymentAlreadyProcessed &&
+        updateRequestDto.paymentMethod === 'stripe'
+      ) {
+        try {
+          this.logger.log(
+            `[Wizard PATCH ${id}] Procesando pago Stripe: ${payAmtIncoming} USD`,
+          );
+          const charge = await this.stripeService.createCharge(
+            updateRequestDto.stripeToken!,
+            payAmtIncoming,
+            'usd',
+            `Pago de solicitud wizard - ${request.type}`,
+          );
+          request.stripeChargeId = charge.id;
+          request.paymentAmount = payAmtIncoming;
+          request.paymentMethod = 'stripe';
+          request.paymentStatus = charge.status;
+          if (updateRequestDto.paymentProofUrl !== undefined) {
+            request.paymentProofUrl = updateRequestDto.paymentProofUrl;
+          }
+          this.logger.log(`[Wizard PATCH ${id}] Pago Stripe OK: ${charge.id}`);
+        } catch (error: any) {
+          this.logger.error(
+            `[Wizard PATCH ${id}] Error al procesar pago: ${error.message}`,
+          );
+          await queryRunner.rollbackTransaction();
+          throw new BadRequestException(
+            `Error al procesar el pago: ${error.message}`,
+          );
+        }
+      } else if (
+        updateRequestDto.paymentMethod === 'transferencia' &&
+        payAmtIncoming > 0 &&
+        updateRequestDto.paymentProofUrl &&
+        String(updateRequestDto.paymentProofUrl).trim() !== '' &&
+        !request.stripeChargeId
+      ) {
+        request.paymentAmount = payAmtIncoming;
+        request.paymentMethod = 'transferencia';
+        request.paymentStatus = 'pending';
+        request.paymentProofUrl = updateRequestDto.paymentProofUrl;
       }
 
       // Validación dinámica según tipo de servicio y sección (si se proporcionan datos)
