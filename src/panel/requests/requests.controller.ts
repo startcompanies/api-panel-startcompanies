@@ -199,6 +199,11 @@ export class RequestsController {
   @ApiBody({ type: UpdateRequestDto })
   @ApiResponse({ status: 200, description: 'Solicitud actualizada exitosamente' })
   @ApiResponse({ status: 400, description: 'Datos inválidos' })
+  @ApiResponse({
+    status: 403,
+    description:
+      'Edición no permitida (staff admin/user: solo pendiente o solicitud-recibida sin zohoAccountId)',
+  })
   @ApiResponse({ status: 404, description: 'Solicitud no encontrada' })
   update(
     @Param('id', ParseIntPipe) id: number,

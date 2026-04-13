@@ -117,7 +117,9 @@ export class WizardController {
   @UseGuards(AuthGuard)
   @ApiOperation({
     summary: 'Crear solicitud desde wizard',
-    description: 'Crea una solicitud desde el flujo wizard. Requiere usuario autenticado con email confirmado. El pago se procesa ANTES de crear el request. Solo si el pago es exitoso se crea el request.',
+    description:
+      'Crea una solicitud desde el flujo wizard. Requiere usuario autenticado con email confirmado. ' +
+      'Con pago: el cobro se procesa antes de persistir. Renovación LLC: con paymentAmount=0 se crea la solicitud sin cobro (pago en PATCH posterior).',
   })
   @ApiBody({ type: CreateWizardRequestDto })
   @ApiResponse({ 
@@ -169,7 +171,9 @@ export class WizardController {
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
     summary: 'Actualizar solicitud del wizard',
-    description: 'Actualiza una solicitud del flujo wizard. NO procesa pagos (ya se procesaron al crear). Requiere usuario autenticado.',
+    description:
+      'Actualiza una solicitud del flujo wizard. Requiere usuario autenticado. ' +
+      'Si viene stripeToken + paymentMethod stripe y aún no hay cobro, procesa el pago (renovación LLC con creación diferida).',
   })
   @ApiParam({ name: 'id', type: Number, description: 'ID de la solicitud' })
   @ApiBody({ type: UpdateRequestDto })

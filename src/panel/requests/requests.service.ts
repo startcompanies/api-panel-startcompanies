@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   InternalServerErrorException,
   Logger,
 } from '@nestjs/common';
@@ -1684,6 +1685,8 @@ export class RequestsService {
         throw new NotFoundException(`Solicitud con ID ${id} no encontrada`);
       }
 
+      this.assertStaffPanelUpdateAllowed(request, actorUser);
+
       const statusBeforeUpdate = request.status;
 
       // Validación dinámica según tipo de servicio y sección (si se proporcionan datos)
@@ -1901,13 +1904,19 @@ export class RequestsService {
 
       // Actualizar la solicitud específica según el tipo
       if (request.type === 'apertura-llc') {
-        const aperturaRequest = await this.aperturaRepo.findOne({
+        let aperturaRequest = await queryRunner.manager.findOne(AperturaLlcRequest, {
           where: { requestId: id },
         });
 
         if (!aperturaRequest) {
-          throw new NotFoundException(
-            `Solicitud de Apertura LLC con ID ${id} no encontrada`,
+          const initialStep = updateRequestDto.currentStepNumber ?? 1;
+          aperturaRequest = queryRunner.manager.create(AperturaLlcRequest, {
+            requestId: id,
+            currentStepNumber: initialStep,
+          });
+          aperturaRequest = await queryRunner.manager.save(
+            AperturaLlcRequest,
+            aperturaRequest,
           );
         }
 
@@ -2072,13 +2081,20 @@ export class RequestsService {
           }
         }
       } else if (request.type === 'renovacion-llc') {
-        const renovacionRequest = await this.renovacionRepo.findOne({
-          where: { requestId: id },
-        });
+        let renovacionRequest = await queryRunner.manager.findOne(
+          RenovacionLlcRequest,
+          { where: { requestId: id } },
+        );
 
         if (!renovacionRequest) {
-          throw new NotFoundException(
-            `Solicitud de Renovación LLC con ID ${id} no encontrada`,
+          const initialStep = updateRequestDto.currentStepNumber ?? 1;
+          renovacionRequest = queryRunner.manager.create(RenovacionLlcRequest, {
+            requestId: id,
+            currentStepNumber: initialStep,
+          });
+          renovacionRequest = await queryRunner.manager.save(
+            RenovacionLlcRequest,
+            renovacionRequest,
           );
         }
 
@@ -2234,13 +2250,20 @@ export class RequestsService {
           }
         }
       } else if (request.type === 'cuenta-bancaria') {
-        const cuentaRequest = await this.cuentaRepo.findOne({
-          where: { requestId: id },
-        });
+        let cuentaRequest = await queryRunner.manager.findOne(
+          CuentaBancariaRequest,
+          { where: { requestId: id } },
+        );
 
         if (!cuentaRequest) {
-          throw new NotFoundException(
-            `Solicitud de Cuenta Bancaria con ID ${id} no encontrada`,
+          const initialStep = updateRequestDto.currentStepNumber ?? 1;
+          cuentaRequest = queryRunner.manager.create(CuentaBancariaRequest, {
+            requestId: id,
+            currentStepNumber: initialStep,
+          });
+          cuentaRequest = await queryRunner.manager.save(
+            CuentaBancariaRequest,
+            cuentaRequest,
           );
         }
 
@@ -2692,7 +2715,8 @@ export class RequestsService {
       await queryRunner.rollbackTransaction();
       if (
         error instanceof NotFoundException ||
-        error instanceof BadRequestException
+        error instanceof BadRequestException ||
+        error instanceof ForbiddenException
       ) {
         throw error;
       }
@@ -2702,6 +2726,27 @@ export class RequestsService {
       );
     } finally {
       await queryRunner.release();
+    }
+  }
+
+  /**
+   * Staff del panel (admin / user operativo): solo puede actualizar solicitudes
+   * en pendiente o solicitud-recibida y sin cuenta Zoho asociada.
+   */
+  private assertStaffPanelUpdateAllowed(
+    request: Request,
+    actorUser?: PanelRequestActorUser | null,
+  ): void {
+    const t = actorUser?.type;
+    if (t !== 'admin' && t !== 'user') {
+      return;
+    }
+    const okStatus =
+      request.status === 'pendiente' || request.status === 'solicitud-recibida';
+    if (!okStatus || request.zohoAccountId) {
+      throw new ForbiddenException(
+        'Solo se pueden editar solicitudes en estado pendiente o solicitud-recibida sin cuenta Zoho asociada.',
+      );
     }
   }
 
