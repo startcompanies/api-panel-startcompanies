@@ -38,6 +38,7 @@ import { UploadFileService } from 'src/shared/upload-file/upload-file.service';
 import { ZohoContactService } from './zoho-contact.service';
 import { PanelClientAllowlistService } from './panel-client-allowlist.service';
 import { EmailService } from 'src/shared/common/services/email.service';
+import { picklistMetodoPagoForRequest } from './zoho-account-metodo-pago';
 
 @Injectable()
 export class ZohoSyncService implements OnModuleInit {
@@ -905,7 +906,12 @@ export class ZohoSyncService implements OnModuleInit {
       }
     }
 
-    return accountData;
+    const metodoPago = picklistMetodoPagoForRequest(request.paymentMethod);
+
+    return {
+      ...accountData,
+      ...(metodoPago ? { Metodo_Pago: metodoPago } : {}),
+    };
   }
 
   /**

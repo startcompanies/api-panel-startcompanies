@@ -5,6 +5,7 @@ import {
   ForbiddenException,
   InternalServerErrorException,
   Logger,
+  HttpException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource, EntityManager } from 'typeorm';
@@ -31,9 +32,9 @@ import { encodePassword } from '../../shared/common/utils/bcrypt';
 import { validateRequestData } from './validation/request-validation-rules';
 import { UploadFileService } from '../../shared/upload-file/upload-file.service';
 import { awsConfigService } from '../../config/aws.config.service';
-// ZohoCrmService ya no se usa en findOne - solo se consulta la BD local
-// import { ZohoCrmService } from '../../zoho-config/zoho-crm.service';
+import { ZohoCrmService } from '../../zoho-config/zoho-crm.service';
 import { ZohoSyncService } from '../../zoho-config/zoho-sync.service';
+import { picklistMetodoPagoForRequest } from '../../zoho-config/zoho-account-metodo-pago';
 import { ZohoContactService } from '../../zoho-config/zoho-contact.service';
 import { applyAperturaClientStageAlias } from '../../zoho-config/zoho-apertura-stage-client';
 import { applyRenovacionClientStageAlias } from '../../zoho-config/zoho-renovacion-stage-client';
@@ -330,8 +331,7 @@ export class RequestsService {
     private readonly stripeService: StripeService,
     private readonly userService: UserService,
     private readonly uploadFileService: UploadFileService,
-    // ZohoCrmService ya no se usa - solo consultamos BD local
-    // private readonly zohoCrmService: ZohoCrmService,
+    private readonly zohoCrmService: ZohoCrmService,
     private readonly zohoSyncService: ZohoSyncService,
     private readonly zohoContactService: ZohoContactService,
     private readonly requestSubmittedNotifications: RequestSubmittedNotificationsService,
@@ -3126,6 +3126,27 @@ export class RequestsService {
     return { message: 'Solicitud eliminada correctamente' };
   }
 
+  /** Mensaje legible para fallos de Zoho CRM durante la aprobación (nota / Metodo_Pago). */
+  private formatZohoApproveError(error: unknown): string {
+    if (error instanceof HttpException) {
+      const body = error.getResponse();
+      if (typeof body === 'string') {
+        return body;
+      }
+      if (body && typeof body === 'object') {
+        const o = body as Record<string, unknown>;
+        if (typeof o.message === 'string') {
+          return o.message;
+        }
+        return JSON.stringify(body);
+      }
+    }
+    if (error instanceof Error && error.message) {
+      return error.message;
+    }
+    return 'Error desconocido';
+  }
+
   /**
    * Aprobar una solicitud - desde 'pendiente' o 'solicitud-recibida' a 'en-proceso' con etapa inicial del blueprint
    */
@@ -3182,6 +3203,57 @@ export class RequestsService {
     const updatedRequest = await this.requestRepository.findOne({ where: { id } });
     if (!updatedRequest) {
       throw new NotFoundException(`Solicitud con ID ${id} no encontrada tras sincronización`);
+    }
+
+    const zohoOrg = 'startcompanies';
+    const zohoAccountId = updatedRequest.zohoAccountId?.trim();
+    if (!zohoAccountId) {
+      throw new BadRequestException(
+        'No se pudo aprobar la solicitud: tras sincronizar con Zoho no hay un Account CRM vinculado (zohoAccountId).',
+      );
+    }
+
+    const metodoPagoPicklist = picklistMetodoPagoForRequest(updatedRequest.paymentMethod);
+    if (metodoPagoPicklist) {
+      try {
+        await this.zohoCrmService.updateRecords(
+          'Accounts',
+          [{ id: zohoAccountId, Metodo_Pago: metodoPagoPicklist }],
+          zohoOrg,
+        );
+        this.logger.log(
+          `Account Zoho ${zohoAccountId}: Metodo_Pago actualizado a "${metodoPagoPicklist}" (solicitud ${id})`,
+        );
+      } catch (error: unknown) {
+        this.logger.error(
+          `Error al actualizar Metodo_Pago en Account ${zohoAccountId} (solicitud ${id}):`,
+          error,
+        );
+        throw new BadRequestException(
+          `No se pudo aprobar la solicitud porque falló la actualización del método de pago en Zoho CRM: ${this.formatZohoApproveError(error)}`,
+        );
+      }
+    }
+
+    const trimmedApproveNotes = approveDto.notes?.trim();
+    if (trimmedApproveNotes) {
+      try {
+        await this.zohoCrmService.createNoteForRecord({
+          parentModule: 'Accounts',
+          parentRecordId: zohoAccountId,
+          noteContent: trimmedApproveNotes,
+          org: zohoOrg,
+        });
+        this.logger.log(`Nota Zoho creada en Account ${zohoAccountId} (solicitud ${id})`);
+      } catch (error: unknown) {
+        this.logger.error(
+          `Error al crear nota Zoho en Account ${zohoAccountId} (solicitud ${id}):`,
+          error,
+        );
+        throw new BadRequestException(
+          `No se pudo aprobar la solicitud porque falló el registro de la nota en Zoho CRM: ${this.formatZohoApproveError(error)}`,
+        );
+      }
     }
 
     updatedRequest.status = 'en-proceso';
