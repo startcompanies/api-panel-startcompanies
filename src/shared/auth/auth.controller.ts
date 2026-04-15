@@ -181,18 +181,27 @@ export class AuthController {
   @Get('/me')
   @ApiOperation({
     summary: 'Usuario actual',
-    description: 'Devuelve el usuario desde el token (cookie o header). Si no hay token o es inválido, responde 200 con null (evita 401 en consola al cargar login).',
+    description:
+      'Devuelve el usuario desde el token (cookie o header). Si no hay token o es inválido, responde 200 con null (evita 401 en consola al cargar login). ' +
+      'Si existe cookie refresh_token y hace falta renovar el access (sin access, o JWT caducado o inválido), añade cabecera X-Session-Refresh: 1 para que el cliente llame a POST /auth/refresh sin intentarlo en visitantes anónimos.',
   })
   @ApiResponse({ status: 200, description: 'Usuario actual o null si no hay sesión' })
   async me(
-    @Req() req: express.Request & { cookies?: { access_token?: string } },
+    @Req() req: express.Request & {
+      cookies?: { access_token?: string; refresh_token?: string };
+    },
+    @Res({ passthrough: true }) res: express.Response,
   ): Promise<unknown> {
+    const refreshCookie = req.cookies?.refresh_token;
     const token =
       req.cookies?.access_token ??
       (req.headers.authorization?.startsWith('Bearer ')
         ? req.headers.authorization.slice(7)
         : undefined);
     if (!token) {
+      if (refreshCookie) {
+        res.setHeader('X-Session-Refresh', '1');
+      }
       return null;
     }
     try {
@@ -201,6 +210,9 @@ export class AuthController {
       });
       return payload;
     } catch {
+      if (refreshCookie) {
+        res.setHeader('X-Session-Refresh', '1');
+      }
       return null;
     }
   }

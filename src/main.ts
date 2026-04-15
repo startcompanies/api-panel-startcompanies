@@ -32,7 +32,7 @@ async function bootstrap() {
     origin: createCorsOriginCallback(),
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
-    exposedHeaders: ['Content-Type', 'Authorization'],
+    exposedHeaders: ['Content-Type', 'Authorization', 'X-Session-Refresh'],
     credentials: true,
     preflightContinue: false,
     optionsSuccessStatus: 204
