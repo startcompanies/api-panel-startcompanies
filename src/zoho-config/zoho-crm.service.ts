@@ -14,6 +14,9 @@ interface TokenResponse {
 export class ZohoCrmService {
   private readonly logger = new Logger(ZohoCrmService.name);
 
+  /** Cache: `${org}::${moduleApiName}` → id numérico del módulo (Parent_Id en Notes). */
+  private readonly crmModuleInternalIdCache = new Map<string, string>();
+
   constructor(
     private readonly httpService: HttpService,
     private readonly zohoConfigService: ZohoConfigService,
@@ -538,6 +541,123 @@ export class ZohoCrmService {
    * ZohoCRM.modules.attachments.ALL (o CREATE) además de permisos del módulo.
    * @see https://www.zoho.com/crm/developer/docs/api/v8/upload-attachment.html
    */
+  /**
+   * Resuelve el id interno del módulo en Zoho (necesario en Parent_Id al crear Notes).
+   * Requiere scope OAuth **ZohoCRM.settings.modules.READ** (o settings.ALL).
+   * @see https://www.zoho.com/crm/developer/docs/api/v8/modules-api.html
+   */
+  private async getCrmModuleInternalId(
+    moduleApiName: string,
+    org: string,
+    token: string,
+    baseUrl: string,
+  ): Promise<string> {
+    const cacheKey = `${org}::${moduleApiName}`;
+    const hit = this.crmModuleInternalIdCache.get(cacheKey);
+    if (hit) {
+      return hit;
+    }
+
+    const url = `${baseUrl}/settings/modules`;
+    this.logger.debug(`Obteniendo id de módulo CRM ${moduleApiName} (${org})`);
+
+    const response = await lastValueFrom(
+      this.httpService.get(url, {
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Zoho-oauthtoken ${token}`,
+        },
+      }),
+    );
+
+    const modules = response.data?.modules ?? response.data;
+    const list = Array.isArray(modules) ? modules : [];
+    const found = list.find((m: any) => m?.api_name === moduleApiName);
+    const id = found?.id != null ? String(found.id) : '';
+
+    if (!id) {
+      this.logger.error(
+        `Módulo ${moduleApiName} no encontrado en settings/modules para org ${org}`,
+      );
+      throw new HttpException(
+        `No se pudo resolver el módulo CRM "${moduleApiName}" para crear la nota`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+
+    this.crmModuleInternalIdCache.set(cacheKey, id);
+    return id;
+  }
+
+  /**
+   * Crea una Nota en Zoho CRM vinculada a un registro padre (p. ej. Account).
+   *
+   * **OAuth:** el cliente debe incluir el scope **`ZohoCRM.modules.notes.CREATE`**
+   * (o `ZohoCRM.modules.ALL`). Sin él, Zoho responde `OAUTH_SCOPE_MISMATCH`.
+   *
+   * @see https://www.zoho.com/crm/developer/docs/api/v8/create-notes.html
+   */
+  async createNoteForRecord(params: {
+    parentModule: string;
+    parentRecordId: string;
+    noteContent: string;
+    org?: string;
+  }): Promise<unknown> {
+    const org = params.org ?? 'startcompanies';
+    const trimmed = params.noteContent?.trim();
+    if (!trimmed) {
+      throw new HttpException('El contenido de la nota no puede estar vacío', HttpStatus.BAD_REQUEST);
+    }
+
+    try {
+      const { token, baseUrl } = await this.getCredentialsAndToken(org);
+      const moduleId = await this.getCrmModuleInternalId(params.parentModule, org, token, baseUrl);
+      const url = `${baseUrl}/${params.parentModule}/${params.parentRecordId}/Notes`;
+      const payload = {
+        data: [
+          {
+            Parent_Id: {
+              module: {
+                api_name: params.parentModule,
+                id: moduleId,
+              },
+              id: params.parentRecordId,
+            },
+            Note_Content: trimmed,
+          },
+        ],
+      };
+
+      this.logger.log(
+        `Creando nota Zoho CRM en ${params.parentModule}/${params.parentRecordId} (org=${org})`,
+      );
+
+      const response = await lastValueFrom(
+        this.httpService.post(url, payload, {
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            Authorization: `Zoho-oauthtoken ${token}`,
+          },
+        }),
+      );
+
+      return response.data;
+    } catch (error: any) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      this.logger.error(
+        `Error al crear nota Zoho CRM en ${params.parentModule}/${params.parentRecordId}:`,
+        error.response?.data || error.message,
+      );
+      throw new HttpException(
+        error.response?.data || 'Error al crear nota en Zoho CRM',
+        error.response?.status || HttpStatus.BAD_REQUEST,
+      );
+    }
+  }
+
   async uploadAttachment(
     module: string,
     accountCrmId: string,

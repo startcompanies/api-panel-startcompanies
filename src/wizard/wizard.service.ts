@@ -1499,13 +1499,19 @@ export class WizardService {
 
       // Actualizar la solicitud específica según el tipo
       if (request.type === 'apertura-llc') {
-        const aperturaRequest = await this.aperturaRepo.findOne({
+        let aperturaRequest = await this.aperturaRepo.findOne({
           where: { requestId: id },
         });
 
         if (!aperturaRequest) {
-          throw new NotFoundException(
-            `Solicitud de Apertura LLC con ID ${id} no encontrada`,
+          const initialStep = updateRequestDto.currentStepNumber ?? 1;
+          aperturaRequest = queryRunner.manager.create(AperturaLlcRequest, {
+            requestId: id,
+            currentStepNumber: initialStep,
+          });
+          aperturaRequest = await queryRunner.manager.save(
+            AperturaLlcRequest,
+            aperturaRequest,
           );
         }
 
@@ -1622,13 +1628,19 @@ export class WizardService {
 
         await queryRunner.manager.save(AperturaLlcRequest, aperturaRequest);
       } else if (request.type === 'renovacion-llc') {
-        const renovacionRequest = await this.renovacionRepo.findOne({
+        let renovacionRequest = await this.renovacionRepo.findOne({
           where: { requestId: id },
         });
 
         if (!renovacionRequest) {
-          throw new NotFoundException(
-            `Solicitud de Renovación LLC con ID ${id} no encontrada`,
+          const initialStep = updateRequestDto.currentStepNumber ?? 1;
+          renovacionRequest = queryRunner.manager.create(RenovacionLlcRequest, {
+            requestId: id,
+            currentStepNumber: initialStep,
+          });
+          renovacionRequest = await queryRunner.manager.save(
+            RenovacionLlcRequest,
+            renovacionRequest,
           );
         }
 
@@ -1777,13 +1789,19 @@ export class WizardService {
 
         await queryRunner.manager.save(RenovacionLlcRequest, renovacionRequest);
       } else if (request.type === 'cuenta-bancaria') {
-        const cuentaRequest = await this.cuentaRepo.findOne({
+        let cuentaRequest = await this.cuentaRepo.findOne({
           where: { requestId: id },
         });
 
         if (!cuentaRequest) {
-          throw new NotFoundException(
-            `Solicitud de Cuenta Bancaria con ID ${id} no encontrada`,
+          const initialStep = updateRequestDto.currentStepNumber ?? 1;
+          cuentaRequest = queryRunner.manager.create(CuentaBancariaRequest, {
+            requestId: id,
+            currentStepNumber: initialStep,
+          });
+          cuentaRequest = await queryRunner.manager.save(
+            CuentaBancariaRequest,
+            cuentaRequest,
           );
         }
 

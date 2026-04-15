@@ -143,7 +143,12 @@ export class CreateWizardRequestDto {
   })
   @ValidateIf(
     (o: CreateWizardRequestDto) =>
-      !(o.type === 'renovacion-llc' && Number(o.paymentAmount ?? -1) === 0),
+      !(
+        (o.type === 'renovacion-llc' ||
+          o.type === 'apertura-llc' ||
+          o.type === 'cuenta-bancaria') &&
+        Number(o.paymentAmount ?? -1) === 0
+      ),
   )
   @IsString()
   @IsNotEmpty()
@@ -167,7 +172,12 @@ export class CreateWizardRequestDto {
   })
   @ValidateIf(
     (o: CreateWizardRequestDto) =>
-      !(o.type === 'renovacion-llc' && Number(o.paymentAmount ?? -1) === 0),
+      !(
+        (o.type === 'renovacion-llc' ||
+          o.type === 'apertura-llc' ||
+          o.type === 'cuenta-bancaria') &&
+        Number(o.paymentAmount ?? -1) === 0
+      ),
   )
   @IsString()
   @IsIn(['transferencia', 'stripe'])
