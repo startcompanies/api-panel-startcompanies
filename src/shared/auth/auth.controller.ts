@@ -2,13 +2,17 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   Post,
   Req,
   Res,
   UnauthorizedException,
   UseGuards,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags, ApiBody, ApiResponse } from '@nestjs/swagger';
+import { minutes, Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import * as express from 'express';
 import { JwtService } from '@nestjs/jwt';
 import { authService } from './auth.service';
@@ -77,8 +81,21 @@ function setPanelSessionCookies(
   });
 }
 
+const AUTH_VALIDATION_PIPE = new ValidationPipe({
+  whitelist: true,
+  forbidNonWhitelisted: true,
+  transform: true,
+  transformOptions: { enableImplicitConversion: true },
+});
+
+/** Límite anti fuerza bruta: 5 intentos por IP cada 15 minutos (signin / verify / resend-otp). */
+const AUTH_LOGIN_THROTTLE = {
+  default: { limit: 5, ttl: minutes(15) },
+} as const;
+
 @ApiTags('Common - Auth')
 @Controller('auth')
+@UsePipes(AUTH_VALIDATION_PIPE)
 export class AuthController {
   constructor(
     private readonly authService: authService,
@@ -92,13 +109,25 @@ export class AuthController {
   }
 
   @Post('/signin')
+  @HttpCode(200)
+  @UseGuards(ThrottlerGuard)
+  @Throttle(AUTH_LOGIN_THROTTLE)
   @ApiOperation({
     summary: 'Iniciar sesión (paso 1)',
     description:
       'Valida email y contraseña; envía código OTP al correo. No emite cookies hasta POST /auth/signin/verify.',
   })
   @ApiBody({ type: SignInDto })
-  @ApiResponse({ status: 200, description: 'Segundo factor requerido o error de credenciales (mismo formato histórico)' })
+  @ApiResponse({
+    status: 200,
+    description: 'Segundo factor requerido, sesión por dispositivo de confianza, o error genérico',
+  })
+  @ApiResponse({ status: 401, description: 'Credenciales incorrectas' })
+  @ApiResponse({ status: 400, description: 'Cuerpo inválido' })
+  @ApiResponse({
+    status: 429,
+    description: 'Demasiados intentos; espera o vuelve más tarde',
+  })
   async signIn(
     @Body() signInDto: SignInDto,
     @Req() req: express.Request,
@@ -125,6 +154,7 @@ export class AuthController {
   }
 
   @Post('/trust-device')
+  @HttpCode(200)
   @UseGuards(AuthGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
@@ -154,12 +184,17 @@ export class AuthController {
   }
 
   @Post('/signin/verify')
+  @HttpCode(200)
+  @UseGuards(ThrottlerGuard)
+  @Throttle(AUTH_LOGIN_THROTTLE)
   @ApiOperation({
     summary: 'Completar inicio de sesión (paso 2)',
     description: 'Valida el código OTP y emite cookies HttpOnly + tokens.',
   })
   @ApiBody({ type: SignInVerifyDto })
   @ApiResponse({ status: 200, description: 'Sesión iniciada' })
+  @ApiResponse({ status: 400, description: 'Código o challenge inválido' })
+  @ApiResponse({ status: 429, description: 'Demasiados intentos' })
   async signInVerify(
     @Body() dto: SignInVerifyDto,
     @Res({ passthrough: true }) res: express.Response,
@@ -172,8 +207,12 @@ export class AuthController {
   }
 
   @Post('/signin/resend-otp')
+  @HttpCode(200)
+  @UseGuards(ThrottlerGuard)
+  @Throttle(AUTH_LOGIN_THROTTLE)
   @ApiOperation({ summary: 'Reenviar código OTP del login' })
   @ApiBody({ type: SignInResendOtpDto })
+  @ApiResponse({ status: 429, description: 'Demasiados reenvíos o intentos' })
   async signInResendOtp(@Body() dto: SignInResendOtpDto) {
     return this.authService.signInResendOtp(dto);
   }
@@ -218,6 +257,7 @@ export class AuthController {
   }
 
   @Post('/logout')
+  @HttpCode(200)
   @ApiOperation({ summary: 'Cerrar sesión', description: 'Borra las cookies de acceso y refresh.' })
   @ApiResponse({ status: 200, description: 'Sesión cerrada' })
   logout(@Res({ passthrough: true }) res: express.Response) {
@@ -233,6 +273,7 @@ export class AuthController {
   }
 
   @Post('/refresh')
+  @HttpCode(200)
   @ApiOperation({
     summary: 'Refrescar token',
     description: 'Nuevo access token; acepta refresh_token por cookie o body. Setea cookie access_token.',
@@ -255,6 +296,7 @@ export class AuthController {
   }
 
   @Post('/change-password')
+  @HttpCode(200)
   @UseGuards(AuthGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ 
@@ -270,6 +312,7 @@ export class AuthController {
   }
 
   @Post('/forgot-password')
+  @HttpCode(200)
   @ApiOperation({ 
     summary: 'Solicitar restablecimiento de contraseña',
     description: 'Envía un email con un token para restablecer la contraseña.',
@@ -282,6 +325,7 @@ export class AuthController {
   }
 
   @Post('/reset-password')
+  @HttpCode(200)
   @ApiOperation({ 
     summary: 'Restablecer contraseña',
     description: 'Restablece la contraseña usando el token recibido por email.',
