@@ -3159,9 +3159,11 @@ export class RequestsService {
       throw new NotFoundException(`Solicitud con ID ${id} no encontrada`);
     }
 
-    if (request.status !== 'solicitud-recibida' && request.status !== 'pendiente') {
+    const puedeAprobarse =
+      request.status === 'solicitud-recibida' || request.status === 'pendiente';
+    if (!puedeAprobarse) {
       throw new BadRequestException(
-        'Solo se pueden aprobar solicitudes en estado "Pendiente" o "Solicitud Recibida"',
+        'Solo se pueden aprobar solicitudes en estado "Solicitud Recibida" o "Pendiente"',
       );
     }
 
@@ -3291,9 +3293,11 @@ export class RequestsService {
       throw new NotFoundException(`Solicitud con ID ${id} no encontrada`);
     }
 
-    if (request.status !== 'solicitud-recibida' && request.status !== 'pendiente') {
+    const puedeRechazarse =
+      request.status === 'solicitud-recibida' || request.status === 'pendiente';
+    if (!puedeRechazarse) {
       throw new BadRequestException(
-        'Solo se pueden rechazar solicitudes en estado "Pendiente" o "Solicitud Recibida"',
+        'Solo se pueden rechazar solicitudes en estado "Solicitud Recibida" o "Pendiente"',
       );
     }
 

@@ -13,6 +13,7 @@ export class ApproveRequestDto {
   @ApiPropertyOptional({
     description: 'Etapa inicial del blueprint después de aprobar la solicitud',
     enum: [
+      'Solicitud Recibida',
       'Apertura Confirmada',
       'Filing Iniciado',
       'EIN Solicitado',
@@ -32,6 +33,8 @@ export class ApproveRequestDto {
   @IsOptional()
   @IsString()
   @IsIn([
+    // Renovación LLC (y alias cliente): el portal envía esta etapa al aprobar
+    'Solicitud Recibida',
     // Etapas de Apertura LLC
     'Apertura Confirmada',
     'Filing Iniciado',
