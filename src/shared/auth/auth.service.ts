@@ -153,9 +153,8 @@ export class authService {
     if (row.userAgentHash !== this.fingerprintUserAgent(ctx.userAgent)) {
       return false;
     }
-    if (row.ipHash != null && row.ipHash !== this.fingerprintIp(ctx.clientIp)) {
-      return false;
-    }
+    // No exigir IP fija (VPN/móvil); rotación suave del hash por última IP vista.
+    row.ipHash = ctx.clientIp ? this.fingerprintIp(ctx.clientIp) : null;
     row.lastUsedAt = new Date();
     await this.trustedDeviceRepository.save(row);
     return true;
@@ -174,7 +173,7 @@ export class authService {
       userId,
       secretHash: this.hashDeviceSecret(secretHex),
       userAgentHash: this.fingerprintUserAgent(ctx.userAgent),
-      ipHash: ctx.clientIp ? this.fingerprintIp(ctx.clientIp) : null,
+      ipHash: null,
       expiresAt,
       lastUsedAt: null,
     });
