@@ -19,6 +19,15 @@ export class UploadFileService {
   private readonly region: string;
   private readonly mediaDomain: string;
 
+  /**
+   * Valida que el valor sea el UUID de la solicitud (`requests.uuid`), formato 8-4-4-4-12 hex.
+   * No acepta ids numéricos ni otros textos (evita carpetas S3 tipo `request/.../930/`).
+   */
+  static isValidRequestFolderUuid(value: string): boolean {
+    const v = (value || '').trim();
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+  }
+
   constructor(private readonly exceptionService: HandleExceptionsService) {
     this.s3Client = new S3Client({
       region: awsConfigService.getRegion(),
@@ -191,20 +200,15 @@ export class UploadFileService {
       : null;
     
     if (servicioNormalizado && requestUuid && requestUuid.trim()) {
-      // Estructura final: request/{servicio}/{requestUuid}/{timestamp}-{filename}
-      // Normalizar el UUID (remover caracteres no válidos, mantener solo alfanuméricos y guiones)
-      const uuidNormalizado = requestUuid
-        .trim()
-        .replace(/[^a-zA-Z0-9-]/g, '');
-      
-      if (uuidNormalizado) {
-        key = `request/${servicioNormalizado}/${uuidNormalizado}/${Date.now()}-${file.originalname}`;
-        this.logger.log(`Subiendo archivo con estructura final: ${key}`);
-      } else {
-        // Si el UUID no es válido, usar estructura temporal
-        key = `request/${servicioNormalizado}/${Date.now()}-${file.originalname}`;
-        this.logger.log(`UUID inválido, usando estructura temporal: ${key}`);
+      const rawUuid = requestUuid.trim();
+      if (!UploadFileService.isValidRequestFolderUuid(rawUuid)) {
+        throw new BadRequestException(
+          'requestUuid debe ser el UUID de la solicitud (campo uuid en requests), no el id numérico ni otro texto.',
+        );
       }
+      const uuidNormalizado = rawUuid.toLowerCase();
+      key = `request/${servicioNormalizado}/${uuidNormalizado}/${Date.now()}-${file.originalname}`;
+      this.logger.log(`Subiendo archivo con estructura final: ${key}`);
     } else if (servicioNormalizado) {
       // Estructura temporal: request/{servicio}/{timestamp}-{filename}
       // Los archivos se moverán a request/{servicio}/{uuid}/ cuando se cree el request
@@ -350,6 +354,12 @@ export class UploadFileService {
       return { moved: 0, errors: 0 };
     }
 
+    if (!UploadFileService.isValidRequestFolderUuid(requestUuid)) {
+      throw new BadRequestException(
+        'requestUuid debe ser el UUID de la solicitud (campo uuid en requests), no el id numérico.',
+      );
+    }
+
     // Normalizar servicio y UUID
     const servicioNormalizado = servicio
       .toLowerCase()
@@ -357,13 +367,11 @@ export class UploadFileService {
       .replace(/[^a-z0-9-]/g, '-')
       .replace(/-+/g, '-')
       .replace(/^-|-$/g, '');
-    
-    const uuidNormalizado = requestUuid
-      .trim()
-      .replace(/[^a-zA-Z0-9-]/g, '');
 
-    if (!servicioNormalizado || !uuidNormalizado) {
-      this.logger.warn('No se puede mover archivos: servicio o UUID normalizado inválido');
+    const uuidNormalizado = requestUuid.trim().toLowerCase();
+
+    if (!servicioNormalizado) {
+      this.logger.warn('No se puede mover archivos: servicio normalizado inválido');
       return { moved: 0, errors: 0 };
     }
 

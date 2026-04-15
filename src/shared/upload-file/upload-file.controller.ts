@@ -31,7 +31,7 @@ export class UploadFileController {
   @ApiOperation({
     summary: 'Subir un archivo',
     description:
-      'Sube un archivo al bucket S3. Si se proporcionan servicio y requestUuid: request/{servicio}/{requestUuid}/. Si body.folder (multipart): p. ej. blog/{slug} para imágenes de post. Si no, raíz del bucket.',
+      'Sube un archivo al bucket S3. Con servicio + requestUuid (UUID real de la solicitud, no id numérico): request/{servicio}/{uuid}/. Solo servicio: request/{servicio}/{timestamp}-archivo (temporal). folder ignora servicio/requestUuid (p. ej. blog/{slug}).',
   })
   async uploadFile(
     @UploadedFile() file: Express.Multer.File,

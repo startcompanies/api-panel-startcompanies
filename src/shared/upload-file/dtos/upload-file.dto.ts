@@ -10,7 +10,8 @@ export class UploadFileDto {
 
   @ApiProperty({
     type: 'string',
-    description: 'Tipo de servicio (opcional). Si se proporciona junto con requestUuid, el archivo se guardará en request/{servicio}/{requestUuid}/',
+    description:
+      'Tipo de servicio (opcional). Con requestUuid válido, el archivo queda en request/{servicio}/{uuid}/',
     required: false,
     example: 'apertura-llc',
   })
@@ -18,7 +19,8 @@ export class UploadFileDto {
 
   @ApiProperty({
     type: 'string',
-    description: 'UUID de la solicitud (opcional). Si se proporciona junto con servicio, el archivo se guardará en request/{servicio}/{requestUuid}/',
+    description:
+      'UUID de la solicitud en BD (`requests.uuid`, formato 8-4-4-4-12 hex). No usar el id numérico del request. Opcional: sin él (solo servicio) la subida va a request/{servicio}/{timestamp}-archivo (temporal).',
     required: false,
     example: '123e4567-e89b-12d3-a456-426614174000',
   })
