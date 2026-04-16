@@ -104,7 +104,7 @@ export class ZohoWorkDriveService {
       };
 
       this.logger.debug(
-        `[WorkDrive token] zoho_config id=${configId} access_token=${tokenResponse.access_token}`,
+        `WorkDrive access token obtenido (zoho_config id=${configId}, longitud=${tokenResponse.access_token?.length ?? 0})`,
       );
 
       return tokenResponse.access_token;
@@ -194,11 +194,7 @@ export class ZohoWorkDriveService {
     };
 
     this.logger.debug(
-      `[WorkDrive curl]\ncurl --location '${baseUrl}/permissions' \\\n` +
-        `  --header 'Authorization: Zoho-oauthtoken ${accessToken}' \\\n` +
-        `  --header 'Accept: application/vnd.api+json' \\\n` +
-        `  --header 'Content-Type: application/json' \\\n` +
-        `  --data '${JSON.stringify(requestBody)}'`,
+      `WorkDrive POST /permissions resource_id=${resourceId} (sin registrar token en logs).`,
     );
 
     try {

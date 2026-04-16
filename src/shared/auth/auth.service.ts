@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { SignUpDto } from './dtos/signup.dto';
 import { comparePasswords, encodePassword } from 'src/shared/common/utils/bcrypt';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -19,6 +23,7 @@ import { LOGIN_TRUST_MAX_AGE_MS } from './constants/login-trust.constants';
 import * as crypto from 'crypto';
 import { jwtConstants } from 'src/shared/common/constants/jwtConstants';
 import { normalizeAuthEmail } from 'src/shared/common/utils/normalize-auth-email';
+import { PANEL_LOGIN_FAILED_MESSAGE } from './constants/auth-login.constants';
 
 export interface LoginTrustRequestContext {
   deviceCookie?: string;
@@ -198,17 +203,17 @@ export class authService {
     });
 
     if (!user) {
-      return this.handleExceptionService.handleErrorLoginException(email);
+      throw new UnauthorizedException(PANEL_LOGIN_FAILED_MESSAGE);
     }
 
     if (!user.status) {
-      return this.handleExceptionService.handleErrorStatusUserException(email);
+      throw new UnauthorizedException(PANEL_LOGIN_FAILED_MESSAGE);
     }
 
     const isMatch = await comparePasswords(password, user.password ?? '');
 
     if (!isMatch) {
-      return this.handleExceptionService.handleErrorPasswordException(email);
+      throw new UnauthorizedException(PANEL_LOGIN_FAILED_MESSAGE);
     }
 
     if (trustCtx && (await this.consumeTrustedDeviceIfValid(user, trustCtx))) {
@@ -265,15 +270,17 @@ export class authService {
     });
 
     if (!challenge || challenge.consumedAt) {
-      throw new UnauthorizedException('Código inválido o expirado');
+      throw new BadRequestException(
+        'Código inválido o sesión de verificación no válida. Vuelve a iniciar sesión.',
+      );
     }
 
     if (new Date() > challenge.expiresAt) {
-      throw new UnauthorizedException('El código ha expirado. Vuelve a iniciar sesión.');
+      throw new BadRequestException('El código ha expirado. Vuelve a iniciar sesión.');
     }
 
     if (challenge.attemptCount >= MAX_OTP_ATTEMPTS) {
-      throw new UnauthorizedException('Demasiados intentos. Vuelve a iniciar sesión.');
+      throw new BadRequestException('Demasiados intentos. Vuelve a iniciar sesión.');
     }
 
     const expectedHash = this.hashOtpCode(code);
@@ -377,13 +384,13 @@ export class authService {
     });
 
     if (!user) {
-      return this.handleExceptionService.handleErrorLoginException(email);
+      throw new UnauthorizedException(PANEL_LOGIN_FAILED_MESSAGE);
     }
 
     const isMatch = await comparePasswords(oldPassword, user.password ?? '');
 
     if (!isMatch) {
-      return this.handleExceptionService.handleErrorPasswordException(email);
+      throw new UnauthorizedException(PANEL_LOGIN_FAILED_MESSAGE);
     }
 
     const hashedNewPassword = encodePassword(newPassword);

@@ -12,6 +12,16 @@ import { createCorsOriginCallback } from './config/cors-origins';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  const httpServer = app.getHttpAdapter().getInstance() as {
+    set?: (key: string, val: unknown) => void;
+    disable?: (key: string) => void;
+  };
+  if (typeof httpServer?.set === 'function') {
+    httpServer.set('trust proxy', 1);
+  }
+  if (typeof httpServer?.disable === 'function') {
+    httpServer.disable('x-powered-by');
+  }
   app.useWebSocketAdapter(new SocketIoAdapter(app));
   
   // Configurar cookie parser para SSO

@@ -3366,7 +3366,8 @@ export class RequestsService {
     
     const mediaDomain = awsConfigService.getMediaDomain().replace(/\/$/, '');
     const oldPrefix = `${mediaDomain}/request/${servicioNormalizado}/`;
-    const newPrefix = `${mediaDomain}/request/${servicioNormalizado}/${requestUuid}/`;
+    const uuidLower = requestUuid.trim().toLowerCase();
+    const newPrefix = `${mediaDomain}/request/${servicioNormalizado}/${uuidLower}/`;
 
     this.logger.log(`Actualizando URLs de archivos: ${oldPrefix} -> ${newPrefix}`);
 
@@ -3386,11 +3387,24 @@ export class RequestsService {
       }
 
       // Función helper para actualizar URLs en un objeto
+      const urlAlreadyUnderRequestUuid = (url: string): boolean => {
+        if (!url.startsWith(oldPrefix)) {
+          return false;
+        }
+        const rest = url.slice(oldPrefix.length);
+        const head = rest.split(/[/?#]/)[0] ?? '';
+        return head.toLowerCase() === uuidLower;
+      };
+
       const updateUrlsInObject = (obj: any, urlFields: string[]): boolean => {
         let updated = false;
         for (const field of urlFields) {
-          if (obj[field] && typeof obj[field] === 'string' && obj[field].startsWith(oldPrefix)) {
-            obj[field] = obj[field].replace(oldPrefix, newPrefix);
+          const val = obj[field];
+          if (val && typeof val === 'string' && val.startsWith(oldPrefix)) {
+            if (urlAlreadyUnderRequestUuid(val)) {
+              continue;
+            }
+            obj[field] = val.replace(oldPrefix, newPrefix);
             updated = true;
           }
         }

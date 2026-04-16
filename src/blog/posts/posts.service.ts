@@ -95,22 +95,16 @@ export class PostsService {
   /** * Método para obtener todos los posts publicados para el portal */
   async findAllPublishedForPortal(): Promise<any[] | undefined> {
     try {
+      // Listado portal: sin content, sin user (no se usa en cards), sin description/seo_title (solo ficha de post).
       const posts = await this.postsRepository.find({
         where: { is_published: true },
         select: {
+          id: true,
           title: true,
-          seo_title: true,
           slug: true,
           excerpt: true,
-          description: true,
           image_url: true,
           published_at: true,
-          user: {
-            id: true,
-            username: true,
-            first_name: true,
-            last_name: true,
-          },
           categories: {
             id: true,
             name: true,
@@ -122,13 +116,10 @@ export class PostsService {
             slug: true,
           },
         },
-        relations: ['user', 'categories', 'tags'],
+        relations: ['categories', 'tags'],
         order: { published_at: 'DESC' },
       });
-      return posts.map((post) => ({
-        ...post,
-        user: toPublicUserResponse(post.user),
-      }));
+      return posts;
     } catch (err) {
       this.exceptionsService.handleDBExceptions(err);
     }
@@ -140,19 +131,12 @@ export class PostsService {
       const posts = await this.postsRepository.find({
         where: { sandbox: true },
         select: {
+          id: true,
           title: true,
-          seo_title: true,
           slug: true,
           excerpt: true,
-          description: true,
           image_url: true,
           published_at: true,
-          user: {
-            id: true,
-            username: true,
-            first_name: true,
-            last_name: true,
-          },
           categories: {
             id: true,
             name: true,
@@ -164,13 +148,10 @@ export class PostsService {
             slug: true,
           },
         },
-        relations: ['user', 'categories', 'tags'],
+        relations: ['categories', 'tags'],
         order: { published_at: 'DESC' },
       });
-      return posts.map((post) => ({
-        ...post,
-        user: toPublicUserResponse(post.user),
-      }));
+      return posts;
     } catch (err) {
       this.exceptionsService.handleDBExceptions(err);
     }
@@ -224,6 +205,54 @@ export class PostsService {
     }
   }
 
+  /** Detalle de post en revisión (misma regla que listados sandbox). Alineado con get-sandbox-posts/category. */
+  async findOneSandboxBySlug(slug: string): Promise<any | undefined | null> {
+    try {
+      const post = await this.postsRepository.findOne({
+        where: { slug, sandbox: true },
+        select: {
+          id: true,
+          title: true,
+          seo_title: true,
+          slug: true,
+          content: true,
+          excerpt: true,
+          description: true,
+          image_url: true,
+          published_at: true,
+          user: {
+            id: true,
+            username: true,
+            first_name: true,
+            last_name: true,
+          },
+          categories: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+          tags: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+        relations: ['user', 'categories', 'tags'],
+      });
+
+      if (!post) {
+        this.exceptionsService.handleNotFoundExceptions(slug);
+      }
+
+      return {
+        ...post,
+        user: toPublicUserResponse(post?.user),
+      };
+    } catch (err) {
+      this.exceptionsService.handleDBExceptions(err);
+    }
+  }
+
   // Nuevo método para listar posts por slug de categoría
   async findAllByCategorySlug(
     categorySlug: string,
@@ -231,24 +260,21 @@ export class PostsService {
     try {
       const posts = await this.postsRepository
         .createQueryBuilder('post')
-        .leftJoinAndSelect('post.user', 'user')
         .leftJoinAndSelect('post.categories', 'category')
         .leftJoinAndSelect('post.tags', 'tag')
         .where('category.slug = :slug', { slug: categorySlug })
         .andWhere('post.is_published = :isPublished', { isPublished: true })
         .select([
+          'post.id',
           'post.title',
-          'post.seo_title',
           'post.slug',
           'post.excerpt',
-          'post.description',
           'post.image_url',
           'post.published_at',
-          'user.id',
-          'user.first_name',
-          'user.last_name',
+          'category.id',
           'category.name',
           'category.slug',
+          'tag.id',
           'tag.name',
           'tag.slug',
         ])
@@ -266,24 +292,21 @@ export class PostsService {
     try {
       const posts = await this.postsRepository
         .createQueryBuilder('post')
-        .leftJoinAndSelect('post.user', 'user')
         .leftJoinAndSelect('post.categories', 'category')
         .leftJoinAndSelect('post.tags', 'tag')
         .where('category.slug = :slug', { slug: categorySlug })
         .andWhere('post.sandbox = :sandbox', { sandbox: true })
         .select([
+          'post.id',
           'post.title',
-          'post.seo_title',
           'post.slug',
           'post.excerpt',
-          'post.description',
           'post.image_url',
           'post.published_at',
-          'user.id',
-          'user.first_name',
-          'user.last_name',
+          'category.id',
           'category.name',
           'category.slug',
+          'tag.id',
           'tag.name',
           'tag.slug',
         ])
@@ -455,7 +478,8 @@ export class PostsService {
   }
 
   /**
-   * Obtiene todos los posts sin filtros ni paginación.
+   * Listado del **panel** (JWT): todos los posts, sin filtrar por `is_published` ni `sandbox`.
+   * No usar para el portal público.
    */
   async findAll(): Promise<Post[] | undefined> {
     try {

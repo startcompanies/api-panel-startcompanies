@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AppService } from './app.service';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { configService } from './config/config.service';
 import { UserModule } from './shared/user/user.module';
 import { AuthModule } from './shared/auth/auth.module';
@@ -17,6 +18,12 @@ import { LiliModule } from './lili/lili.module';
 @Module({
   imports: [
     ConfigModule.forRoot(),
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60000,
+        limit: 120,
+      },
+    ]),
     TypeOrmModule.forRoot(configService.getTypeOrmConfig()),
     // Módulos compartidos (usados por Blog y Panel)
     AuthModule,
