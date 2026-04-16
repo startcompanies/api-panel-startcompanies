@@ -61,4 +61,4 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 dist/migrations/
 
 # Volcado generado por npm run posts:export (puede ser muy grande)
-scripts/posts-portable/posts_data.sql
+
