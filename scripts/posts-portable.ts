@@ -4,9 +4,12 @@
  *
  * El directorio scripts/posts-portable/ se crea al exportar si no existe.
  *
- * Uso:
+ * Uso (desarrollo, requiere ts-node):
  *   npm run posts:export
  *   npm run posts:import
+ * Producción / imagen sin devDependencies:
+ *   npm run build && npm run posts:import:prod
+ *   (equivalente: node dist/scripts/posts-portable.js import [-i ruta.sql])
  *
  * Conexión: mismas variables que la app — DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
  * en `.env` en la raíz del proyecto. Opcional: DB_SSL=true, DB_SSL_REJECT_UNAUTHORIZED=false
@@ -20,9 +23,18 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Client, ClientConfig } from 'pg';
 
-dotenv.config({ path: path.join(__dirname, '..', '.env') });
+/** Raíz del repo: dist/scripts → subir dos niveles; scripts/ → subir uno. */
+function projectRoot(): string {
+  const parentName = path.basename(path.dirname(__dirname));
+  return parentName === 'dist'
+    ? path.join(__dirname, '..', '..')
+    : path.join(__dirname, '..');
+}
 
-const OUT_DIR = path.join(__dirname, 'posts-portable');
+const ROOT = projectRoot();
+dotenv.config({ path: path.join(ROOT, '.env') });
+
+const OUT_DIR = path.join(ROOT, 'scripts', 'posts-portable');
 const DEFAULT_SQL = path.join(OUT_DIR, 'posts_data.sql');
 
 function requireEnv(name: string): string {

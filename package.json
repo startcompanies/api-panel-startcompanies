@@ -31,7 +31,9 @@
     "db:wipe-panel": "node -r dotenv/config scripts/db-wipe-panel.cjs",
     "db:wipe-panel:prod": "NODE_ENV=production node -r dotenv/config scripts/db-wipe-panel.cjs",
     "posts:export": "ts-node --project tsconfig.json scripts/posts-portable.ts export",
-    "posts:import": "ts-node --project tsconfig.json scripts/posts-portable.ts import"
+    "posts:import": "ts-node --project tsconfig.json scripts/posts-portable.ts import",
+    "posts:export:prod": "node dist/scripts/posts-portable.js export",
+    "posts:import:prod": "node dist/scripts/posts-portable.js import"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.890.0",
