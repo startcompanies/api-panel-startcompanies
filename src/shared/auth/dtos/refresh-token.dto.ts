@@ -1,8 +1,13 @@
-import { IsString } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsOptional, IsString } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 
+/** Body opcional: en el panel el refresh suele ir solo por cookie HttpOnly `refresh_token`. */
 export class RefreshTokenDto {
-  @ApiProperty({ description: 'Refresh token recibido en el login' })
+  @ApiPropertyOptional({
+    description:
+      'Opcional. Si no se envía, se usa la cookie `refresh_token` (flujo panel / portal con credentials).',
+  })
+  @IsOptional()
   @IsString()
-  refreshToken: string;
+  refreshToken?: string;
 }
