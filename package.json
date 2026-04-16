@@ -36,7 +36,7 @@
     "posts:import": "ts-node --project tsconfig.json scripts/posts-portable.ts import",
     "posts:import:staging": "ts-node --project tsconfig.json scripts/posts-portable.ts import -i scripts/posts-portable/posts_data.staging.sql",
     "posts:export:dist": "node dist/scripts/posts-portable.js export",
-    "posts:import:prod": "node dist/scripts/posts-portable.js import",
+    "posts:import:prod": "node dist/scripts/posts-portable.js import -i scripts/posts-portable/posts_data.prod.sql",
     "wxr:post-categories-sql": "ts-node --project tsconfig.json scripts/wxr-to-post-categories-sql.ts",
     "wxr:post-categories-sql:run": "ts-node --project tsconfig.json scripts/wxr-to-post-categories-sql.ts scripts/posts.xml --execute"
   },
