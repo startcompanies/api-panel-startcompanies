@@ -31,9 +31,14 @@
     "db:wipe-panel": "node -r dotenv/config scripts/db-wipe-panel.cjs",
     "db:wipe-panel:prod": "NODE_ENV=production node -r dotenv/config scripts/db-wipe-panel.cjs",
     "posts:export": "ts-node --project tsconfig.json scripts/posts-portable.ts export",
+    "posts:export:staging": "POSTS_EXPORT_PROFILE=staging POSTS_EXPORT_PARTIAL=1 ts-node --project tsconfig.json scripts/posts-portable.ts export -o scripts/posts-portable/posts_data.staging.sql",
+    "posts:export:prod": "ts-node --project tsconfig.json scripts/posts-portable.ts export -o scripts/posts-portable/posts_data.prod.sql",
     "posts:import": "ts-node --project tsconfig.json scripts/posts-portable.ts import",
-    "posts:export:prod": "node dist/scripts/posts-portable.js export",
-    "posts:import:prod": "node dist/scripts/posts-portable.js import"
+    "posts:import:staging": "ts-node --project tsconfig.json scripts/posts-portable.ts import -i scripts/posts-portable/posts_data.staging.sql",
+    "posts:export:dist": "node dist/scripts/posts-portable.js export",
+    "posts:import:prod": "node dist/scripts/posts-portable.js import",
+    "wxr:post-categories-sql": "ts-node --project tsconfig.json scripts/wxr-to-post-categories-sql.ts",
+    "wxr:post-categories-sql:run": "ts-node --project tsconfig.json scripts/wxr-to-post-categories-sql.ts scripts/posts.xml --execute"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.890.0",

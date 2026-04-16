@@ -112,14 +112,27 @@ export class CategoriesService {
         .having('COUNT(DISTINCT posts.id) > 0')
         .getRawMany();
 
-      return result.map((row) => ({
-        name: row.category_name,
-        slug: row.category_slug,
-        count: parseInt(row.post_count, 10),
-      }));
+      return result.map((row) => this.mapCategoryCountRow(row));
     } catch (error) {
       this.exceptionsService.handleDBExceptions(error);
     }
+  }
+
+  /** Claves raw según driver / versión de TypeORM (p. ej. category_name vs name). */
+  private mapCategoryCountRow(row: Record<string, unknown>): {
+    name: string;
+    slug: string;
+    count: number;
+  } {
+    const nameVal = row.category_name ?? row.name;
+    const slugVal = row.category_slug ?? row.slug;
+    const countVal = row.post_count ?? row.count;
+    const count = parseInt(String(countVal ?? '0'), 10);
+    return {
+      name: nameVal != null ? String(nameVal) : '',
+      slug: slugVal != null ? String(slugVal) : '',
+      count: Number.isFinite(count) ? count : 0,
+    };
   }
 
   // Obtener todas las categorías con el número de posts en sandbox
@@ -143,11 +156,7 @@ export class CategoriesService {
         .having('COUNT(DISTINCT posts.id) > 0')
         .getRawMany();
 
-      return result.map((row) => ({
-        name: row.category_name,
-        slug: row.category_slug,
-        count: parseInt(row.post_count, 10),
-      }));
+      return result.map((row) => this.mapCategoryCountRow(row));
     } catch (error) {
       this.exceptionsService.handleDBExceptions(error);
     }

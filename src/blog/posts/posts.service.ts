@@ -205,6 +205,54 @@ export class PostsService {
     }
   }
 
+  /** Detalle de post en revisión (misma regla que listados sandbox). Alineado con get-sandbox-posts/category. */
+  async findOneSandboxBySlug(slug: string): Promise<any | undefined | null> {
+    try {
+      const post = await this.postsRepository.findOne({
+        where: { slug, sandbox: true },
+        select: {
+          id: true,
+          title: true,
+          seo_title: true,
+          slug: true,
+          content: true,
+          excerpt: true,
+          description: true,
+          image_url: true,
+          published_at: true,
+          user: {
+            id: true,
+            username: true,
+            first_name: true,
+            last_name: true,
+          },
+          categories: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+          tags: {
+            id: true,
+            name: true,
+            slug: true,
+          },
+        },
+        relations: ['user', 'categories', 'tags'],
+      });
+
+      if (!post) {
+        this.exceptionsService.handleNotFoundExceptions(slug);
+      }
+
+      return {
+        ...post,
+        user: toPublicUserResponse(post?.user),
+      };
+    } catch (err) {
+      this.exceptionsService.handleDBExceptions(err);
+    }
+  }
+
   // Nuevo método para listar posts por slug de categoría
   async findAllByCategorySlug(
     categorySlug: string,
@@ -430,7 +478,8 @@ export class PostsService {
   }
 
   /**
-   * Obtiene todos los posts sin filtros ni paginación.
+   * Listado del **panel** (JWT): todos los posts, sin filtrar por `is_published` ni `sandbox`.
+   * No usar para el portal público.
    */
   async findAll(): Promise<Post[] | undefined> {
     try {

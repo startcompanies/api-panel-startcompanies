@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -12,7 +13,15 @@ import {
 } from '@nestjs/common';
 import { PostsService } from './posts.service';
 import { AuthGuard } from 'src/shared/auth/auth.guard';
-import { ApiBearerAuth, ApiOperation, ApiTags, ApiBody, ApiResponse, ApiParam } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiBody,
+  ApiOperation,
+  ApiParam,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { PostDto } from './dtos/post.dto';
 import { UpdatePublicationStatusDto } from './dtos/update-publication-status.dto';
 import { PaginationDto } from 'src/shared/common/dtos/pagination.dto';
@@ -21,11 +30,20 @@ import { UpdateSandboxStatusDto } from './dtos/update-sandbox-status.dto';
 import { UpdateQaReviewedStatusDto } from './dtos/update-qa-reviewed-status.dto';
 import { UpdateTodoDto } from './dtos/update-todo.dto';
 
+/**
+ * Blog posts API.
+ *
+ * Contrato: **Panel** (JWT) usa solo `GET /blog/posts` y rutas mutables (`:id`, publish, sandbox…).
+ * **Portal** público: rutas canónicas `GET /blog/posts/public` y `GET /blog/posts/public/:slug` con query
+ * `audience=published|preview` (y `category` opcional en el listado). Las rutas `get-from-portal` /
+ * `get-sandbox-posts` siguen como alias deprecados.
+ */
 @ApiTags('Blog - Posts')
 @Controller('blog/posts')
 export class PostsController {
   constructor(private readonly postsService: PostsService) {}
 
+  /** Panel: lista completa (sin filtrar por publicado ni sandbox). Requiere JWT. */
   @Get()
   @UseGuards(AuthGuard)
   @ApiBearerAuth('JWT-auth')
@@ -36,49 +54,130 @@ export class PostsController {
     return this.postsService.findAll();
   }
 
-  // Obtener todos los post desde el portal
+  // --- Portal: rutas canónicas (registrar antes de @Get(':id')) ---
+
+  private resolveBlogAudience(audience?: string): 'published' | 'preview' {
+    const raw = (audience ?? 'published').trim().toLowerCase();
+    if (raw === 'preview' || raw === 'sandbox') return 'preview';
+    if (raw === 'published' || raw === '') return 'published';
+    throw new BadRequestException(
+      `audience inválido: ${JSON.stringify(audience)}. Use published o preview.`,
+    );
+  }
+
+  @Get('public')
+  @ApiOperation({
+    summary: 'Portal: listado de posts (publicados o revisión)',
+    description:
+      'Use audience=published (por defecto) o preview. Opcional category=slug de categoría.',
+  })
+  @ApiQuery({
+    name: 'audience',
+    required: false,
+    enum: ['published', 'preview'],
+    description: 'published = is_published; preview = sandbox',
+  })
+  @ApiQuery({
+    name: 'category',
+    required: false,
+    description: 'Slug de categoría para filtrar el listado',
+  })
+  async findPublicList(
+    @Query('audience') audience?: string,
+    @Query('category') category?: string,
+  ) {
+    const mode = this.resolveBlogAudience(audience);
+    const cat = category?.trim();
+    if (cat) {
+      return mode === 'preview'
+        ? this.postsService.findAllSandboxPostsByCategorySlug(cat)
+        : this.postsService.findAllByCategorySlug(cat);
+    }
+    return mode === 'preview'
+      ? this.postsService.findAllSandbox()
+      : this.postsService.findAllPublishedForPortal();
+  }
+
+  @Get('public/:slug')
+  @ApiOperation({
+    summary: 'Portal: detalle de post por slug',
+    description: 'audience=published (por defecto) o preview (sandbox).',
+  })
+  @ApiQuery({
+    name: 'audience',
+    required: false,
+    enum: ['published', 'preview'],
+  })
+  async findPublicDetail(
+    @Param('slug') slug: string,
+    @Query('audience') audience?: string,
+  ) {
+    const mode = this.resolveBlogAudience(audience);
+    return mode === 'preview'
+      ? this.postsService.findOneSandboxBySlug(slug)
+      : this.postsService.findOneBySlug(slug);
+  }
+
+  // --- Portal: alias legacy (misma lógica que /public + audience) ---
+
   @Get('get-from-portal')
   @ApiOperation({
     summary: 'Obtener todos los posts publicados para el portal',
+    deprecated: true,
+    description: 'Usar GET /blog/posts/public?audience=published',
   })
   async findAllPublishedForPortal() {
     return this.postsService.findAllPublishedForPortal();
   }
 
-  // Obtener todos los posts en modo de revisión
   @Get('get-sandbox-posts')
   @ApiOperation({
     summary: 'Obtener todos los posts en modo de revisión',
+    deprecated: true,
+    description: 'Usar GET /blog/posts/public?audience=preview',
   })
   async findAllSandbox() {
     return this.postsService.findAllSandbox();
   }
 
-  // Obtener post por slug desde el portal
   @Get('get-from-portal/:slug')
   @ApiOperation({
     summary: 'Obtener un post por su slug',
+    deprecated: true,
+    description: 'Usar GET /blog/posts/public/:slug?audience=published',
   })
   async findOneBySlug(@Param('slug') slug: string) {
     return this.postsService.findOneBySlug(slug);
   }
 
-  // Obtener todos los posts correspondientes a una categoría
   @Get('get-from-portal/category/:slug')
   @ApiOperation({
     summary: 'Obtener todos los posts correspondientes a una categoría',
+    deprecated: true,
+    description: 'Usar GET /blog/posts/public?audience=published&category=:slug',
   })
   async findAllPostsByCategorySlug(@Param('slug') slug: string) {
     return this.postsService.findAllByCategorySlug(slug);
   }
 
-  // Obtener todos los post correspondientes a una categoria en modo de revisión
   @Get('get-sandbox-posts/category/:slug')
   @ApiOperation({
     summary: 'Obtener todos los posts correspondientes a una categoría en modo de revisión',
+    deprecated: true,
+    description: 'Usar GET /blog/posts/public?audience=preview&category=:slug',
   })
   async findAllSandboxPostsByCategorySlug(@Param('slug') slug: string) {
     return this.postsService.findAllSandboxPostsByCategorySlug(slug);
+  }
+
+  @Get('get-sandbox-posts/:slug')
+  @ApiOperation({
+    summary: 'Obtener un post en modo revisión por su slug',
+    deprecated: true,
+    description: 'Usar GET /blog/posts/public/:slug?audience=preview',
+  })
+  async findOneSandboxBySlug(@Param('slug') slug: string) {
+    return this.postsService.findOneSandboxBySlug(slug);
   }
 
   // Crear un nuevo post
