@@ -250,9 +250,38 @@ export class UploadFileService {
   }
 
   /**
-   * Descarga una imagen desde una URL y la sube a S3.
-   * Si la URL ya es de media.startcompanies.us/blog/, se devuelve la misma URL sin re-subir.
-   * Así se evitan problemas de CORS al hacer la descarga en el servidor.
+   * Copia un objeto dentro del mismo bucket a `destFolder/{timestamp}-{basename}`.
+   * Usado para pasar imágenes de `blog/archivo.png` a `blog/{slug}/...` sin re-descargar por HTTP.
+   */
+  private async copyS3ObjectToFolder(
+    sourceKey: string,
+    destFolderNormalized: string,
+  ): Promise<{ url: string; key: string }> {
+    const folder = destFolderNormalized.replace(/^\/+|\/+$/g, '').replace(/\/+/g, '/');
+    const baseName = sourceKey.split('/').pop() || 'image.png';
+    const safeBase = baseName.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 180);
+    const newKey = `${folder}/${Date.now()}-${safeBase}`;
+    const copySource = `${this.bucketName}/${encodeURIComponent(sourceKey)}`;
+    await this.s3Client.send(
+      new CopyObjectCommand({
+        Bucket: this.bucketName,
+        CopySource: copySource,
+        Key: newKey,
+        MetadataDirective: 'COPY',
+      }),
+    );
+    const cleanDomain = this.mediaDomain.replace(/\/$/, '');
+    const publicUrl = `${cleanDomain}/${newKey}`;
+    this.logger.log(`Copiado en S3: ${sourceKey} → ${newKey}`);
+    return { url: publicUrl, key: newKey };
+  }
+
+  /**
+   * Descarga una imagen desde una URL y la sube a S3, o copia dentro del bucket si ya está en media.
+   * - Si la URL ya apunta a `folder/` (p. ej. blog/mi-slug/), no hace nada.
+   * - Si apunta a otro prefijo bajo `blog/` en el mismo dominio (p. ej. blog/plano.png u otro slug),
+   *   copia el objeto a `folder/` (reubicación para contenido migrado).
+   * - Si es externa, descarga por HTTP y sube a `folder/`.
    */
   async uploadFromUrl(
     imageUrl: string,
@@ -263,15 +292,34 @@ export class UploadFileService {
       this.exceptionService.handleBadRequestFileException();
     }
 
-    const mediaDomain = this.mediaDomain.replace(/\/$/, '');
-    const blogPrefix = `${mediaDomain}/blog/`;
-    if (url.startsWith(blogPrefix)) {
-      this.logger.log(`URL ya está en blog/: ${url}`);
-      const key = url.slice(blogPrefix.length).split('?')[0];
-      return { url, key };
+    const mediaDomainClean = this.mediaDomain.replace(/\/$/, '');
+    const targetFolder =
+      (folder && folder.trim())?.replace(/^\/+|\/+$/g, '').replace(/\/+/g, '/') || 'blog';
+
+    const urlNoFrag = url.split('#')[0];
+    const expectedPrefix = `${mediaDomainClean}/${targetFolder}/`;
+
+    if (urlNoFrag.startsWith(expectedPrefix)) {
+      const key =
+        this.extractS3KeyFromMediaUrl(urlNoFrag.split('?')[0]) ||
+        urlNoFrag.slice(mediaDomainClean.length + 1).split('?')[0];
+      const canonicalUrl = `${mediaDomainClean}/${key}`;
+      this.logger.log(`URL ya está en la carpeta destino (${targetFolder}): ${canonicalUrl}`);
+      return { url: canonicalUrl, key };
     }
 
-    const targetFolder = (folder && folder.trim()) || 'blog';
+    const sourceKey = this.extractS3KeyFromMediaUrl(urlNoFrag.split('?')[0]);
+    if (
+      sourceKey &&
+      sourceKey.startsWith('blog/') &&
+      !sourceKey.startsWith(`${targetFolder}/`)
+    ) {
+      this.logger.log(
+        `Reubicando imagen en S3 bajo blog/: ${sourceKey} → ${targetFolder}/`,
+      );
+      return await this.copyS3ObjectToFolder(sourceKey, targetFolder);
+    }
+
     this.logger.log(`Descargando imagen desde URL para subir a ${targetFolder}: ${url}`);
 
     const isBufferOrArrayBuffer = (data: unknown): boolean =>
