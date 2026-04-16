@@ -15,6 +15,9 @@
  * en `.env` en la raíz del proyecto. Opcional: DB_SSL=true, DB_SSL_REJECT_UNAUTHORIZED=false
  * (p. ej. RDS), igual que scripts/db-wipe-panel.cjs.
  *
+ * Ruta del SQL en import: flag `-i`, variable de entorno POSTS_DATA_SQL (absoluta o relativa a la raíz del proyecto),
+ * o por defecto scripts/posts-portable/posts_data.sql (en Docker la imagen debe incluir ese fichero o usar -i/POSTS_DATA_SQL).
+ *
  * Import: se usa `session_replication_role = replica` para no exigir que existan filas en
  * `users` referenciadas por `posts.user_id` (volcado en BD vacía o distinta).
  */
@@ -35,7 +38,14 @@ const ROOT = projectRoot();
 dotenv.config({ path: path.join(ROOT, '.env') });
 
 const OUT_DIR = path.join(ROOT, 'scripts', 'posts-portable');
-const DEFAULT_SQL = path.join(OUT_DIR, 'posts_data.sql');
+
+function defaultImportSqlPath(): string {
+  const fromEnv = process.env.POSTS_DATA_SQL?.trim();
+  if (fromEnv) {
+    return path.isAbsolute(fromEnv) ? fromEnv : path.join(ROOT, fromEnv);
+  }
+  return path.join(OUT_DIR, 'posts_data.sql');
+}
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -165,6 +175,10 @@ async function cmdExport(sqlPath: string): Promise<void> {
 async function cmdImport(sqlPath: string): Promise<void> {
   if (!fs.existsSync(sqlPath)) {
     console.error(`No existe el archivo: ${sqlPath}`);
+    console.error(
+      'Indica el volcado con: npm run posts:import:prod -- -i /ruta/posts_data.sql\n' +
+        'o variable de entorno POSTS_DATA_SQL (ruta absoluta o relativa a la raíz del proyecto).',
+    );
     process.exit(1);
   }
   const raw = fs.readFileSync(sqlPath, 'utf8');
@@ -199,7 +213,7 @@ async function main() {
   const cmd = process.argv[2];
   const outIdx = process.argv.indexOf('-o');
   const inIdx = process.argv.indexOf('-i');
-  let sqlPath = DEFAULT_SQL;
+  let sqlPath = cmd === 'import' ? defaultImportSqlPath() : path.join(OUT_DIR, 'posts_data.sql');
   if (cmd === 'export' && outIdx !== -1 && process.argv[outIdx + 1]) {
     sqlPath = path.resolve(process.cwd(), process.argv[outIdx + 1]);
   }

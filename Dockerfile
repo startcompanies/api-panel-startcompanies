@@ -50,6 +50,8 @@ RUN npm install --only=production --legacy-peer-deps && \
 # Script de wipe del panel (npm run db:wipe-panel / db:wipe-panel:prod) + SQL
 COPY --from=builder --chown=nestjs:nodejs /app/scripts/db-wipe-panel.cjs ./scripts/db-wipe-panel.cjs
 COPY --from=builder --chown=nestjs:nodejs /app/scripts/sql/panel-wipe-keep-blog-staff.sql ./scripts/sql/panel-wipe-keep-blog-staff.sql
+# Volcado blog posts (npm run posts:import:prod); requiere posts_data.sql en el repo o montar ruta vía POSTS_DATA_SQL / -i
+COPY --from=builder --chown=nestjs:nodejs /app/scripts/posts-portable ./scripts/posts-portable
 
 # Cambiar al usuario no-root
 USER nestjs
