@@ -822,6 +822,16 @@ export class ZohoSyncService implements OnModuleInit {
         A_o_de_la_Declaraci_n_Fiscal: renovacion.declaracionAnoCorriente ? '2025' : '',
         Nuevo_nombre_de_la_LLC: renovacion.cambioNombre ? renovacion.llcName || '' : '',
         // Declaraciones_Juradas_Anteriores: this.mapBooleanToPickList(renovacion.declaracionAnosAnteriores), // Comentado temporalmente - error de validación en Zoho (maximum_length: 1)
+        // Multiselect: Tipo de Declaración — valores separados por ";"
+        Tipo_de_Declaracion: [
+          renovacion.declaracionInicial && 'Declaracion Inicial',
+          renovacion.declaracionAnoCorriente && 'Declaracion Ano Corriente',
+          renovacion.cambioDireccionRA && 'Cambio de Direccion RA',
+          renovacion.cambioNombre && 'Cambio de Nombre',
+          renovacion.declaracionAnosAnteriores && 'Declaracion Anos Anteriores',
+          renovacion.agregarCambiarSocio && 'Agregar Cambiar Socio',
+          renovacion.declaracionCierre && 'Declaracion de Cierre',
+        ].filter(Boolean).join(';') || null,
         Cu_nto_cost_abrir_la_LLC_en_Estados_Unidos: renovacion.llcOpeningCost ? String(renovacion.llcOpeningCost) : '',
         Pagos_a_familiares_servicios: renovacion.paidToFamilyMembers ? String(renovacion.paidToFamilyMembers) : '',
         Cu_nto_pag_la_LLC_a_empresas_locales_En_otro_Pa: renovacion.paidToLocalCompanies ? String(renovacion.paidToLocalCompanies) : '',
@@ -2722,10 +2732,28 @@ export class ZohoSyncService implements OnModuleInit {
       // Campos adicionales
       llcCreationDate: account.Fecha_de_Constituci_n ? new Date(account.Fecha_de_Constituci_n) : undefined,
       countriesWhereLLCDoesBusiness: countriesWhereLLCDoesBusiness,
-      // Campos de declaraciones
-      declaracionAnoCorriente: account.A_o_de_la_Declaraci_n_Fiscal === '2025' || account.A_o_de_la_Declaraci_n_Fiscal === '2025' ? true : undefined,
-      cambioNombre: account.Nuevo_nombre_de_la_LLC ? true : undefined,
-      declaracionAnosAnteriores: this.parseBoolean(account.Declaraciones_Juradas_Anteriores),
+      // Campos de declaraciones — primero desde Tipo_de_Declaracion (multiselect), luego fallback legacy
+      declaracionInicial: account.Tipo_de_Declaracion
+        ? (account.Tipo_de_Declaracion as string).includes('Declaracion Inicial') || undefined
+        : undefined,
+      declaracionAnoCorriente: account.Tipo_de_Declaracion
+        ? (account.Tipo_de_Declaracion as string).includes('Declaracion Ano Corriente') || account.A_o_de_la_Declaraci_n_Fiscal === '2025' || undefined
+        : account.A_o_de_la_Declaraci_n_Fiscal === '2025' ? true : undefined,
+      cambioDireccionRA: account.Tipo_de_Declaracion
+        ? (account.Tipo_de_Declaracion as string).includes('Cambio de Direccion RA') || undefined
+        : undefined,
+      cambioNombre: account.Tipo_de_Declaracion
+        ? (account.Tipo_de_Declaracion as string).includes('Cambio de Nombre') || !!account.Nuevo_nombre_de_la_LLC || undefined
+        : account.Nuevo_nombre_de_la_LLC ? true : undefined,
+      declaracionAnosAnteriores: account.Tipo_de_Declaracion
+        ? (account.Tipo_de_Declaracion as string).includes('Declaracion Anos Anteriores') || undefined
+        : this.parseBoolean(account.Declaraciones_Juradas_Anteriores),
+      agregarCambiarSocio: account.Tipo_de_Declaracion
+        ? (account.Tipo_de_Declaracion as string).includes('Agregar Cambiar Socio') || undefined
+        : undefined,
+      declaracionCierre: account.Tipo_de_Declaracion
+        ? (account.Tipo_de_Declaracion as string).includes('Declaracion de Cierre') || undefined
+        : undefined,
       // Campos numéricos
       llcOpeningCost: account.Cu_nto_cost_abrir_la_LLC_en_Estados_Unidos ? parseFloat(account.Cu_nto_cost_abrir_la_LLC_en_Estados_Unidos) : undefined,
       paidToFamilyMembers: account.Pagos_a_familiares_servicios ? parseFloat(account.Pagos_a_familiares_servicios) : undefined,
