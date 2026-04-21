@@ -1288,10 +1288,6 @@ export class RequestsService {
         };
         
         // Eliminar campos obsoletos
-        delete renovacionDataToCreate.declaracionInicial;
-        delete renovacionDataToCreate.cambioDireccionRA;
-        delete renovacionDataToCreate.agregarCambiarSocio;
-        delete renovacionDataToCreate.declaracionCierre;
         delete renovacionDataToCreate.owners; // Ya se procesa por separado como members
         delete renovacionDataToCreate.members; // Se procesa por separado
         // Eliminar campos obsoletos que existen en BD pero no en la entidad
@@ -2133,10 +2129,6 @@ export class RequestsService {
           delete dataToAssign.currentStepNumber;
           delete dataToAssign.requestId;
           delete dataToAssign.totalRevenue2025; // Ya se mapeó a totalRevenue
-          delete dataToAssign.declaracionInicial; // Campo eliminado
-          delete dataToAssign.cambioDireccionRA; // Campo eliminado
-          delete dataToAssign.agregarCambiarSocio; // Campo eliminado
-          delete dataToAssign.declaracionCierre; // Campo eliminado
           // Eliminar campos obsoletos que existen en BD pero no en la entidad
           delete dataToAssign.data_is_correct;
           delete dataToAssign.dataIsCorrect;

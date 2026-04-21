@@ -497,9 +497,7 @@ export class WizardService {
         if (!dto.stripeToken || String(dto.stripeToken).trim() === '') {
           (dto as any).stripeToken = 'no-payment';
         }
-        if (!dto.paymentMethod) {
-          (dto as any).paymentMethod = 'stripe';
-        }
+        // No forzar paymentMethod — queda NULL hasta el PATCH de pago real
       }
       const coerceStepNumber = (v: unknown): number | undefined => {
         if (typeof v === 'number' && !Number.isNaN(v)) return v;
@@ -779,6 +777,9 @@ export class WizardService {
         
         // Sección 4: Movimientos Financieros - solo procesar si currentStep >= 4
         if (currentStep < 4) {
+          delete dataToSave.totalRevenue2025;
+        } else if (dataToSave.totalRevenue2025 !== undefined) {
+          dataToSave.totalRevenue = dataToSave.totalRevenue2025;
           delete dataToSave.totalRevenue2025;
         }
         
@@ -1667,6 +1668,9 @@ export class WizardService {
           
           // Sección 4: Movimientos Financieros - solo procesar si currentStep >= 4
           if (currentStep < 4) {
+            delete dataToSave.totalRevenue2025;
+          } else if (dataToSave.totalRevenue2025 !== undefined) {
+            dataToSave.totalRevenue = dataToSave.totalRevenue2025;
             delete dataToSave.totalRevenue2025;
           }
           
