@@ -144,7 +144,7 @@ export const OWNER_RENOVACION_VALIDATION_RULES: ValidationRule[] = [
   { field: 'email', type: 'email', required: true },
   { field: 'phone', type: 'string', required: true },
   { field: 'fullAddress', type: 'string', required: true },
-  { field: 'unit', type: 'string', required: true },
+  { field: 'unit', type: 'string', required: false },
   { field: 'city', type: 'string', required: true },
   { field: 'stateRegion', type: 'string', required: true },
   { field: 'postalCode', type: 'string', required: true },
