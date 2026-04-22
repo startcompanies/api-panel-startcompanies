@@ -624,9 +624,12 @@ export class WizardService {
 
       // PASO 3: Validar datos del servicio
       const serviceData = this.getServiceData(createWizardRequestDto);
-      const initialRequestStatus: 'pendiente' | 'solicitud-recibida' = hasPayment
-        ? 'pendiente'
-        : resolvedCurrentStepNumber === maxSteps[dto.type]
+      const paymentCompleted =
+        (createWizardRequestDto.paymentMethod === 'stripe' && paymentResult?.status === 'succeeded') ||
+        (createWizardRequestDto.paymentMethod === 'transferencia' && !!createWizardRequestDto.paymentProofUrl);
+      const initialRequestStatus: 'pendiente' | 'solicitud-recibida' = paymentCompleted
+        ? 'solicitud-recibida'
+        : !hasPayment && resolvedCurrentStepNumber === maxSteps[dto.type]
           ? 'solicitud-recibida'
           : 'pendiente';
 
@@ -1438,6 +1441,16 @@ export class WizardService {
         ) {
           requestStatus = 'solicitud-recibida';
         }
+        // Pago completado en este PATCH (transferencia con comprobante o Stripe nuevo) → recibida
+        if (
+          (updateRequestDto.paymentMethod === 'transferencia' && !!updateRequestDto.paymentProofUrl) ||
+          (updateRequestDto.paymentMethod === 'stripe' &&
+            !!updateRequestDto.stripeToken &&
+            String(updateRequestDto.stripeToken).trim() !== '' &&
+            updateRequestDto.stripeToken !== 'no-payment')
+        ) {
+          requestStatus = 'solicitud-recibida';
+        }
 
         try {
           validateRequestData(
@@ -1482,16 +1495,20 @@ export class WizardService {
         request.plan = (updateRequestDto.aperturaLlcData as any).plan;
       }
 
-      // Sin cobro inicial en creación: si el último PATCH llega sin status, cerrar como recibida
+      // Cerrar como recibida si: pago completado (Stripe o transferencia) o último paso sin cobro
       const amountNumPersist = Number(request.paymentAmount);
       const hadPaymentAtCreationPersist =
         !!request.stripeChargeId ||
         (amountNumPersist > 0 && !!request.paymentMethod);
+      const paymentJustCompleted =
+        (request.paymentMethod === 'transferencia' && !!request.paymentProofUrl) ||
+        !!request.stripeChargeId;
       if (
-        updateRequestDto.currentStepNumber !== undefined &&
-        updateRequestDto.currentStepNumber === maxStepsByType[request.type] &&
         request.status === 'pendiente' &&
-        !hadPaymentAtCreationPersist
+        (paymentJustCompleted ||
+          (updateRequestDto.currentStepNumber !== undefined &&
+            updateRequestDto.currentStepNumber === maxStepsByType[request.type] &&
+            !hadPaymentAtCreationPersist))
       ) {
         request.status = 'solicitud-recibida';
       }
