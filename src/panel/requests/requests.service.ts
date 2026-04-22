@@ -3151,11 +3151,9 @@ export class RequestsService {
       throw new NotFoundException(`Solicitud con ID ${id} no encontrada`);
     }
 
-    const puedeAprobarse =
-      request.status === 'solicitud-recibida' || request.status === 'pendiente';
-    if (!puedeAprobarse) {
+    if (request.status !== 'solicitud-recibida') {
       throw new BadRequestException(
-        'Solo se pueden aprobar solicitudes en estado "Solicitud Recibida" o "Pendiente"',
+        'Solo se pueden aprobar solicitudes en estado "Solicitud Recibida". Complete el pago primero.',
       );
     }
 
