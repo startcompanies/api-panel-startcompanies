@@ -206,6 +206,21 @@ export class ZohoSyncService implements OnModuleInit {
     return normalizePublicHttpsWebUrl(url);
   }
 
+  /**
+   * Normaliza texto para campos Zoho con límite de longitud.
+   * Evita errores INVALID_DATA por exceso de caracteres en upsert.
+   */
+  private normalizeZohoText(value: unknown, maxLength: number): string {
+    if (value === null || value === undefined) {
+      return '';
+    }
+    const normalized = String(value).trim();
+    if (normalized.length <= maxLength) {
+      return normalized;
+    }
+    return normalized.slice(0, maxLength);
+  }
+
   /** Stage del módulo Deals (COQL / REST); a veces la clave puede variar. */
   private normalizeZohoDealStage(deal: Record<string, unknown> | null | undefined): string {
     if (!deal) return '';
@@ -788,7 +803,10 @@ export class ZohoSyncService implements OnModuleInit {
         ...(projectOrCompanyUrl
           ? { Website: projectOrCompanyUrl, P_gina_web_de_la_LLC: projectOrCompanyUrl }
           : {}),
-        Actividad_financiera_esperada: apertura.actividadFinancieraEsperada || '',
+        Actividad_financiera_esperada: this.normalizeZohoText(
+          apertura.actividadFinancieraEsperada,
+          255,
+        ),
         Tendr_ingresos_peri_dicos_que_sumen_USD_10_000: this.mapBooleanToPickList(apertura.periodicIncome10k),
         Correo_Electr_nico_Vinculado_a_la_Cuenta_Bancaria: apertura.bankAccountLinkedEmail || '',
         N_mero_de_Tel_fono_Vinculado_a_la_Cuenta_Bancaria: this.normalizePhoneNumber(apertura.bankAccountLinkedPhone) || '',
