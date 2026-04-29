@@ -8,6 +8,11 @@ import { ReportsModule } from './reports/reports.module';
 import { ClientsModule } from './clients/clients.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { BillingModule } from './billing/billing.module';
+import { InvoicingModule } from './invoicing/invoicing.module';
+import { CatalogModule } from './catalog/catalog.module';
+import { AccountingModule } from './accounting/accounting.module';
+import { DocumentsLibraryModule } from './documents-library/documents-library.module';
+import { MediaModule } from './media/media.module';
 
 /**
  * Módulo wrapper que agrupa todos los módulos relacionados con el Panel Administrativo
@@ -24,6 +29,11 @@ import { BillingModule } from './billing/billing.module';
     ClientsModule,
     DashboardModule,
     BillingModule,
+    InvoicingModule,
+    CatalogModule,
+    AccountingModule,
+    DocumentsLibraryModule,
+    MediaModule,
   ],
   exports: [
     RequestsModule,
@@ -35,6 +45,11 @@ import { BillingModule } from './billing/billing.module';
     ClientsModule,
     DashboardModule,
     BillingModule,
+    InvoicingModule,
+    CatalogModule,
+    AccountingModule,
+    DocumentsLibraryModule,
+    MediaModule,
   ],
 })
 export class PanelModule {}

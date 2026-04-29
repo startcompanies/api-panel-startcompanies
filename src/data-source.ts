@@ -28,6 +28,25 @@ import { Client } from './panel/clients/entities/client.entity';
 import { ZohoDealTimeline } from './panel/requests/entities/zoho-deal-timeline.entity';
 import { ZohoConfig } from './zoho-config/zoho-config.entity';
 import { StripeWebhookEvent } from './panel/billing/entities/stripe-webhook-event.entity';
+import { Invoice } from './panel/invoicing/entities/invoice.entity';
+import { InvoiceItem } from './panel/invoicing/entities/invoice-item.entity';
+import { InvoicePayment } from './panel/invoicing/entities/invoice-payment.entity';
+import { InvoiceEvent } from './panel/invoicing/entities/invoice-event.entity';
+import { CatalogCategory } from './panel/catalog/entities/catalog-category.entity';
+import { CatalogItem } from './panel/catalog/entities/catalog-item.entity';
+import { CatalogPrice } from './panel/catalog/entities/catalog-price.entity';
+import { BankAccount } from './panel/accounting/entities/bank-account.entity';
+import { BankImport } from './panel/accounting/entities/bank-import.entity';
+import { BankTransaction } from './panel/accounting/entities/bank-transaction.entity';
+import { AccountingCategory } from './panel/accounting/entities/accounting-category.entity';
+import { PlSnapshot } from './panel/accounting/entities/pl-snapshot.entity';
+import { LibraryFolder } from './panel/documents-library/entities/library-folder.entity';
+import { LibraryDocument } from './panel/documents-library/entities/library-document.entity';
+import { LibraryTag } from './panel/documents-library/entities/library-tag.entity';
+import { DocumentShare } from './panel/documents-library/entities/document-share.entity';
+import { PremiumVideo } from './panel/media/entities/premium-video.entity';
+import { LlcGuide } from './panel/media/entities/llc-guide.entity';
+import { ContentAccessLog } from './panel/media/entities/content-access-log.entity';
 
 // Validar que existan las variables de entorno requeridas
 const requiredEnvVars = ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'];
@@ -66,6 +85,25 @@ export const dataSourceOptions: DataSourceOptions = {
     ZohoDealTimeline,
     ZohoConfig,
     StripeWebhookEvent,
+    Invoice,
+    InvoiceItem,
+    InvoicePayment,
+    InvoiceEvent,
+    CatalogCategory,
+    CatalogItem,
+    CatalogPrice,
+    BankAccount,
+    BankImport,
+    BankTransaction,
+    AccountingCategory,
+    PlSnapshot,
+    LibraryFolder,
+    LibraryDocument,
+    LibraryTag,
+    DocumentShare,
+    PremiumVideo,
+    LlcGuide,
+    ContentAccessLog,
   ],
   migrations: [
     // Compiladas junto a src → dist/src/migrations (npm run migration:run / migration:run:prod)
