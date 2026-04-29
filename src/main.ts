@@ -26,6 +26,9 @@ async function bootstrap() {
   
   // Configurar cookie parser para SSO
   app.use(cookieParser());
+
+  // Stripe webhook necesita body crudo para validar firma.
+  app.use('/billing/webhook', express.raw({ type: 'application/json' }));
   
   // Configurar límite de tamaño de peticiones
   app.use(express.json({ limit: '10mb' }));

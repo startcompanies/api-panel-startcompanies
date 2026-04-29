@@ -27,6 +27,7 @@ import { ProcessConfig } from './panel/settings/entities/process-config.entity';
 import { Client } from './panel/clients/entities/client.entity';
 import { ZohoDealTimeline } from './panel/requests/entities/zoho-deal-timeline.entity';
 import { ZohoConfig } from './zoho-config/zoho-config.entity';
+import { StripeWebhookEvent } from './panel/billing/entities/stripe-webhook-event.entity';
 
 // Validar que existan las variables de entorno requeridas
 const requiredEnvVars = ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'];
@@ -64,6 +65,7 @@ export const dataSourceOptions: DataSourceOptions = {
     Client,
     ZohoDealTimeline,
     ZohoConfig,
+    StripeWebhookEvent,
   ],
   migrations: [
     // Compiladas junto a src → dist/src/migrations (npm run migration:run / migration:run:prod)

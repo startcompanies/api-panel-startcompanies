@@ -22,6 +22,10 @@ export class StripeService {
     }
   }
 
+  getClient(): Stripe | null {
+    return this.stripe ?? null;
+  }
+
   /**
    * Crea un cargo (charge) usando un token de Stripe
    * @param token Token de Stripe generado en el frontend

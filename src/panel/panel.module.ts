@@ -7,6 +7,7 @@ import { SettingsModule } from './settings/settings.module';
 import { ReportsModule } from './reports/reports.module';
 import { ClientsModule } from './clients/clients.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { BillingModule } from './billing/billing.module';
 
 /**
  * Módulo wrapper que agrupa todos los módulos relacionados con el Panel Administrativo
@@ -22,6 +23,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     ReportsModule,
     ClientsModule,
     DashboardModule,
+    BillingModule,
   ],
   exports: [
     RequestsModule,
@@ -32,6 +34,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     ReportsModule,
     ClientsModule,
     DashboardModule,
+    BillingModule,
   ],
 })
 export class PanelModule {}

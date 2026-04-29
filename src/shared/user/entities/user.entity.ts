@@ -53,6 +53,39 @@ export class User {
   @Column({ type: 'varchar', nullable: true })
   emailVerificationToken: string | null;
 
+  @Column({ name: 'stripe_customer_id', type: 'varchar', length: 100, nullable: true })
+  stripeCustomerId: string | null;
+
+  @Column({ name: 'billing_access_state', type: 'varchar', length: 40, nullable: true })
+  billingAccessState: string | null;
+
+  @Column({ name: 'billing_trial_start_at', type: 'timestamp with time zone', nullable: true })
+  billingTrialStartAt: Date | null;
+
+  @Column({ name: 'billing_trial_end_at', type: 'timestamp with time zone', nullable: true })
+  billingTrialEndAt: Date | null;
+
+  @Column({ name: 'billing_subscription_id', type: 'varchar', length: 100, nullable: true })
+  billingSubscriptionId: string | null;
+
+  @Column({ name: 'billing_subscription_status', type: 'varchar', length: 40, nullable: true })
+  billingSubscriptionStatus: string | null;
+
+  @Column({ name: 'billing_subscription_current_period_end', type: 'timestamp with time zone', nullable: true })
+  billingSubscriptionCurrentPeriodEnd: Date | null;
+
+  @Column({ name: 'billing_subscription_cancel_at', type: 'timestamp with time zone', nullable: true })
+  billingSubscriptionCancelAt: Date | null;
+
+  @Column({
+    name: 'billing_monthly_price_usd',
+    type: 'decimal',
+    precision: 10,
+    scale: 2,
+    default: 25,
+  })
+  billingMonthlyPriceUsd: number;
+
   @CreateDateColumn({
     type: 'timestamp with time zone',
     default: () => 'CURRENT_TIMESTAMP',
