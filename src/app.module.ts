@@ -3,6 +3,7 @@ import { AppService } from './app.service';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { ScheduleModule } from '@nestjs/schedule';
 import { configService } from './config/config.service';
 import { UserModule } from './shared/user/user.module';
 import { AuthModule } from './shared/auth/auth.module';
@@ -24,6 +25,7 @@ import { LiliModule } from './lili/lili.module';
         limit: 120,
       },
     ]),
+    ScheduleModule.forRoot(),
     TypeOrmModule.forRoot(configService.getTypeOrmConfig()),
     // Módulos compartidos (usados por Blog y Panel)
     AuthModule,

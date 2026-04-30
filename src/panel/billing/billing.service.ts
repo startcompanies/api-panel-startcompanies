@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import Stripe from 'stripe';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { StripeService } from '../../shared/payments/stripe.service';
 import { User } from '../../shared/user/entities/user.entity';
 import { StripeWebhookEvent } from './entities/stripe-webhook-event.entity';
@@ -199,6 +200,12 @@ export class BillingService {
       trialStartAt,
       trialEndAt,
       subscriptionStatus: hydrated.billingSubscriptionStatus ?? null,
+      subscriptionCancelAt: hydrated.billingSubscriptionCancelAt
+        ? hydrated.billingSubscriptionCancelAt.toISOString()
+        : null,
+      subscriptionCurrentPeriodEnd: hydrated.billingSubscriptionCurrentPeriodEnd
+        ? hydrated.billingSubscriptionCurrentPeriodEnd.toISOString()
+        : null,
       monthlyPriceUsd: Number(hydrated.billingMonthlyPriceUsd || this.monthlyPriceUsd),
     };
   }
@@ -306,6 +313,37 @@ export class BillingService {
     const processedEvent = this.webhookEventsRepo.create({ id: event.id, type: event.type });
     await this.webhookEventsRepo.save(processedEvent);
     return { received: true };
+  }
+
+  /**
+   * Fallback periódico: si una suscripción ya pasó su fecha efectiva de cancelación
+   * y no llegó webhook, cortar acceso marcándola como cancelada.
+   */
+  @Cron(CronExpression.EVERY_HOUR)
+  async reconcileExpiredScheduledCancellations(): Promise<void> {
+    const now = new Date();
+    const candidates = await this.usersRepo.find({
+      where: [
+        { type: 'client', billingSubscriptionStatus: 'active' },
+        { type: 'client', billingSubscriptionStatus: 'trialing' },
+        { type: 'client', billingSubscriptionStatus: 'past_due' },
+      ],
+    });
+
+    let updated = 0;
+    for (const user of candidates) {
+      const cancelAt = user.billingSubscriptionCancelAt;
+      if (!cancelAt || cancelAt.getTime() > now.getTime()) continue;
+
+      user.billingSubscriptionStatus = 'canceled';
+      user.billingAccessState = this.deriveAccessState(user);
+      await this.usersRepo.save(user);
+      updated += 1;
+    }
+
+    if (updated > 0) {
+      this.logger.log(`Billing cron: ${updated} suscripción(es) vencidas marcadas como canceladas.`);
+    }
   }
 }
 
