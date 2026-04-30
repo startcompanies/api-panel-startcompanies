@@ -8,8 +8,14 @@ export class CatalogItem {
   @Column({ name: 'category_id', type: 'int', nullable: true })
   categoryId: number | null;
 
+  @Column({ name: 'owner_user_id', type: 'int', nullable: true })
+  ownerUserId: number | null;
+
   @Column({ type: 'varchar', length: 160 })
   name: string;
+
+  @Column({ name: 'unit_measure', type: 'varchar', length: 20, default: 'u' })
+  unitMeasure: string;
 
   @Column({ type: 'text', nullable: true })
   description: string | null;
@@ -17,10 +23,18 @@ export class CatalogItem {
   @Column({ type: 'boolean', default: true })
   active: boolean;
 
-  @CreateDateColumn({ type: 'timestamp with time zone', default: () => 'CURRENT_TIMESTAMP' })
+  @CreateDateColumn({
+    name: 'created_at',
+    type: 'timestamp with time zone',
+    default: () => 'CURRENT_TIMESTAMP',
+  })
   createdAt: Date;
 
-  @UpdateDateColumn({ type: 'timestamp with time zone', default: () => 'CURRENT_TIMESTAMP' })
+  @UpdateDateColumn({
+    name: 'updated_at',
+    type: 'timestamp with time zone',
+    default: () => 'CURRENT_TIMESTAMP',
+  })
   updatedAt: Date;
 }
 

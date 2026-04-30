@@ -1,15 +1,24 @@
 import {
+  BadRequestException,
+  Body,
   Controller,
+  Delete,
   Get,
   Patch,
-  Body,
+  Post,
   Req,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { SettingsService } from './settings.service';
 import { UpdateUserPreferencesDto } from './dtos/update-user-preferences.dto';
+import { UpdateClientCompanyProfileDto } from './dtos/update-client-company-profile.dto';
 import { AuthGuard } from '../../shared/auth/auth.guard';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { RolesGuard } from '../../shared/auth/roles.guard';
+import { Roles } from '../../shared/auth/roles.decorator';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 @ApiTags('Panel - Settings')
 @ApiBearerAuth('JWT-auth')
@@ -31,6 +40,59 @@ export class SettingsController {
     @Body() dto: UpdateUserPreferencesDto,
   ) {
     return this.settingsService.updatePreferences(req.user.id, dto);
+  }
+
+  @Get('company')
+  @UseGuards(RolesGuard)
+  @Roles('client')
+  @ApiOperation({ summary: 'Perfil de empresa del cliente (emisor en facturas)' })
+  getCompany(@Req() req: { user: { id: number } }) {
+    return this.settingsService.getCompanyProfile(req.user.id);
+  }
+
+  @Patch('company')
+  @UseGuards(RolesGuard)
+  @Roles('client')
+  @ApiOperation({ summary: 'Actualizar perfil de empresa del cliente' })
+  updateCompany(
+    @Req() req: { user: { id: number } },
+    @Body() dto: UpdateClientCompanyProfileDto,
+  ) {
+    return this.settingsService.updateCompanyProfile(req.user.id, dto);
+  }
+
+  @Post('company/logo')
+  @UseGuards(RolesGuard)
+  @Roles('client')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }))
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { file: { type: 'string', format: 'binary' } },
+      required: ['file'],
+    },
+  })
+  @ApiOperation({
+    summary: 'Subir logo de empresa',
+    description: 'Sube una imagen y actualiza el logo del perfil de empresa.',
+  })
+  uploadCompanyLogo(
+    @Req() req: { user: { id: number } },
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('Campo file requerido (multipart/form-data)');
+    }
+    return this.settingsService.uploadCompanyLogo(req.user.id, file);
+  }
+
+  @Delete('company/logo')
+  @UseGuards(RolesGuard)
+  @Roles('client')
+  @ApiOperation({ summary: 'Quitar logo de empresa' })
+  removeCompanyLogo(@Req() req: { user: { id: number } }) {
+    return this.settingsService.clearCompanyLogo(req.user.id);
   }
 }
 

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { RolesGuard } from '../../shared/auth/roles.guard';
 import { AccountingController } from './accounting.controller';
 import { AccountingService } from './accounting.service';
 import { AccountingCategory } from './entities/accounting-category.entity';
@@ -19,7 +20,7 @@ import { PlSnapshot } from './entities/pl-snapshot.entity';
     ]),
   ],
   controllers: [AccountingController],
-  providers: [AccountingService],
+  providers: [AccountingService, RolesGuard],
 })
 export class AccountingModule {}
 

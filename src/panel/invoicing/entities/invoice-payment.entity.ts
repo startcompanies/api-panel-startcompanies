@@ -17,7 +17,11 @@ export class InvoicePayment {
   @Column({ name: 'method', type: 'varchar', length: 60, nullable: true })
   method: string | null;
 
-  @CreateDateColumn({ type: 'timestamp with time zone', default: () => 'CURRENT_TIMESTAMP' })
+  @CreateDateColumn({
+    name: 'created_at',
+    type: 'timestamp with time zone',
+    default: () => 'CURRENT_TIMESTAMP',
+  })
   createdAt: Date;
 }
 

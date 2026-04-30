@@ -3,6 +3,7 @@ import {
   NestInterceptor,
   ExecutionContext,
   CallHandler,
+  StreamableFile,
 } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
@@ -15,7 +16,13 @@ export class ResponseSanitizerInterceptor implements NestInterceptor {
     next: CallHandler,
   ): Observable<unknown> {
     return next.handle().pipe(
-      map((data: unknown) => sanitizeSensitiveResponseData(data)),
+      map((data: unknown) => {
+        /* StreamableFile tiene buffer interno: el sanitizer lo convertía en JSON con claves "0","1",… */
+        if (data instanceof StreamableFile) {
+          return data;
+        }
+        return sanitizeSensitiveResponseData(data);
+      }),
     );
   }
 }

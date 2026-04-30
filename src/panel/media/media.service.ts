@@ -56,5 +56,75 @@ export class MediaService {
     await this.logsRepo.save(this.logsRepo.create({ userId: user.id, contentType: 'guide', contentId: id }));
     return this.guidesRepo.findOne({ where: { id, isPublished: true } });
   }
+
+  adminListVideos() {
+    return this.videosRepo.find({ order: { createdAt: 'DESC' } });
+  }
+
+  adminCreateVideo(body: { title: string; description: string; videoUrl: string; isPublished?: boolean }) {
+    return this.videosRepo.save(
+      this.videosRepo.create({
+        title: body.title.trim(),
+        description: body.description,
+        videoUrl: body.videoUrl.trim(),
+        isPublished: body.isPublished ?? true,
+      }),
+    );
+  }
+
+  async adminUpdateVideo(
+    id: number,
+    body: { title?: string; description?: string; videoUrl?: string; isPublished?: boolean },
+  ) {
+    await this.videosRepo.update(
+      { id },
+      {
+        ...(body.title !== undefined ? { title: body.title.trim() } : {}),
+        ...(body.description !== undefined ? { description: body.description } : {}),
+        ...(body.videoUrl !== undefined ? { videoUrl: body.videoUrl.trim() } : {}),
+        ...(body.isPublished !== undefined ? { isPublished: body.isPublished } : {}),
+      },
+    );
+    return this.videosRepo.findOne({ where: { id } });
+  }
+
+  async adminDeleteVideo(id: number) {
+    await this.videosRepo.delete({ id });
+    return { ok: true };
+  }
+
+  adminListGuides() {
+    return this.guidesRepo.find({ order: { createdAt: 'DESC' } });
+  }
+
+  adminCreateGuide(body: { title: string; content: string; isPublished?: boolean }) {
+    return this.guidesRepo.save(
+      this.guidesRepo.create({
+        title: body.title.trim(),
+        content: body.content,
+        isPublished: body.isPublished ?? true,
+      }),
+    );
+  }
+
+  async adminUpdateGuide(
+    id: number,
+    body: { title?: string; content?: string; isPublished?: boolean },
+  ) {
+    await this.guidesRepo.update(
+      { id },
+      {
+        ...(body.title !== undefined ? { title: body.title.trim() } : {}),
+        ...(body.content !== undefined ? { content: body.content } : {}),
+        ...(body.isPublished !== undefined ? { isPublished: body.isPublished } : {}),
+      },
+    );
+    return this.guidesRepo.findOne({ where: { id } });
+  }
+
+  async adminDeleteGuide(id: number) {
+    await this.guidesRepo.delete({ id });
+    return { ok: true };
+  }
 }
 

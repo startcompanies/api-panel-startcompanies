@@ -23,6 +23,7 @@ import { Member } from './panel/requests/entities/member.entity';
 // Document ya no se usa - URLs se guardan directamente en campos de request
 import { Notification } from './panel/notifications/entities/notification.entity';
 import { UserPreferences } from './panel/settings/entities/user-preferences.entity';
+import { ClientCompanyProfile } from './panel/settings/entities/client-company-profile.entity';
 import { ProcessConfig } from './panel/settings/entities/process-config.entity';
 import { Client } from './panel/clients/entities/client.entity';
 import { ZohoDealTimeline } from './panel/requests/entities/zoho-deal-timeline.entity';
@@ -85,6 +86,7 @@ export const dataSourceOptions: DataSourceOptions = {
     ZohoDealTimeline,
     ZohoConfig,
     StripeWebhookEvent,
+    ClientCompanyProfile,
     Invoice,
     InvoiceItem,
     InvoicePayment,

@@ -14,7 +14,11 @@ export class InvoiceEvent {
   @Column({ name: 'payload', type: 'jsonb', nullable: true })
   payload: Record<string, unknown> | null;
 
-  @CreateDateColumn({ type: 'timestamp with time zone', default: () => 'CURRENT_TIMESTAMP' })
+  @CreateDateColumn({
+    name: 'created_at',
+    type: 'timestamp with time zone',
+    default: () => 'CURRENT_TIMESTAMP',
+  })
   createdAt: Date;
 }
 

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { RolesGuard } from '../../shared/auth/roles.guard';
 import { BillingModule } from '../billing/billing.module';
 import { ContentAccessLog } from './entities/content-access-log.entity';
 import { LlcGuide } from './entities/llc-guide.entity';
@@ -10,7 +11,7 @@ import { MediaService } from './media.service';
 @Module({
   imports: [TypeOrmModule.forFeature([PremiumVideo, LlcGuide, ContentAccessLog]), BillingModule],
   controllers: [MediaController],
-  providers: [MediaService],
+  providers: [MediaService, RolesGuard],
 })
 export class MediaModule {}
 

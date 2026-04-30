@@ -23,7 +23,20 @@ export class BankTransaction {
   @Column({ name: 'category_id', type: 'int', nullable: true })
   categoryId: number | null;
 
-  @CreateDateColumn({ type: 'timestamp with time zone', default: () => 'CURRENT_TIMESTAMP' })
+  @Column({ name: 'accounting_date', type: 'date', nullable: true })
+  accountingDate: string | null;
+
+  @Column({ name: 'account_code', type: 'varchar', length: 20, nullable: true })
+  accountCode: string | null;
+
+  @Column({ name: 'invoice_match_note', type: 'varchar', length: 255, nullable: true })
+  invoiceMatchNote: string | null;
+
+  @CreateDateColumn({
+    name: 'created_at',
+    type: 'timestamp with time zone',
+    default: () => 'CURRENT_TIMESTAMP',
+  })
   createdAt: Date;
 }
 
