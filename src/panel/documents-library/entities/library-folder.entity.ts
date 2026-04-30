@@ -14,7 +14,11 @@ export class LibraryFolder {
   @Column({ name: 'parent_folder_id', type: 'int', nullable: true })
   parentFolderId: number | null;
 
-  @CreateDateColumn({ type: 'timestamp with time zone', default: () => 'CURRENT_TIMESTAMP' })
+  @CreateDateColumn({
+    name: 'created_at',
+    type: 'timestamp with time zone',
+    default: () => 'CURRENT_TIMESTAMP',
+  })
   createdAt: Date;
 }
 

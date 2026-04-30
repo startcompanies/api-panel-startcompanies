@@ -20,7 +20,11 @@ export class LibraryDocument {
   @Column({ name: 'version', type: 'int', default: 1 })
   version: number;
 
-  @CreateDateColumn({ type: 'timestamp with time zone', default: () => 'CURRENT_TIMESTAMP' })
+  @CreateDateColumn({
+    name: 'created_at',
+    type: 'timestamp with time zone',
+    default: () => 'CURRENT_TIMESTAMP',
+  })
   createdAt: Date;
 }
 

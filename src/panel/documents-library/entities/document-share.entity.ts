@@ -14,7 +14,11 @@ export class DocumentShare {
   @Column({ name: 'permission', type: 'varchar', length: 20, default: 'read' })
   permission: 'read' | 'write';
 
-  @CreateDateColumn({ type: 'timestamp with time zone', default: () => 'CURRENT_TIMESTAMP' })
+  @CreateDateColumn({
+    name: 'created_at',
+    type: 'timestamp with time zone',
+    default: () => 'CURRENT_TIMESTAMP',
+  })
   createdAt: Date;
 }
 
