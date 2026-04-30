@@ -111,6 +111,59 @@ export class BillingService {
     return 'no_subscription';
   }
 
+  private subscriptionPriority(status: string): number {
+    switch ((status || '').toLowerCase()) {
+      case 'active':
+      case 'trialing':
+        return 100;
+      case 'past_due':
+      case 'unpaid':
+      case 'incomplete':
+        return 80;
+      case 'canceled':
+        return 40;
+      case 'incomplete_expired':
+      default:
+        return 10;
+    }
+  }
+
+  /**
+   * Fallback de consistencia: si el webhook no actualizó aún la DB, reconciliar leyendo Stripe.
+   */
+  private async reconcileBillingFromStripe(user: User): Promise<User> {
+    if (!user.stripeCustomerId) return user;
+    const stripe = this.stripeService.getClient();
+    if (!stripe) return user;
+
+    try {
+      const list = await stripe.subscriptions.list({
+        customer: user.stripeCustomerId,
+        status: 'all',
+        limit: 10,
+      });
+      if (!list.data.length) return user;
+
+      const best = [...list.data].sort((a, b) => {
+        const p = this.subscriptionPriority(b.status) - this.subscriptionPriority(a.status);
+        if (p !== 0) return p;
+        return Number((b as any).created || 0) - Number((a as any).created || 0);
+      })[0];
+
+      const currentPeriodEndUnix = Number((best as any)?.current_period_end || 0);
+      user.billingSubscriptionId = best.id;
+      user.billingSubscriptionStatus = best.status;
+      user.billingSubscriptionCurrentPeriodEnd =
+        currentPeriodEndUnix > 0 ? new Date(currentPeriodEndUnix * 1000) : null;
+      user.billingSubscriptionCancelAt = best.cancel_at ? new Date(best.cancel_at * 1000) : null;
+      user.billingAccessState = this.deriveAccessState(user);
+      return this.usersRepo.save(user);
+    } catch (e: any) {
+      this.logger.warn(`No se pudo reconciliar suscripción desde Stripe: ${e?.message || e}`);
+      return user;
+    }
+  }
+
   async ensureTrialWindow(user: User): Promise<User> {
     if (user.type !== 'client') {
       user.billingAccessState = this.deriveAccessState(user);
@@ -130,7 +183,8 @@ export class BillingService {
     if (!user) {
       throw new BadRequestException('Usuario no encontrado');
     }
-    const hydrated = await this.ensureTrialWindow(user);
+    let hydrated = await this.ensureTrialWindow(user);
+    hydrated = await this.reconcileBillingFromStripe(hydrated);
     const accessState = this.deriveAccessState(hydrated);
     const trialEndAt =
       hydrated.type === 'client' && hydrated.billingTrialEndAt
