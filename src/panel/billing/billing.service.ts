@@ -40,6 +40,48 @@ export class BillingService {
     return client;
   }
 
+  private async ensureStripeCustomer(user: User): Promise<string> {
+    if (user.stripeCustomerId) return user.stripeCustomerId;
+    const stripe = this.stripeClient;
+    const customer = await stripe.customers.create({
+      email: user.email,
+      name: [user.first_name, user.last_name].filter(Boolean).join(' ').trim() || user.username,
+      metadata: { userId: String(user.id) },
+    });
+    user.stripeCustomerId = customer.id;
+    await this.usersRepo.save(user);
+    return customer.id;
+  }
+
+  /**
+   * Usa price fijo si existe; si no existe en Stripe, cae a price_data dinámico.
+   * Evita 500 por desconfiguración de STRIPE_SUBSCRIPTION_PRICE_ID.
+   */
+  private async buildCheckoutLineItem(): Promise<Stripe.Checkout.SessionCreateParams.LineItem> {
+    const stripe = this.stripeClient;
+    if (this.stripePriceId) {
+      try {
+        await stripe.prices.retrieve(this.stripePriceId);
+        return { price: this.stripePriceId, quantity: 1 };
+      } catch (e: any) {
+        this.logger.warn(
+          `STRIPE_SUBSCRIPTION_PRICE_ID inválido (${this.stripePriceId}). Se usará price_data. ${e?.message || e}`,
+        );
+      }
+    }
+    return {
+      quantity: 1,
+      price_data: {
+        currency: 'usd',
+        unit_amount: Math.round(Number(this.monthlyPriceUsd || 25) * 100),
+        recurring: { interval: 'month' },
+        product_data: {
+          name: 'StartCompanies Panel Subscription',
+        },
+      },
+    };
+  }
+
   private addMonths(date: Date, months: number): Date {
     const d = new Date(date);
     d.setMonth(d.getMonth() + months);
@@ -108,30 +150,18 @@ export class BillingService {
   }
 
   async createCheckoutSession(userId: number): Promise<{ url: string }> {
-    if (!this.stripePriceId) {
-      throw new BadRequestException('Falta STRIPE_SUBSCRIPTION_PRICE_ID');
-    }
     const user = await this.usersRepo.findOne({ where: { id: userId } });
     if (!user) throw new BadRequestException('Usuario no encontrado');
     await this.ensureTrialWindow(user);
 
     const stripe = this.stripeClient;
-    let customerId = user.stripeCustomerId;
-    if (!customerId) {
-      const customer = await stripe.customers.create({
-        email: user.email,
-        name: [user.first_name, user.last_name].filter(Boolean).join(' ').trim() || user.username,
-        metadata: { userId: String(user.id) },
-      });
-      customerId = customer.id;
-      user.stripeCustomerId = customerId;
-      await this.usersRepo.save(user);
-    }
+    const customerId = await this.ensureStripeCustomer(user);
+    const lineItem = await this.buildCheckoutLineItem();
 
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       customer: customerId,
-      line_items: [{ price: this.stripePriceId, quantity: 1 }],
+      line_items: [lineItem],
       success_url: `${this.frontendBaseUrl}/panel/subscription?checkout=success`,
       cancel_url: `${this.frontendBaseUrl}/panel/subscription?checkout=cancel`,
       metadata: { userId: String(user.id) },
@@ -150,12 +180,10 @@ export class BillingService {
   async createCustomerPortalSession(userId: number): Promise<{ url: string }> {
     const user = await this.usersRepo.findOne({ where: { id: userId } });
     if (!user) throw new BadRequestException('Usuario no encontrado');
-    if (!user.stripeCustomerId) {
-      throw new BadRequestException('No existe cliente de Stripe para este usuario');
-    }
+    const customerId = await this.ensureStripeCustomer(user);
     const stripe = this.stripeClient;
     const session = await stripe.billingPortal.sessions.create({
-      customer: user.stripeCustomerId,
+      customer: customerId,
       return_url: `${this.frontendBaseUrl}/panel/subscription`,
     });
     return { url: session.url };
