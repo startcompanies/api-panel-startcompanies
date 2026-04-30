@@ -49,7 +49,7 @@ export class LoggingInterceptor implements NestInterceptor {
       this.logger.log(`   Params: ${JSON.stringify(params)}`);
     }
     
-    if (body && Object.keys(body).length > 0) {
+    if (body && this.hasBody(body)) {
       const bodyStr = this.formatBody(requestData);
       this.logger.log(`   Body: ${bodyStr}`);
     }
@@ -100,6 +100,13 @@ export class LoggingInterceptor implements NestInterceptor {
   }
 
   private sanitizeRequest(body: any): any {
+    if (Buffer.isBuffer(body)) {
+      return {
+        _type: 'Buffer',
+        size: body.length,
+        preview: body.subarray(0, Math.min(body.length, 80)).toString('utf8'),
+      };
+    }
     if (!body || typeof body !== 'object') return body;
 
     const sanitized = { ...body };
@@ -120,6 +127,14 @@ export class LoggingInterceptor implements NestInterceptor {
     });
 
     return sanitized;
+  }
+
+  private hasBody(body: any): boolean {
+    if (!body) return false;
+    if (Buffer.isBuffer(body)) return body.length > 0;
+    if (typeof body === 'string') return body.trim().length > 0;
+    if (typeof body === 'object') return Object.keys(body).length > 0;
+    return true;
   }
 
   private formatBody(body: any): string {
