@@ -41,9 +41,9 @@ export class RequestSubmittedNotificationsService {
     request: RequestEntity,
     client: Client | null,
     actorUser?: PanelRequestActorUser | null,
-    options?: { channel?: 'panel' | 'wizard' },
+    options?: { channel?: 'portal' | 'wizard' | 'lead' },
   ): Promise<void> {
-    const channel = options?.channel ?? 'panel';
+    const channel = options?.channel ?? 'portal';
 
     try {
       const typeLabel = TYPE_LABELS[request.type] ?? request.type;
@@ -92,9 +92,14 @@ export class RequestSubmittedNotificationsService {
       }
 
       // --- Correos (Resend) ---
-      const originLabel = request.partnerId
-        ? 'Solicitud con partner'
-        : 'Cliente directo';
+      const originLabel =
+        channel === 'lead'
+          ? 'Cliente lead'
+          : channel === 'wizard'
+            ? 'Cliente directo'
+            : request.partnerId
+              ? 'Partner'
+              : 'Cliente';
 
       for (const u of staff) {
         if (!u.email?.trim()) continue;
@@ -115,7 +120,7 @@ export class RequestSubmittedNotificationsService {
         }
       }
 
-      if (actorUser?.email && channel === 'panel') {
+      if (actorUser?.email && channel === 'portal') {
         const t = actorUser.type;
         if (t === 'partner' || t === 'client') {
           const displayName =

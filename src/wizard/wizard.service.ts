@@ -655,7 +655,12 @@ export class WizardService {
         type: createWizardRequestDto.type,
         status: initialRequestStatus,
         currentStep: createWizardRequestDto.currentStep || 1,
-        createdFrom: source === 'panel' ? 'panel' : 'wizard',
+        createdFrom:
+          source === 'crm-lead'
+            ? 'crm-lead'
+            : source === 'panel'
+              ? 'panel'
+              : 'wizard',
         clientId: client.id,
         partnerId: undefined, // Wizard no tiene partners
         notes: createWizardRequestDto.notes,
@@ -2265,7 +2270,10 @@ export class WizardService {
             updatedRequest,
             clientRow,
             null,
-            { channel: 'wizard' },
+            {
+              channel:
+                updatedRequest.createdFrom === 'crm-lead' ? 'lead' : 'wizard',
+            },
           );
         }
       } catch (notifyErr) {

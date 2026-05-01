@@ -487,7 +487,7 @@ export class EmailService {
     recipientName?: string;
     requestId: number;
     requestType: string;
-    channel: 'panel' | 'wizard';
+    channel: 'portal' | 'wizard' | 'lead';
     originLabel: string;
   }): Promise<void> {
     const { toEmail, recipientName, requestId, requestType, channel, originLabel } = params;
@@ -500,7 +500,8 @@ export class EmailService {
       this.configService.get<string>('FRONTEND_URL') || 'http://localhost:4200';
     const adminUrl = `${frontendUrl}/panel/requests/${requestId}`;
     const typeLabel = this.requestTypeToLabel(requestType);
-    const channelLabel = channel === 'wizard' ? 'Wizard' : 'Panel';
+    const channelLabel =
+      channel === 'wizard' ? 'Wizard' : channel === 'lead' ? 'Lead' : 'Portal';
 
     const greet = recipientName ? `Hola ${recipientName},` : 'Hola,';
     const bodyHtml = `

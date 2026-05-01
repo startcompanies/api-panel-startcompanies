@@ -1589,7 +1589,7 @@ export class RequestsService {
           savedRequest,
           clientRow,
           actorUser ?? null,
-          { channel: 'panel' },
+          { channel: 'portal' },
         );
       }
 
@@ -2669,7 +2669,7 @@ export class RequestsService {
           request,
           clientRow,
           actorUser ?? null,
-          { channel: 'panel' },
+          { channel: 'portal' },
         );
       }
 
