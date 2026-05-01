@@ -97,11 +97,21 @@ export class MediaService {
     return this.guidesRepo.find({ order: { createdAt: 'DESC' } });
   }
 
-  adminCreateGuide(body: { title: string; content: string; isPublished?: boolean }) {
+  adminCreateGuide(body: {
+    title: string;
+    content?: string;
+    contentHtml?: string | null;
+    attachmentUrl?: string | null;
+    attachmentMime?: string | null;
+    isPublished?: boolean;
+  }) {
     return this.guidesRepo.save(
       this.guidesRepo.create({
         title: body.title.trim(),
-        content: body.content,
+        content: body.content || '',
+        contentHtml: body.contentHtml ?? body.content ?? '',
+        attachmentUrl: body.attachmentUrl ?? null,
+        attachmentMime: body.attachmentMime ?? null,
         isPublished: body.isPublished ?? true,
       }),
     );
@@ -109,13 +119,23 @@ export class MediaService {
 
   async adminUpdateGuide(
     id: number,
-    body: { title?: string; content?: string; isPublished?: boolean },
+    body: {
+      title?: string;
+      content?: string;
+      contentHtml?: string | null;
+      attachmentUrl?: string | null;
+      attachmentMime?: string | null;
+      isPublished?: boolean;
+    },
   ) {
     await this.guidesRepo.update(
       { id },
       {
         ...(body.title !== undefined ? { title: body.title.trim() } : {}),
         ...(body.content !== undefined ? { content: body.content } : {}),
+        ...(body.contentHtml !== undefined ? { contentHtml: body.contentHtml } : {}),
+        ...(body.attachmentUrl !== undefined ? { attachmentUrl: body.attachmentUrl } : {}),
+        ...(body.attachmentMime !== undefined ? { attachmentMime: body.attachmentMime } : {}),
         ...(body.isPublished !== undefined ? { isPublished: body.isPublished } : {}),
       },
     );

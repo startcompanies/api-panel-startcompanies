@@ -6,6 +6,7 @@ import {
   Get,
   Patch,
   Post,
+  Put,
   Req,
   UploadedFile,
   UseGuards,
@@ -13,6 +14,8 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { SettingsService } from './settings.service';
+import { UserAiCredentialsService } from './user-ai-credentials.service';
+import { PutUserAiCredentialsDto } from './dtos/put-user-ai-credentials.dto';
 import { UpdateUserPreferencesDto } from './dtos/update-user-preferences.dto';
 import { UpdateClientCompanyProfileDto } from './dtos/update-client-company-profile.dto';
 import { AuthGuard } from '../../shared/auth/auth.guard';
@@ -25,7 +28,10 @@ import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nes
 @Controller('panel/settings')
 @UseGuards(AuthGuard)
 export class SettingsController {
-  constructor(private readonly settingsService: SettingsService) {}
+  constructor(
+    private readonly settingsService: SettingsService,
+    private readonly userAiCredentials: UserAiCredentialsService,
+  ) {}
 
   @Get('preferences')
   @ApiOperation({ summary: 'Obtener preferencias del usuario (idioma, tema, etc.)' })
@@ -40,6 +46,28 @@ export class SettingsController {
     @Body() dto: UpdateUserPreferencesDto,
   ) {
     return this.settingsService.updatePreferences(req.user.id, dto);
+  }
+
+  @Get('ai-credentials')
+  @ApiOperation({
+    summary: 'Estado de credenciales IA (Anthropic/OpenAI) para contabilidad',
+    description: 'No devuelve la API key; solo proveedor, si hay clave guardada y últimos 4 caracteres.',
+  })
+  getAiCredentials(@Req() req: { user: { id: number } }) {
+    return this.userAiCredentials.getStatus(req.user.id);
+  }
+
+  @Put('ai-credentials')
+  @ApiOperation({ summary: 'Guardar o actualizar API key de Anthropic u OpenAI (cifrada en servidor)' })
+  putAiCredentials(@Req() req: { user: { id: number } }, @Body() dto: PutUserAiCredentialsDto) {
+    return this.userAiCredentials.upsert(req.user.id, dto.provider, dto.apiKey);
+  }
+
+  @Delete('ai-credentials')
+  @ApiOperation({ summary: 'Eliminar credenciales IA guardadas' })
+  async deleteAiCredentials(@Req() req: { user: { id: number } }) {
+    await this.userAiCredentials.remove(req.user.id);
+    return { ok: true };
   }
 
   @Get('company')

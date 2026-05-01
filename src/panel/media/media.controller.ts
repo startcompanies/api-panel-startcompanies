@@ -86,7 +86,17 @@ export class MediaController {
   @Post('admin/guides')
   @UseGuards(RolesGuard)
   @Roles('admin', 'user')
-  adminCreateGuide(@Body() body: { title: string; content: string; isPublished?: boolean }) {
+  adminCreateGuide(
+    @Body()
+    body: {
+      title: string;
+      content?: string;
+      contentHtml?: string | null;
+      attachmentUrl?: string | null;
+      attachmentMime?: string | null;
+      isPublished?: boolean;
+    },
+  ) {
     return this.mediaService.adminCreateGuide(body);
   }
 
@@ -95,7 +105,15 @@ export class MediaController {
   @Roles('admin', 'user')
   adminUpdateGuide(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { title?: string; content?: string; isPublished?: boolean },
+    @Body()
+    body: {
+      title?: string;
+      content?: string;
+      contentHtml?: string | null;
+      attachmentUrl?: string | null;
+      attachmentMime?: string | null;
+      isPublished?: boolean;
+    },
   ) {
     return this.mediaService.adminUpdateGuide(id, body);
   }

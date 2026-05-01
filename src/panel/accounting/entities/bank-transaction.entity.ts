@@ -17,6 +17,10 @@ export class BankTransaction {
   @Column({ name: 'amount', type: 'decimal', precision: 12, scale: 2 })
   amount: number;
 
+  /** Banco detectado al importar el CSV (p. ej. Relay, Mercury). */
+  @Column({ name: 'source_bank', type: 'varchar', length: 64, nullable: true })
+  sourceBank: string | null;
+
   @Column({ name: 'fingerprint', type: 'varchar', length: 140, unique: true })
   fingerprint: string;
 

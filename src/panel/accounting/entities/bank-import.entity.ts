@@ -17,7 +17,11 @@ export class BankImport {
   @Column({ name: 'imported_by_user_id', type: 'int' })
   importedByUserId: number;
 
-  @CreateDateColumn({ type: 'timestamp with time zone', default: () => 'CURRENT_TIMESTAMP' })
+  @CreateDateColumn({
+    name: 'created_at',
+    type: 'timestamp with time zone',
+    default: () => 'CURRENT_TIMESTAMP',
+  })
   createdAt: Date;
 }
 

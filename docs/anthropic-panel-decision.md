@@ -1,25 +1,34 @@
-# Anthropic / IA en el panel — decisión de arquitectura
+# Anthropic / OpenAI e IA en contabilidad — arquitectura
 
-## Estado recomendado (producción)
+## Principios de seguridad
 
-- **No** exponer claves API de Anthropic en el navegador (el prototipo HTML usa BYOK con `anthropic-dangerous-direct-browser-access`, lo cual no debe replicarse tal cual).
-- **Integración productiva con Anthropic:** posponer hasta definir compliance, retención de datos y costos; si se activa, usar **solo backend** con `ANTHROPIC_API_KEY` en servidor (o secreto gestionado), nunca la clave del usuario en el cliente.
+- **Nunca** exponer la API key del usuario en el navegador hacia Anthropic/OpenAI (no BYOK en cliente tipo `anthropic-dangerous-direct-browser-access`).
+- Las claves son **por usuario**: se guardan en `user_ai_credentials` **cifradas** (AES-256-GCM) con una clave maestra de aplicación `USER_SECRETS_ENCRYPTION_KEY` (32 bytes, base64). Sin esa variable, **no** se pueden guardar credenciales (`PUT /panel/settings/ai-credentials` fallará con mensaje claro).
+- El **GET** de credenciales solo devuelve `provider`, `hasKey` y `keyLast4`, nunca la clave completa.
 
-## Implementación actual (Fase D)
+## Endpoints
 
-- El botón **«Sugerir categoría»** en contabilidad usa **`POST /panel/accounting/suggest-category`**, que aplica **reglas por palabras clave** en el servidor (sin llamadas externas). No requiere variables de entorno de Anthropic.
+| Método | Ruta | Uso |
+|--------|------|-----|
+| GET | `/panel/settings/ai-credentials` | Estado (sin secretos) |
+| PUT | `/panel/settings/ai-credentials` | `{ provider, apiKey }` — upsert cifrado |
+| DELETE | `/panel/settings/ai-credentials` | Borrar credencial |
+| POST | `/panel/accounting/suggest-category` | `{ description }` — IA si hay clave y modelo responde; si no, **reglas** |
+| POST | `/panel/accounting/transactions/bulk-apply-suggestions` | `{ useAi?: boolean }` — primero reglas; si `useAi !== false` y hay clave, segunda pasada IA con tope `AI_BULK_MAX_PER_REQUEST` (default 20) |
 
-## Si más adelante se desea Anthropic
+## Variables de entorno (servidor)
 
-1. Añadir `ANTHROPIC_API_KEY` solo en el entorno del API (Nest).
-2. Endpoint sugerido: `POST /panel/accounting/suggest-category-ai` con cuerpo `{ "description": "..." }`, prompt acotado, **sin** enviar PII innecesaria; rate limiting y logging sin datos sensibles.
-3. Documentar costos y política de retención; considerar cola de jobs para volúmenes altos.
+- `USER_SECRETS_ENCRYPTION_KEY` — obligatoria para guardar claves de usuario (generar: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`).
+- `ANTHROPIC_MODEL` — opcional (default `claude-3-5-haiku-20241022`).
+- `OPENAI_MODEL` — opcional (default `gpt-4o-mini`).
+- `AI_BULK_MAX_PER_REQUEST` — opcional (default `20`).
 
-## Proxy vs posponer
+## Compliance y coste
 
-| Opción | Ventaja | Riesgo / coste |
-|--------|---------|----------------|
-| **Posponer** | Cero secretos, cero compliance extra | Menos automatización |
-| **Proxy servidor** | Control, auditoría, sin CORS/BYOK en browser | Coste API, operación de claves |
+- Las **descripciones** de movimientos se envían al proveedor elegido por el usuario; debe informarse en UI (portal → Ajustes → IA contabilidad).
+- Coste variable según uso; el lote IA está **acotado** por petición; el usuario puede revocar la clave en la consola del proveedor.
 
-La decisión por defecto del proyecto: **reglas en servidor + posponer Anthropic** hasta requisitos claros de producto y legal.
+## Historial
+
+- Fase anterior: solo reglas en servidor, sin Anthropic/OpenAI.
+- Fase actual: **BYOK por usuario** en backend + fallback a reglas.

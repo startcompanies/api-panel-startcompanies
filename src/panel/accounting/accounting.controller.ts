@@ -18,6 +18,7 @@ import { AuthGuard } from '../../shared/auth/auth.guard';
 import { RolesGuard } from '../../shared/auth/roles.guard';
 import { Roles } from '../../shared/auth/roles.decorator';
 import { AccountingService } from './accounting.service';
+import { BulkApplySuggestionsDto } from './dtos/bulk-apply-suggestions.dto';
 
 @ApiTags('Panel - Accounting')
 @Controller('panel/accounting')
@@ -37,8 +38,8 @@ export class AccountingController {
 
   @Post('imports/preview')
   @Roles('admin', 'user', 'client')
-  preview(@Body() body: { csv: string }) {
-    return this.accountingService.previewCsv(body.csv);
+  preview(@Body() body: { csv: string; fileName?: string }) {
+    return this.accountingService.previewCsv(body.csv, body.fileName);
   }
 
   @Get('categories')
@@ -74,8 +75,20 @@ export class AccountingController {
 
   @Post('suggest-category')
   @Roles('admin', 'user', 'client')
-  suggest(@Body() body: { description: string }) {
-    return this.accountingService.suggestCategoryByRules(body.description || '');
+  suggest(
+    @Req() req: { user: { id: number; type?: string } },
+    @Body() body: { description: string; amount?: number },
+  ) {
+    return this.accountingService.suggestCategory(req.user, body.description || '', body.amount);
+  }
+
+  @Post('transactions/bulk-apply-suggestions')
+  @Roles('admin', 'user', 'client')
+  bulkApply(
+    @Req() req: { user: { id: number; type?: string } },
+    @Body() body: BulkApplySuggestionsDto,
+  ) {
+    return this.accountingService.bulkApplySuggestedCategories(req.user, body ?? {});
   }
 
   @Get('pl')

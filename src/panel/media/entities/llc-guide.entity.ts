@@ -11,6 +11,15 @@ export class LlcGuide {
   @Column({ type: 'text' })
   content: string;
 
+  @Column({ name: 'content_html', type: 'text', nullable: true })
+  contentHtml: string | null;
+
+  @Column({ name: 'attachment_url', type: 'text', nullable: true })
+  attachmentUrl: string | null;
+
+  @Column({ name: 'attachment_mime', type: 'varchar', length: 120, nullable: true })
+  attachmentMime: string | null;
+
   @Column({ name: 'is_published', type: 'boolean', default: true })
   isPublished: boolean;
 

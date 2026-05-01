@@ -20,7 +20,11 @@ export class PlSnapshot {
   @Column({ name: 'net_total', type: 'decimal', precision: 12, scale: 2, default: 0 })
   netTotal: number;
 
-  @CreateDateColumn({ type: 'timestamp with time zone', default: () => 'CURRENT_TIMESTAMP' })
+  @CreateDateColumn({
+    name: 'created_at',
+    type: 'timestamp with time zone',
+    default: () => 'CURRENT_TIMESTAMP',
+  })
   createdAt: Date;
 }
 
