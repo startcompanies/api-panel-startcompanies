@@ -14,7 +14,11 @@ export class LlcGuide {
   @Column({ name: 'is_published', type: 'boolean', default: true })
   isPublished: boolean;
 
-  @CreateDateColumn({ type: 'timestamp with time zone', default: () => 'CURRENT_TIMESTAMP' })
+  @CreateDateColumn({
+    name: 'created_at',
+    type: 'timestamp with time zone',
+    default: () => 'CURRENT_TIMESTAMP',
+  })
   createdAt: Date;
 }
 
