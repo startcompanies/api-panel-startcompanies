@@ -54,7 +54,7 @@ export class UserController {
   @Roles('admin', 'user')
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
-    summary: 'Obtener solo usuarios tipo user para el listado del panel',
+    summary: 'Obtener usuarios internos (admin y user) para el panel',
   })
   findAll() {
     return this.userService.findPanelUsers();

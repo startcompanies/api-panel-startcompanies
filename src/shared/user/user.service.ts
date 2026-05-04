@@ -227,12 +227,13 @@ export class UserService {
   }
 
   /**
-   * Obtiene solo los usuarios con tipo 'user' para el listado del panel (dashboard/usuarios).
+   * Obtiene usuarios internos del panel (admin y user).
    */
   async findPanelUsers(): Promise<User[]> {
     try {
       return await this.userRepository.find({
-        where: { type: 'user' as const },
+        where: [{ type: 'admin' as const }, { type: 'user' as const }],
+        order: { createdAt: 'DESC' },
       });
     } catch (e) {
       console.error('Error al obtener los usuarios del panel:', e);
