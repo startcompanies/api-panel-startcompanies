@@ -78,7 +78,21 @@ export class WizardService {
       return null;
     }
     
-    const date = new Date(dateString);
+    const trimmed = dateString.trim();
+    const dateOnlyMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+    const date = dateOnlyMatch
+      ? new Date(
+          Date.UTC(
+            Number(dateOnlyMatch[1]),
+            Number(dateOnlyMatch[2]) - 1,
+            Number(dateOnlyMatch[3]),
+            12,
+            0,
+            0,
+            0,
+          ),
+        )
+      : new Date(trimmed);
     if (isNaN(date.getTime())) {
       return null;
     }
