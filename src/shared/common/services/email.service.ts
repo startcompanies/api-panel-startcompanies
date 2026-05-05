@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
 
@@ -86,6 +86,109 @@ export class EmailService {
     <div class="footer">
       <img src="${BRAND.logoDark}" alt="Start Companies" width="112" height="28" />
       <p>© ${year} Start Companies LLC. Todos los derechos reservados.</p>
+    </div>
+  </div>
+</body>
+</html>
+`.trim();
+  }
+
+  private escapeHtmlAttr(s: string): string {
+    return s
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  /** Extrae solo la dirección de `RESEND_FROM_EMAIL` (ej. `Nombre <a@b.com>` → `a@b.com`). */
+  private extractFromEmailAddress(configuredFrom: string): string {
+    const s = configuredFrom.trim();
+    const m = s.match(/<([^>]+)>\s*$/);
+    if (m) return m[1].trim();
+    return s;
+  }
+
+  /** `Display Name <email>` para Resend; mismo buzón que siempre, solo cambia el nombre visible. */
+  private formatFromDisplayNameAndEmail(displayName: string, email: string): string {
+    let n = displayName.replace(/[\r\n]/g, ' ').trim() || 'Start Companies';
+    n = n.slice(0, 120);
+    const needsQuote = /[,;<>()[\]"]|\\/.test(n);
+    const local = needsQuote ? `"${n.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : n;
+    return `${local} <${email.trim()}>`;
+  }
+
+  /** URL de logo solo http(s) para `<img src>`. */
+  private safeIssuerLogoUrl(url: string | null | undefined): string | null {
+    if (!url?.trim()) return null;
+    const u = url.trim();
+    if (!/^https:\/\//i.test(u) && !/^http:\/\//i.test(u)) return null;
+    return this.escapeHtmlAttr(u);
+  }
+
+  /** Plantilla de correo de factura: marca del emisor (nombre + logo del perfil). */
+  private getInvoiceEmailHtml(params: {
+    title: string;
+    bodyHtml: string;
+    issuerName: string;
+    issuerLogoUrl: string | null;
+  }): string {
+    const { title, bodyHtml, issuerName, issuerLogoUrl } = params;
+    const year = new Date().getFullYear();
+    const safeNameText = issuerName
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    const safeTitleText = title
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    const logo = this.safeIssuerLogoUrl(issuerLogoUrl);
+    const logoAlt = this.escapeHtmlAttr(issuerName);
+
+    const headerInner = logo
+      ? `<div class="header" style="background: #f1f5f9; padding: 28px 24px; text-align: center; border-bottom: 1px solid #e2e8f0;">
+          <img src="${logo}" alt="${logoAlt}" width="160" height="48" style="max-height: 48px; width: auto; height: auto; display: block; margin: 0 auto 16px; object-fit: contain;" />
+          <p style="margin: 0 0 4px; color: ${BRAND.text}; font-size: 15px; font-weight: 600;">${safeNameText}</p>
+          <h1 style="margin: 0; color: ${BRAND.dark}; font-size: 20px; font-weight: 600;">${safeTitleText}</h1>
+        </div>`
+      : `<div class="header" style="background: linear-gradient(180deg, ${BRAND.primary} 0%, ${BRAND.secondary} 100%); padding: 28px 24px; text-align: center;">
+          <p style="margin: 0 0 8px; color: rgba(255,255,255,0.95); font-size: 15px; font-weight: 600;">${safeNameText}</p>
+          <h1 style="margin: 0; color: #ffffff; font-size: 22px; font-weight: 600;">${safeTitleText}</h1>
+        </div>`;
+
+    const footerImg = logo
+      ? `<img src="${logo}" alt="" width="112" height="36" style="max-height: 36px; width: auto; display: block; margin: 0 auto 8px; object-fit: contain;" />`
+      : `<img src="${BRAND.logoDark}" alt="" width="112" height="28" style="height: 28px; opacity: 0.85; display: block; margin: 0 auto;" />`;
+
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { margin: 0; font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: ${BRAND.text}; background: ${BRAND.bgMuted}; }
+    .wrap { max-width: 600px; margin: 0 auto; padding: 24px; }
+    .card { background: ${BRAND.bgLight}; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,22,39,0.08); }
+    .content { padding: 32px 28px; }
+    .content p { margin: 0 0 16px; color: ${BRAND.text}; }
+    .content a { color: ${BRAND.secondary}; }
+    .footer { padding: 20px 28px; text-align: center; border-top: 1px solid #e5e7eb; background: ${BRAND.bgLight}; }
+    .footer p { margin: 12px 0 0; font-size: 12px; color: #6b7280; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      ${headerInner}
+      <div class="content">
+        ${bodyHtml}
+      </div>
+    </div>
+    <div class="footer">
+      ${footerImg}
+      <p>© ${year} ${safeNameText}</p>
     </div>
   </div>
 </body>
@@ -629,6 +732,87 @@ export class EmailService {
       this.logger.log(`Email bienvenida sync Zoho (partner) enviado a ${email}`);
     } catch (error) {
       this.logger.error(`Error al enviar email bienvenida sync Zoho (partner) a ${email}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Envía factura al cliente con PDF adjunto (Resend).
+   * - Remitente: `RESEND_FROM_EMAIL` (dominio verificado en Resend).
+   * - Respuestas: `replyTo` o variable `RESEND_REPLY_TO` (p. ej. tu buzón de facturación).
+   */
+  async sendInvoiceToClient(params: {
+    to: string;
+    invoiceNumber: string;
+    totalAmount: number;
+    currency: string;
+    pdfBuffer: Buffer;
+    clientName?: string;
+    replyTo?: string | null;
+    /** Nombre legal del emisor (perfil empresa); remitente visible, mismo email de Resend. */
+    issuerLegalName?: string | null;
+    issuerLogoUrl?: string | null;
+  }): Promise<void> {
+    if (!this.resend) {
+      this.logger.error(`Factura ${params.invoiceNumber}: RESEND_API_KEY no configurada`);
+      throw new InternalServerErrorException(
+        'El envío de correo no está configurado en el servidor (RESEND_API_KEY).',
+      );
+    }
+    const configuredFrom =
+      this.configService.get<string>('RESEND_FROM_EMAIL') ||
+      'Start Companies <noreply@startcompanies.us>';
+    const fromEmail = this.extractFromEmailAddress(configuredFrom);
+    const issuerName = params.issuerLegalName?.trim() || 'Start Companies';
+    const from = this.formatFromDisplayNameAndEmail(issuerName, fromEmail);
+    const replyTo =
+      params.replyTo?.trim() ||
+      this.configService.get<string>('RESEND_REPLY_TO')?.trim() ||
+      undefined;
+    const totalLabel = `${params.currency} ${Number(params.totalAmount).toFixed(2)}`;
+    const cn = params.clientName?.trim();
+    const greetSafe = cn
+      ? `Hola ${cn.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')},`
+      : 'Hola,';
+    const invTitle = `Factura ${params.invoiceNumber}`;
+    const invNumSafe = String(params.invoiceNumber).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const bodyHtml = `
+      <p>${greetSafe}</p>
+      <p>Adjuntamos la factura <strong>${invNumSafe}</strong> por un total de <strong>${totalLabel}</strong>.</p>
+      <p>Gracias por tu confianza.</p>
+    `;
+    const payload: {
+      from: string;
+      to: string;
+      subject: string;
+      html: string;
+      attachments: { filename: string; content: Buffer }[];
+      replyTo?: string;
+    } = {
+      from,
+      to: params.to.trim(),
+      subject: `${invTitle} — ${totalLabel}`,
+      html: this.getInvoiceEmailHtml({
+        title: invTitle,
+        bodyHtml,
+        issuerName,
+        issuerLogoUrl: params.issuerLogoUrl ?? null,
+      }),
+      attachments: [
+        {
+          filename: `invoice-${params.invoiceNumber.replace(/[^\w.-]+/g, '_')}.pdf`,
+          content: params.pdfBuffer,
+        },
+      ],
+    };
+    if (replyTo) {
+      payload.replyTo = replyTo;
+    }
+    try {
+      await this.resend.emails.send(payload);
+      this.logger.log(`Factura ${params.invoiceNumber} enviada por email a ${params.to}`);
+    } catch (error) {
+      this.logger.error(`Error enviando factura ${params.invoiceNumber} a ${params.to}:`, error);
       throw error;
     }
   }

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { RolesGuard } from '../../shared/auth/roles.guard';
+import { CommonModule } from '../../shared/common/common.module';
 import { ClientCompanyProfile } from '../settings/entities/client-company-profile.entity';
 import { InvoicingController } from './invoicing.controller';
 import { InvoicingService } from './invoicing.service';
@@ -12,6 +13,7 @@ import { InvoicePayment } from './entities/invoice-payment.entity';
 
 @Module({
   imports: [
+    CommonModule,
     TypeOrmModule.forFeature([
       Invoice,
       InvoiceItem,

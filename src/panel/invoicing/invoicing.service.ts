@@ -12,6 +12,7 @@ import { InvoicePayment } from './entities/invoice-payment.entity';
 import { InvoiceItem } from './entities/invoice-item.entity';
 import { ClientCompanyProfile } from '../settings/entities/client-company-profile.entity';
 import { InvoicePdfService } from './invoice-pdf.service';
+import { EmailService } from '../../shared/common/services/email.service';
 
 export type InvoiceLineInput = {
   productName?: string;
@@ -36,6 +37,7 @@ export class InvoicingService {
     @InjectRepository(ClientCompanyProfile)
     private readonly companyRepo: Repository<ClientCompanyProfile>,
     private readonly invoicePdfService: InvoicePdfService,
+    private readonly emailService: EmailService,
   ) {}
 
   private lineTotal(qty: number, unitPrice: number, discountPercent: number): number {
@@ -305,13 +307,31 @@ export class InvoicingService {
     });
   }
 
+  private async recomputePaymentStatus(invoiceId: number): Promise<void> {
+    const inv = await this.invoicesRepo.findOne({ where: { id: invoiceId } });
+    if (!inv) return;
+    const payments = await this.paymentsRepo.find({ where: { invoiceId } });
+    const paid = Math.round(payments.reduce((s, p) => s + Number(p.amount), 0) * 100) / 100;
+    inv.paidAmount = paid;
+    const total = Math.round(Number(inv.totalAmount) * 100) / 100;
+    const eps = 0.009;
+    if (paid <= eps) {
+      inv.status = inv.sentAt ? 'sent' : 'draft';
+    } else if (paid >= total - eps) {
+      inv.status = 'paid';
+    } else {
+      inv.status = 'partial';
+    }
+    await this.invoicesRepo.save(inv);
+  }
+
   async addPartialPayment(invoiceId: number, userId: number, amount: number, method?: string) {
-    const invoice = await this.assertInvoiceOwner(invoiceId, userId);
+    await this.assertInvoiceOwner(invoiceId, userId);
+    if (!(Number(amount) > 0)) {
+      throw new BadRequestException('El monto debe ser mayor a cero');
+    }
     const payment = this.paymentsRepo.create({ invoiceId, amount, method: method ?? null });
     await this.paymentsRepo.save(payment);
-    invoice.paidAmount = Number(invoice.paidAmount) + Number(amount);
-    if (invoice.paidAmount > 0 && invoice.paidAmount < invoice.totalAmount) invoice.status = 'partial';
-    if (invoice.paidAmount >= invoice.totalAmount) invoice.status = 'paid';
     await this.eventsRepo.save(
       this.eventsRepo.create({
         invoiceId,
@@ -319,13 +339,72 @@ export class InvoicingService {
         payload: { amount, method: method ?? null },
       }),
     );
-    await this.invoicesRepo.save(invoice);
+    await this.recomputePaymentStatus(invoiceId);
+    const full = await this.assertInvoiceOwner(invoiceId, userId);
+    return this.serializeInvoiceForClient(full);
+  }
+
+  async listPayments(invoiceId: number, userId: number) {
+    await this.assertInvoiceOwner(invoiceId, userId);
+    const rows = await this.paymentsRepo.find({ where: { invoiceId }, order: { id: 'ASC' } });
+    return rows.map((p) => ({
+      id: p.id,
+      amount: Number(p.amount),
+      method: p.method,
+      paidAt: p.paidAt,
+    }));
+  }
+
+  async updatePayment(
+    invoiceId: number,
+    paymentId: number,
+    userId: number,
+    body: { amount?: number; method?: string | null },
+  ) {
+    await this.assertInvoiceOwner(invoiceId, userId);
+    const p = await this.paymentsRepo.findOne({ where: { id: paymentId, invoiceId } });
+    if (!p) throw new NotFoundException('Pago no encontrado');
+    if (body.amount !== undefined) {
+      if (!(Number(body.amount) > 0)) throw new BadRequestException('El monto debe ser mayor a cero');
+      p.amount = Number(body.amount);
+    }
+    if (body.method !== undefined) p.method = body.method;
+    await this.paymentsRepo.save(p);
+    await this.recomputePaymentStatus(invoiceId);
+    const full = await this.assertInvoiceOwner(invoiceId, userId);
+    return this.serializeInvoiceForClient(full);
+  }
+
+  async deletePayment(invoiceId: number, paymentId: number, userId: number) {
+    await this.assertInvoiceOwner(invoiceId, userId);
+    const r = await this.paymentsRepo.delete({ id: paymentId, invoiceId });
+    if (!r.affected) throw new NotFoundException('Pago no encontrado');
+    await this.recomputePaymentStatus(invoiceId);
     const full = await this.assertInvoiceOwner(invoiceId, userId);
     return this.serializeInvoiceForClient(full);
   }
 
   async markAsSent(id: number, userId: number) {
     const inv = await this.assertInvoiceOwner(id, userId);
+    const billTo = (inv.billTo || {}) as Record<string, unknown>;
+    const to = String(billTo['email'] || '').trim();
+    if (!to) {
+      throw new BadRequestException('Añade el correo del cliente en «Facturar a» para enviar la factura.');
+    }
+    const company = await this.companyRepo.findOne({ where: { userId } });
+    const pdfBuffer = await this.invoicePdfService.buildInvoicePdf(inv, company);
+    const replyTo = company?.billingEmail?.trim() || undefined;
+    await this.emailService.sendInvoiceToClient({
+      to,
+      invoiceNumber: inv.invoiceNumber || String(inv.id),
+      totalAmount: Number(inv.totalAmount),
+      currency: inv.currency || 'USD',
+      pdfBuffer,
+      clientName: String(billTo['companyName'] || billTo['name'] || ''),
+      replyTo,
+      issuerLegalName: company?.legalName ?? null,
+      issuerLogoUrl: company?.logoUrl ?? null,
+    });
     inv.status = 'sent';
     inv.sentAt = new Date();
     await this.invoicesRepo.save(inv);

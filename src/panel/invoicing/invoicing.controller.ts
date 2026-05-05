@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
@@ -69,5 +70,29 @@ export class InvoicingController {
     @Body() body: { amount: number; method?: string },
   ) {
     return this.invoicingService.addPartialPayment(id, req.user.id, body.amount, body.method);
+  }
+
+  @Get('invoices/:id/payments')
+  listPayments(@Req() req: { user: { id: number } }, @Param('id', ParseIntPipe) id: number) {
+    return this.invoicingService.listPayments(id, req.user.id);
+  }
+
+  @Patch('invoices/:id/payments/:paymentId')
+  updatePayment(
+    @Req() req: { user: { id: number } },
+    @Param('id', ParseIntPipe) id: number,
+    @Param('paymentId', ParseIntPipe) paymentId: number,
+    @Body() body: { amount?: number; method?: string | null },
+  ) {
+    return this.invoicingService.updatePayment(id, paymentId, req.user.id, body ?? {});
+  }
+
+  @Delete('invoices/:id/payments/:paymentId')
+  removePayment(
+    @Req() req: { user: { id: number } },
+    @Param('id', ParseIntPipe) id: number,
+    @Param('paymentId', ParseIntPipe) paymentId: number,
+  ) {
+    return this.invoicingService.deletePayment(id, paymentId, req.user.id);
   }
 }

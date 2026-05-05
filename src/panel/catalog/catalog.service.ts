@@ -7,6 +7,20 @@ import { CatalogPrice } from './entities/catalog-price.entity';
 
 @Injectable()
 export class CatalogService {
+  private parseMoney(v: unknown): number {
+    if (v == null || v === '') return 0;
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    let s = String(v).trim().replace(/\s/g, '');
+    const commaDec = /^[\d.]*,\d{1,2}$/.test(s);
+    if (commaDec) {
+      s = s.replace(/\./g, '').replace(',', '.');
+    } else {
+      s = s.replace(/,/g, '');
+    }
+    const n = parseFloat(s);
+    return Number.isFinite(n) ? n : 0;
+  }
+
   constructor(
     @InjectRepository(CatalogCategory)
     private readonly categoriesRepo: Repository<CatalogCategory>,
@@ -75,7 +89,7 @@ export class CatalogService {
         active: true,
       }),
     );
-    const price = Number(body.unitPriceUsd ?? 0);
+    const price = this.parseMoney(body.unitPriceUsd);
     if (price > 0) {
       await this.pricesRepo.save(
         this.pricesRepo.create({
@@ -102,11 +116,12 @@ export class CatalogService {
     await this.itemsRepo.save(row);
     if (body.unitPriceUsd !== undefined) {
       await this.pricesRepo.update({ itemId: id, isActive: true }, { isActive: false });
-      if (Number(body.unitPriceUsd) > 0) {
+      const price = this.parseMoney(body.unitPriceUsd);
+      if (price > 0) {
         await this.pricesRepo.save(
           this.pricesRepo.create({
             itemId: id,
-            amount: Number(body.unitPriceUsd),
+            amount: price,
             currency: 'USD',
             isActive: true,
           }),

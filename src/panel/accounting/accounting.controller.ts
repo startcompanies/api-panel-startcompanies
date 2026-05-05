@@ -111,7 +111,21 @@ export class AccountingController {
     @Res({ passthrough: false }) res: Response,
   ) {
     const csv = await this.accountingService.profitAndLossCsv(req.user, fromDate, toDate);
-    res.setHeader('Content-Disposition', `attachment; filename="pl-${fromDate}-${toDate}.csv"`);
+    res.setHeader('Content-Disposition', `attachment; filename="pl-resumen-${fromDate}-${toDate}.csv"`);
+    res.send(csv);
+  }
+
+  @Get('pl/transactions.csv')
+  @Roles('admin', 'user', 'client')
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  async exportPlTransactionsCsv(
+    @Req() req: { user: { id: number; type?: string } },
+    @Query('fromDate') fromDate: string,
+    @Query('toDate') toDate: string,
+    @Res({ passthrough: false }) res: Response,
+  ) {
+    const csv = await this.accountingService.profitAndLossTransactionsCsv(req.user, fromDate, toDate);
+    res.setHeader('Content-Disposition', `attachment; filename="pl-movimientos-${fromDate}-${toDate}.csv"`);
     res.send(csv);
   }
 }

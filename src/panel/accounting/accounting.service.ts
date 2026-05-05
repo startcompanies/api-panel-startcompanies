@@ -351,7 +351,19 @@ export class AccountingService {
     return ACCOUNT_LABELS[prefix] || prefix;
   }
 
-  async profitAndLoss(user: PanelUser, fromDate: string, toDate: string) {
+  /** Agregación P&L (misma lógica que la vista web). */
+  private async computeProfitAndLossCore(
+    user: PanelUser,
+    fromDate: string,
+    toDate: string,
+  ): Promise<{
+    incomeLines: { accountCode: string; label: string; amount: number }[];
+    expenseLines: { accountCode: string; label: string; amount: number }[];
+    totalIncome: number;
+    totalExpense: number;
+    netIncome: number;
+    marginPct: number;
+  }> {
     const rows = await this.plEligibleQuery(user, fromDate, toDate).getMany();
     const byPrefix = new Map<string, number>();
     for (const r of rows) {
@@ -370,6 +382,11 @@ export class AccountingService {
     const totalExpense = expenseLines.reduce((s, l) => s + Math.abs(Number(l.amount)), 0);
     const netIncome = totalIncome - totalExpense;
     const marginPct = totalIncome > 0 ? Math.round((netIncome / totalIncome) * 1000) / 10 : 0;
+    return { incomeLines, expenseLines, totalIncome, totalExpense, netIncome, marginPct };
+  }
+
+  async profitAndLoss(user: PanelUser, fromDate: string, toDate: string) {
+    const core = await this.computeProfitAndLossCore(user, fromDate, toDate);
 
     let projectedPendingInvoices = 0;
     if (user.type === 'client') {
@@ -385,9 +402,9 @@ export class AccountingService {
       this.snapshotsRepo.create({
         fromDate,
         toDate,
-        incomeTotal: totalIncome,
-        expenseTotal: totalExpense,
-        netTotal: netIncome,
+        incomeTotal: core.totalIncome,
+        expenseTotal: core.totalExpense,
+        netTotal: core.netIncome,
       }),
     );
 
@@ -395,15 +412,39 @@ export class AccountingService {
       fromDate,
       toDate,
       basis: 'cash' as const,
-      income: { lines: incomeLines, total: totalIncome },
-      expense: { lines: expenseLines, total: totalExpense },
-      netIncome,
-      marginPct,
+      income: { lines: core.incomeLines, total: core.totalIncome },
+      expense: { lines: core.expenseLines, total: core.totalExpense },
+      netIncome: core.netIncome,
+      marginPct: core.marginPct,
       projectedPendingInvoices,
     };
   }
 
+  /** CSV tipo estado de resultados (secciones + totales), alineado al P&L en pantalla. */
   async profitAndLossCsv(user: PanelUser, fromDate: string, toDate: string): Promise<string> {
+    const core = await this.computeProfitAndLossCore(user, fromDate, toDate);
+    const esc = (s: string) => `"${String(s).replace(/"/g, '""')}"`;
+    const rows: string[] = [];
+    rows.push(['Sección', 'Concepto', 'Código cuenta', 'Monto USD'].join(','));
+    rows.push(['Cabecera', esc(`Período ${fromDate} – ${toDate}`), '', ''].join(','));
+    rows.push(['Cabecera', 'Base contable (cash)', '', ''].join(','));
+    rows.push(['Ingresos', '', '', ''].join(','));
+    for (const line of core.incomeLines) {
+      rows.push(['', esc(line.label), line.accountCode, String(line.amount)].join(','));
+    }
+    rows.push(['', 'Total ingresos', '', String(core.totalIncome)].join(','));
+    rows.push(['Gastos', '', '', ''].join(','));
+    for (const line of core.expenseLines) {
+      rows.push(['', esc(line.label), line.accountCode, String(Math.abs(Number(line.amount)))].join(','));
+    }
+    rows.push(['', 'Total gastos', '', String(core.totalExpense)].join(','));
+    rows.push(['', 'Resultado neto', '', String(core.netIncome)].join(','));
+    rows.push(['', 'Margen %', '', String(core.marginPct)].join(','));
+    return rows.join('\n') + '\n';
+  }
+
+  /** Detalle por movimiento (exportación auxiliar). */
+  async profitAndLossTransactionsCsv(user: PanelUser, fromDate: string, toDate: string): Promise<string> {
     const rows = await this.plEligibleQuery(user, fromDate, toDate)
       .orderBy('tx.account_code', 'ASC')
       .addOrderBy('COALESCE(tx.accounting_date, tx.tx_date)', 'ASC')
