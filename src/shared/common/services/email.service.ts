@@ -118,6 +118,17 @@ export class EmailService {
     return `${local} <${email.trim()}>`;
   }
 
+  /**
+   * Patrón "On Behalf Of" para proveedores como Resend:
+   * - From usa dominio verificado (Start Companies)
+   * - Reply-To apunta al correo real del emisor (usuario/empresa)
+   */
+  private formatOnBehalfOfFrom(issuerName: string, platformName: string, verifiedFromEmail: string): string {
+    const safeIssuer = issuerName.replace(/[\r\n]/g, ' ').trim() || 'Cliente';
+    const display = `${safeIssuer} via ${platformName}`.slice(0, 140);
+    return this.formatFromDisplayNameAndEmail(display, verifiedFromEmail);
+  }
+
   /** URL de logo solo http(s) para `<img src>`. */
   private safeIssuerLogoUrl(url: string | null | undefined): string | null {
     if (!url?.trim()) return null;
@@ -752,6 +763,7 @@ export class EmailService {
     /** Nombre legal del emisor (perfil empresa); remitente visible, mismo email de Resend. */
     issuerLegalName?: string | null;
     issuerLogoUrl?: string | null;
+    issuerEmail?: string | null;
   }): Promise<void> {
     if (!this.resend) {
       this.logger.error(`Factura ${params.invoiceNumber}: RESEND_API_KEY no configurada`);
@@ -764,8 +776,10 @@ export class EmailService {
       'Start Companies <noreply@startcompanies.us>';
     const fromEmail = this.extractFromEmailAddress(configuredFrom);
     const issuerName = params.issuerLegalName?.trim() || 'Start Companies';
-    const from = this.formatFromDisplayNameAndEmail(issuerName, fromEmail);
+    const platformName = this.configService.get<string>('EMAIL_PLATFORM_NAME')?.trim() || 'Start Companies';
+    const from = this.formatOnBehalfOfFrom(issuerName, platformName, fromEmail);
     const replyTo =
+      params.issuerEmail?.trim() ||
       params.replyTo?.trim() ||
       this.configService.get<string>('RESEND_REPLY_TO')?.trim() ||
       undefined;

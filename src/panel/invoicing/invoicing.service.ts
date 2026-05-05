@@ -404,6 +404,7 @@ export class InvoicingService {
       replyTo,
       issuerLegalName: company?.legalName ?? null,
       issuerLogoUrl: company?.logoUrl ?? null,
+      issuerEmail: company?.billingEmail ?? null,
     });
     inv.status = 'sent';
     inv.sentAt = new Date();
