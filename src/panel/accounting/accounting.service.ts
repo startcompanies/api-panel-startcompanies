@@ -149,12 +149,16 @@ export class AccountingService {
       }),
     );
     let inserted = 0;
+    let skippedDuplicates = 0;
     for (const parsed of rows) {
       const fingerprint = createHash('sha1')
-        .update(`${parsed.txDate}|${parsed.description}|${parsed.amount}`)
+        .update(`${bankAccountId}|${parsed.txDate}|${parsed.description}|${parsed.amount}`)
         .digest('hex');
       const exists = await this.txRepo.findOne({ where: { fingerprint } });
-      if (exists) continue;
+      if (exists) {
+        skippedDuplicates += 1;
+        continue;
+      }
       await this.txRepo.save(
         this.txRepo.create({
           bankImportId: bankImport.id,
@@ -167,7 +171,13 @@ export class AccountingService {
       );
       inserted += 1;
     }
-    return { importId: bankImport.id, rowsParsed: rows.length, rowsInserted: inserted };
+    return {
+      importId: bankImport.id,
+      rowsParsed: rows.length,
+      rowsInserted: inserted,
+      rowsSkippedDuplicates: skippedDuplicates,
+      duplicatedImport: inserted === 0 && rows.length > 0,
+    };
   }
 
   private txScopeQuery(user: PanelUser) {
