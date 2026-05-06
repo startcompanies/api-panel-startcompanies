@@ -59,6 +59,24 @@ export class SettingsService {
     };
   }
 
+  /**
+   * Devuelve solo las preferencias de notificación del usuario.
+   * Si el usuario no tiene preferencias guardadas, devuelve los defaults (todo en true).
+   * Útil para evitar cargar el objeto completo cuando solo se necesita saber si notificar.
+   */
+  async getUserNotifPrefs(userId: number): Promise<{
+    email: boolean;
+    push: boolean;
+    requestUpdates: boolean;
+    documentUploads: boolean;
+  }> {
+    const row = await this.preferencesRepo.findOne({
+      where: { userId },
+      select: ['notifications'],
+    });
+    return row?.notifications ?? this.defaultPreferences().notifications;
+  }
+
   async updatePreferences(
     userId: number,
     dto: UpdateUserPreferencesDto,

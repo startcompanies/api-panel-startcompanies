@@ -8,9 +8,10 @@ import { NotificationsGateway } from './notifications.gateway';
 import { RequestSubmittedNotificationsService } from './request-submitted-notifications.service';
 import { RolesGuard } from '../../shared/auth/roles.guard';
 import { CommonModule } from '../../shared/common/common.module';
+import { SettingsModule } from '../settings/settings.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Notification, User]), CommonModule],
+  imports: [TypeOrmModule.forFeature([Notification, User]), CommonModule, SettingsModule],
   controllers: [NotificationsController],
   providers: [
     NotificationsGateway,

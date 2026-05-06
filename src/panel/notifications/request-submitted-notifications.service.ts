@@ -6,6 +6,7 @@ import { Client } from '../clients/entities/client.entity';
 import { Request as RequestEntity } from '../requests/entities/request.entity';
 import { NotificationsService } from './notifications.service';
 import { EmailService } from '../../shared/common/services/email.service';
+import { SettingsService } from '../settings/settings.service';
 
 const TYPE_LABELS: Record<string, string> = {
   'apertura-llc': 'Apertura LLC',
@@ -31,6 +32,7 @@ export class RequestSubmittedNotificationsService {
     private readonly userRepo: Repository<User>,
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
+    private readonly settingsService: SettingsService,
   ) {}
 
   /**
@@ -68,27 +70,33 @@ export class RequestSubmittedNotificationsService {
       }
 
       if (request.partnerId && !notified.has(request.partnerId)) {
-        await this.notificationsService.create({
-          userId: request.partnerId,
-          type: 'success',
-          title: 'Solicitud registrada',
-          message: `La solicitud ${summary} fue enviada al equipo.`,
-          link: `/panel/my-requests/${request.id}`,
-          requestId: request.id,
-        });
+        const partnerPrefs = await this.settingsService.getUserNotifPrefs(request.partnerId);
+        if (partnerPrefs.push && partnerPrefs.requestUpdates) {
+          await this.notificationsService.create({
+            userId: request.partnerId,
+            type: 'success',
+            title: 'Solicitud registrada',
+            message: `La solicitud ${summary} fue enviada al equipo.`,
+            link: `/panel/my-requests/${request.id}`,
+            requestId: request.id,
+          });
+        }
         notified.add(request.partnerId);
       }
 
       const clientUserId = client?.userId;
       if (clientUserId && !notified.has(clientUserId)) {
-        await this.notificationsService.create({
-          userId: clientUserId,
-          type: 'success',
-          title: 'Solicitud recibida',
-          message: `Tu solicitud ${summary} fue recibida. Puedes seguir el estado en el panel.`,
-          link: `/panel/my-requests/${request.id}`,
-          requestId: request.id,
-        });
+        const clientPrefs = await this.settingsService.getUserNotifPrefs(clientUserId);
+        if (clientPrefs.push && clientPrefs.requestUpdates) {
+          await this.notificationsService.create({
+            userId: clientUserId,
+            type: 'success',
+            title: 'Solicitud recibida',
+            message: `Tu solicitud ${summary} fue recibida. Puedes seguir el estado en el panel.`,
+            link: `/panel/my-requests/${request.id}`,
+            requestId: request.id,
+          });
+        }
       }
 
       // --- Correos (Resend) ---
@@ -101,6 +109,7 @@ export class RequestSubmittedNotificationsService {
               ? 'Partner'
               : 'Cliente';
 
+      // Staff siempre recibe el alerta interno (no aplican preferencias de usuario final)
       for (const u of staff) {
         if (!u.email?.trim()) continue;
         try {
@@ -123,21 +132,28 @@ export class RequestSubmittedNotificationsService {
       if (actorUser?.email && channel === 'portal') {
         const t = actorUser.type;
         if (t === 'partner' || t === 'client') {
-          const displayName =
-            [actorUser.first_name].filter(Boolean).join(' ').trim() ||
-            actorUser.username ||
-            actorUser.email;
-          try {
-            await this.emailService.sendPanelRequestSubmittedToActor({
-              email: actorUser.email,
-              displayName,
-              requestId: request.id,
-              requestType: request.type,
-              actorType: t,
-            });
-          } catch (emailErr) {
-            this.logger.error(
-              `Email actor panel falló para ${actorUser.email} (request ${request.id}): ${emailErr}`,
+          const actorPrefs = await this.settingsService.getUserNotifPrefs(actorUser.id);
+          if (actorPrefs.email && actorPrefs.requestUpdates) {
+            const displayName =
+              [actorUser.first_name].filter(Boolean).join(' ').trim() ||
+              actorUser.username ||
+              actorUser.email;
+            try {
+              await this.emailService.sendPanelRequestSubmittedToActor({
+                email: actorUser.email,
+                displayName,
+                requestId: request.id,
+                requestType: request.type,
+                actorType: t,
+              });
+            } catch (emailErr) {
+              this.logger.error(
+                `Email actor panel falló para ${actorUser.email} (request ${request.id}): ${emailErr}`,
+              );
+            }
+          } else {
+            this.logger.log(
+              `Email omitido para actor ${actorUser.id} (request ${request.id}): preferencias email=${actorPrefs.email} requestUpdates=${actorPrefs.requestUpdates}`,
             );
           }
         }
