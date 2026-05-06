@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Header,
   Param,
@@ -48,12 +49,64 @@ export class AccountingController {
     return this.accountingService.listCategories();
   }
 
+  @Get('account-catalog')
+  @Roles('admin', 'user', 'client')
+  accountCatalog() {
+    return this.accountingService.listAccountCatalog();
+  }
+
+  @Post('account-catalog')
+  @Roles('admin', 'user')
+  createAccountCatalog(
+    @Body()
+    body: {
+      code: string;
+      name: string;
+      type: 'income' | 'expense' | 'other';
+      plSection?: string;
+      plGroup?: string;
+      orderIndex?: number;
+      active?: boolean;
+    },
+  ) {
+    return this.accountingService.createAccountCatalogEntry(body);
+  }
+
+  @Patch('account-catalog/:id')
+  @Roles('admin', 'user')
+  updateAccountCatalog(
+    @Param('id', ParseIntPipe) id: number,
+    @Body()
+    body: {
+      code?: string;
+      name?: string;
+      type?: 'income' | 'expense' | 'other';
+      plSection?: string | null;
+      plGroup?: string | null;
+      orderIndex?: number;
+      active?: boolean;
+    },
+  ) {
+    return this.accountingService.updateAccountCatalogEntry(id, body);
+  }
+
+  @Delete('account-catalog/:id')
+  @Roles('admin', 'user')
+  deleteAccountCatalog(@Param('id', ParseIntPipe) id: number) {
+    return this.accountingService.deleteAccountCatalogEntry(id);
+  }
+
   @Get('transactions')
   @Roles('admin', 'user', 'client')
   listTransactions(
     @Req() req: { user: { id: number; type?: string } },
     @Query('uncategorized') uncategorized?: string,
+    @Query('needsReview') needsReview?: string,
   ) {
+    const nr = needsReview === '1' || needsReview === 'true';
+    if (nr) {
+      return this.accountingService.listTransactions(req.user, { needsReview: true });
+    }
     return this.accountingService.listTransactions(req.user, uncategorized === '1' || uncategorized === 'true');
   }
 

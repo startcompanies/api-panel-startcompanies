@@ -1,4 +1,4 @@
-import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
 
 @Entity('bank_transactions')
 export class BankTransaction {
@@ -30,8 +30,22 @@ export class BankTransaction {
   @Column({ name: 'accounting_date', type: 'date', nullable: true })
   accountingDate: string | null;
 
-  @Column({ name: 'account_code', type: 'varchar', length: 20, nullable: true })
+  @Column({ name: 'account_code', type: 'varchar', length: 64, nullable: true })
   accountCode: string | null;
+
+  /** Origen de la última clasificación: exact, fuzzy, ai, manual. */
+  @Column({ name: 'classification_source', type: 'varchar', length: 24, nullable: true })
+  classificationSource: string | null;
+
+  @Column({ name: 'classification_confidence', type: 'decimal', precision: 8, scale: 4, nullable: true })
+  classificationConfidence: string | number | null;
+
+  @Column({ name: 'needs_review', type: 'boolean', default: false })
+  needsReview: boolean;
+
+  /** Clave estable para reglas exactas (payee / descripción normalizada). */
+  @Column({ name: 'payee_normalized', type: 'varchar', length: 255, nullable: true })
+  payeeNormalized: string | null;
 
   @Column({ name: 'invoice_match_note', type: 'varchar', length: 255, nullable: true })
   invoiceMatchNote: string | null;
@@ -42,5 +56,12 @@ export class BankTransaction {
     default: () => 'CURRENT_TIMESTAMP',
   })
   createdAt: Date;
+
+  @UpdateDateColumn({
+    name: 'updated_at',
+    type: 'timestamp with time zone',
+    default: () => 'CURRENT_TIMESTAMP',
+  })
+  updatedAt: Date;
 }
 
