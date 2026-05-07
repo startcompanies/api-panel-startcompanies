@@ -359,7 +359,7 @@ export class InvoicingService {
     invoiceId: number,
     paymentId: number,
     userId: number,
-    body: { amount?: number; method?: string | null },
+    body: { amount?: number; method?: string | null; paidAt?: string | null },
   ) {
     await this.assertInvoiceOwner(invoiceId, userId);
     const p = await this.paymentsRepo.findOne({ where: { id: paymentId, invoiceId } });
@@ -369,6 +369,10 @@ export class InvoicingService {
       p.amount = Number(body.amount);
     }
     if (body.method !== undefined) p.method = body.method;
+    if (body.paidAt !== undefined && body.paidAt !== null) {
+      const d = new Date(body.paidAt);
+      if (!Number.isNaN(d.getTime())) p.paidAt = d;
+    }
     await this.paymentsRepo.save(p);
     await this.recomputePaymentStatus(invoiceId);
     const full = await this.assertInvoiceOwner(invoiceId, userId);

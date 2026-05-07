@@ -82,7 +82,7 @@ export class InvoicingController {
     @Req() req: { user: { id: number } },
     @Param('id', ParseIntPipe) id: number,
     @Param('paymentId', ParseIntPipe) paymentId: number,
-    @Body() body: { amount?: number; method?: string | null },
+    @Body() body: { amount?: number; method?: string | null; paidAt?: string | null },
   ) {
     return this.invoicingService.updatePayment(id, paymentId, req.user.id, body ?? {});
   }

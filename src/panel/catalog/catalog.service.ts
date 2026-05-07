@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { CatalogCategory } from './entities/catalog-category.entity';
@@ -63,10 +63,22 @@ export class CatalogService {
   }
 
   async listMyItems(ownerUserId: number) {
-    return this.itemsRepo.find({
-      where: { ownerUserId },
-      order: { createdAt: 'DESC' },
-    });
+    return this.itemsRepo
+      .createQueryBuilder('item')
+      .leftJoin(CatalogPrice, 'price', 'price.item_id = item.id AND price.is_active = true')
+      .where('item.owner_user_id = :uid', { uid: ownerUserId })
+      .select([
+        'item.id as id',
+        'item.name as name',
+        'item.description as description',
+        'item.unit_measure as "unitMeasure"',
+        'item.active as active',
+        'item.created_at as "createdAt"',
+        'item.updated_at as "updatedAt"',
+        'price.amount as "unitPriceUsd"',
+      ])
+      .orderBy('item.created_at', 'DESC')
+      .getRawMany();
   }
 
   private async assertMyItem(ownerUserId: number, id: number): Promise<CatalogItem> {
@@ -80,6 +92,9 @@ export class CatalogService {
     ownerUserId: number,
     body: { name: string; description?: string; unitMeasure?: string; unitPriceUsd?: number },
   ) {
+    if (!body.name?.trim()) throw new BadRequestException('El nombre del producto es obligatorio.');
+    const price = this.parseMoney(body.unitPriceUsd);
+    if (!(price > 0)) throw new BadRequestException('El precio debe ser mayor a $0.');
     const item = await this.itemsRepo.save(
       this.itemsRepo.create({
         name: body.name.trim(),
@@ -89,7 +104,6 @@ export class CatalogService {
         active: true,
       }),
     );
-    const price = this.parseMoney(body.unitPriceUsd);
     if (price > 0) {
       await this.pricesRepo.save(
         this.pricesRepo.create({
@@ -115,18 +129,17 @@ export class CatalogService {
     if (body.active !== undefined) row.active = body.active;
     await this.itemsRepo.save(row);
     if (body.unitPriceUsd !== undefined) {
-      await this.pricesRepo.update({ itemId: id, isActive: true }, { isActive: false });
       const price = this.parseMoney(body.unitPriceUsd);
-      if (price > 0) {
-        await this.pricesRepo.save(
-          this.pricesRepo.create({
-            itemId: id,
-            amount: price,
-            currency: 'USD',
-            isActive: true,
-          }),
-        );
-      }
+      if (!(price > 0)) throw new BadRequestException('El precio debe ser mayor a $0.');
+      await this.pricesRepo.update({ itemId: id, isActive: true }, { isActive: false });
+      await this.pricesRepo.save(
+        this.pricesRepo.create({
+          itemId: id,
+          amount: price,
+          currency: 'USD',
+          isActive: true,
+        }),
+      );
     }
     return this.findMyItemWithPrice(ownerUserId, id);
   }
