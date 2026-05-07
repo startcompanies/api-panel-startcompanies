@@ -249,7 +249,13 @@ export class InvoicingService {
   ) {
     const inv = await this.assertInvoiceOwner(invoiceId, userId);
     if (inv.status === 'paid' || inv.status === 'void') {
-      throw new BadRequestException('No se puede editar esta factura');
+      // Solo se permiten actualizar campos no financieros (notas, cliente, instrucciones de cobro)
+      if (body.notes !== undefined) inv.notes = body.notes ?? null;
+      if (body.billTo !== undefined) inv.billTo = (body.billTo ?? null) as any;
+      if (body.paymentInstructions !== undefined) inv.paymentInstructions = (body.paymentInstructions ?? null) as any;
+      await this.invoicesRepo.save(inv);
+      const full = await this.assertInvoiceOwner(invoiceId, userId);
+      return this.serializeInvoiceForClient(full);
     }
     const rawItems =
       body.items !== undefined
