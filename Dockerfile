@@ -62,6 +62,8 @@ EXPOSE 3002
 # Variables de entorno por defecto
 ENV NODE_ENV=production
 ENV PORT=3002
+# Si es "1" o "true", no se ejecutan migraciones al arrancar (mantenimiento / rollback manual)
+# ENV SKIP_DB_MIGRATIONS=
 
 # Healthcheck para Dokploy
 # Verifica que la API esté respondiendo (cualquier respuesta 2xx o 4xx indica que el servidor está activo)
@@ -71,6 +73,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
 # Usar dumb-init para manejo correcto de señales
 ENTRYPOINT ["dumb-init", "--"]
 
-# Comando para iniciar la aplicación
-CMD ["npm", "run", "start:prod"]
+# Migraciones TypeORM antes de la API (mismo flujo que `npm run migration:run:prod`).
+# Requiere variables de BD (p. ej. DATABASE_URL) en runtime. Si fallan, el contenedor no arranca.
+CMD ["sh", "-c", "if [ \"${SKIP_DB_MIGRATIONS}\" = \"1\" ] || [ \"${SKIP_DB_MIGRATIONS}\" = \"true\" ]; then echo '[entrypoint] SKIP_DB_MIGRATIONS: omitiendo migraciones'; else echo '[entrypoint] Ejecutando migraciones...' && node dist/scripts/run-migration.js run; fi && exec node dist/src/main"]
 
