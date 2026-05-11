@@ -10,6 +10,7 @@ import { Invoice } from './entities/invoice.entity';
 import { InvoiceEvent } from './entities/invoice-event.entity';
 import { InvoiceItem } from './entities/invoice-item.entity';
 import { InvoicePayment } from './entities/invoice-payment.entity';
+import { InvoiceBillingClient } from './entities/invoice-billing-client.entity';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { InvoicePayment } from './entities/invoice-payment.entity';
       InvoicePayment,
       InvoiceEvent,
       ClientCompanyProfile,
+      InvoiceBillingClient,
     ]),
   ],
   controllers: [InvoicingController],

@@ -30,6 +30,7 @@ import { Invoice } from './panel/invoicing/entities/invoice.entity';
 import { InvoiceItem } from './panel/invoicing/entities/invoice-item.entity';
 import { InvoicePayment } from './panel/invoicing/entities/invoice-payment.entity';
 import { InvoiceEvent } from './panel/invoicing/entities/invoice-event.entity';
+import { InvoiceBillingClient } from './panel/invoicing/entities/invoice-billing-client.entity';
 import { CatalogCategory } from './panel/catalog/entities/catalog-category.entity';
 import { CatalogItem } from './panel/catalog/entities/catalog-item.entity';
 import { CatalogPrice } from './panel/catalog/entities/catalog-price.entity';
@@ -84,6 +85,7 @@ export const dataSourceOptions: DataSourceOptions = {
     InvoiceItem,
     InvoicePayment,
     InvoiceEvent,
+    InvoiceBillingClient,
     CatalogCategory,
     CatalogItem,
     CatalogPrice,

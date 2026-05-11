@@ -13,6 +13,9 @@ import { InvoiceItem } from './entities/invoice-item.entity';
 import { ClientCompanyProfile } from '../settings/entities/client-company-profile.entity';
 import { InvoicePdfService } from './invoice-pdf.service';
 import { EmailService } from '../../shared/common/services/email.service';
+import { InvoiceBillingClient } from './entities/invoice-billing-client.entity';
+import { CreateBillingClientDto } from './dtos/create-billing-client.dto';
+import { UpdateBillingClientDto } from './dtos/update-billing-client.dto';
 
 export type InvoiceLineInput = {
   productName?: string;
@@ -36,6 +39,8 @@ export class InvoicingService {
     private readonly eventsRepo: Repository<InvoiceEvent>,
     @InjectRepository(ClientCompanyProfile)
     private readonly companyRepo: Repository<ClientCompanyProfile>,
+    @InjectRepository(InvoiceBillingClient)
+    private readonly billingClientsRepo: Repository<InvoiceBillingClient>,
     private readonly invoicePdfService: InvoicePdfService,
     private readonly emailService: EmailService,
   ) {}
@@ -427,5 +432,66 @@ export class InvoicingService {
     const invoice = await this.assertInvoiceOwner(id, userId);
     const company = await this.companyRepo.findOne({ where: { userId } });
     return this.invoicePdfService.buildInvoicePdf(invoice, company);
+  }
+
+  /** Clientes de facturación (Bill-to reutilizables). */
+  serializeBillingClient(row: InvoiceBillingClient): Record<string, unknown> {
+    return {
+      id: row.id,
+      companyName: row.companyName,
+      ein: row.ein,
+      address: row.address,
+      email: row.email,
+      phone: row.phone,
+      notes: row.notes,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  private async assertBillingClientOwner(id: number, userId: number): Promise<InvoiceBillingClient> {
+    const r = await this.billingClientsRepo.findOne({ where: { id, ownerUserId: userId } });
+    if (!r) throw new NotFoundException('Cliente de facturación no encontrado');
+    return r;
+  }
+
+  async listBillingClients(userId: number) {
+    const rows = await this.billingClientsRepo.find({
+      where: { ownerUserId: userId },
+      order: { companyName: 'ASC', id: 'ASC' },
+    });
+    return rows.map((x) => this.serializeBillingClient(x));
+  }
+
+  async createBillingClient(userId: number, dto: CreateBillingClientDto) {
+    const row = this.billingClientsRepo.create({
+      ownerUserId: userId,
+      companyName: dto.companyName.trim(),
+      ein: dto.ein?.trim() || null,
+      address: dto.address?.trim() || null,
+      email: dto.email?.trim() || null,
+      phone: dto.phone?.trim() || null,
+      notes: dto.notes?.trim() || null,
+    });
+    const saved = await this.billingClientsRepo.save(row);
+    return this.serializeBillingClient(saved);
+  }
+
+  async updateBillingClient(id: number, userId: number, dto: UpdateBillingClientDto) {
+    const row = await this.assertBillingClientOwner(id, userId);
+    if (dto.companyName != null) row.companyName = dto.companyName.trim();
+    if (dto.ein !== undefined) row.ein = dto.ein?.trim() || null;
+    if (dto.address !== undefined) row.address = dto.address?.trim() || null;
+    if (dto.email !== undefined) row.email = dto.email?.trim() || null;
+    if (dto.phone !== undefined) row.phone = dto.phone?.trim() || null;
+    if (dto.notes !== undefined) row.notes = dto.notes?.trim() || null;
+    await this.billingClientsRepo.save(row);
+    return this.serializeBillingClient(row);
+  }
+
+  async deleteBillingClient(id: number, userId: number) {
+    await this.assertBillingClientOwner(id, userId);
+    await this.billingClientsRepo.delete({ id, ownerUserId: userId });
+    return { ok: true as const };
   }
 }

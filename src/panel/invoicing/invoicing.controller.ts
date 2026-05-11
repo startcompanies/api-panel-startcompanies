@@ -10,12 +10,16 @@ import {
   Req,
   StreamableFile,
   UseGuards,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '../../shared/auth/auth.guard';
 import { RolesGuard } from '../../shared/auth/roles.guard';
 import { Roles } from '../../shared/auth/roles.decorator';
 import { InvoicingService } from './invoicing.service';
+import { CreateBillingClientDto } from './dtos/create-billing-client.dto';
+import { UpdateBillingClientDto } from './dtos/update-billing-client.dto';
 
 @ApiTags('Panel - Invoicing')
 @Controller('panel/invoicing')
@@ -24,6 +28,32 @@ import { InvoicingService } from './invoicing.service';
 @ApiBearerAuth('JWT-auth')
 export class InvoicingController {
   constructor(private readonly invoicingService: InvoicingService) {}
+
+  @Get('billing-clients')
+  listBillingClients(@Req() req: { user: { id: number } }) {
+    return this.invoicingService.listBillingClients(req.user.id);
+  }
+
+  @Post('billing-clients')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
+  createBillingClient(@Req() req: { user: { id: number } }, @Body() body: CreateBillingClientDto) {
+    return this.invoicingService.createBillingClient(req.user.id, body);
+  }
+
+  @Patch('billing-clients/:id')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
+  updateBillingClient(
+    @Req() req: { user: { id: number } },
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: UpdateBillingClientDto,
+  ) {
+    return this.invoicingService.updateBillingClient(id, req.user.id, body);
+  }
+
+  @Delete('billing-clients/:id')
+  deleteBillingClient(@Req() req: { user: { id: number } }, @Param('id', ParseIntPipe) id: number) {
+    return this.invoicingService.deleteBillingClient(id, req.user.id);
+  }
 
   @Get('invoices')
   listInvoices(@Req() req: { user: { id: number } }) {
