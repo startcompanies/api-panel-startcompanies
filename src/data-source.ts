@@ -3,10 +3,6 @@ import { DataSource, DataSourceOptions } from 'typeorm';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 import { User } from './shared/user/entities/user.entity';
-import { Post } from './blog/posts/entities/post.entity';
-import { Category } from './blog/categories/entities/category.entity';
-import { Tag } from './blog/tags/entities/tag.entity';
-import { ReusableElement } from './blog/reusable-elements/entities/reusable-element.entity';
 
 // Cargar variables de entorno
 dotenv.config();
@@ -68,13 +64,8 @@ export const dataSourceOptions: DataSourceOptions = {
   password: process.env.DB_PASSWORD || 'postgres',
   database: process.env.DB_NAME || 'startcompanies',
   entities: [
-    // Entidades existentes (Blog)
+    // Entidades del Panel
     User,
-    Post,
-    Category,
-    Tag,
-    ReusableElement,
-    // Nuevas entidades del Panel
     Request,
     AperturaLlcRequest,
     RenovacionLlcRequest,

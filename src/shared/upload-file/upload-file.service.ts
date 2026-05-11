@@ -42,27 +42,6 @@ export class UploadFileService {
   }
 
   /**
-   * Segmento de carpeta bajo `blog/` para imágenes de un post (solo [a-z0-9-]).
-   */
-  normalizeBlogFolderSlug(slug: string): string {
-    return (slug || '')
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9-]/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '');
-  }
-
-  /**
-   * Prefijo S3 para imágenes de un post: `blog/{slug}`.
-   * Si el slug queda vacío tras normalizar, devuelve `blog` (comportamiento anterior).
-   */
-  buildBlogImageFolder(slug: string): string {
-    const n = this.normalizeBlogFolderSlug(slug);
-    return n ? `blog/${n}` : 'blog';
-  }
-
-  /**
    * Nombre de archivo para subidas desde URL: último segmento del path, sanitizado.
    */
   private deriveFilenameFromImageUrl(urlStr: string, contentType: string): string {
@@ -177,7 +156,7 @@ export class UploadFileService {
     requestUuid?: string,
     folder?: string,
   ): Promise<{ url: string; key: string } | undefined> {
-    // Si se especifica folder (ej: blog), usar key = folder/{timestamp}-{filename}
+    // Si se especifica folder, usar key = folder/{timestamp}-{filename}
     const folderNormalizado = folder && folder.trim()
       ? folder.replace(/[^a-z0-9-_/]/gi, '').replace(/\/+/g, '/').replace(/^\/|\/$/g, '')
       : null;
@@ -251,7 +230,6 @@ export class UploadFileService {
 
   /**
    * Copia un objeto dentro del mismo bucket a `destFolder/{timestamp}-{basename}`.
-   * Usado para pasar imágenes de `blog/archivo.png` a `blog/{slug}/...` sin re-descargar por HTTP.
    */
   private async copyS3ObjectToFolder(
     sourceKey: string,
@@ -278,9 +256,7 @@ export class UploadFileService {
 
   /**
    * Descarga una imagen desde una URL y la sube a S3, o copia dentro del bucket si ya está en media.
-   * - Si la URL ya apunta a `folder/` (p. ej. blog/mi-slug/), no hace nada.
-   * - Si apunta a otro prefijo bajo `blog/` en el mismo dominio (p. ej. blog/plano.png u otro slug),
-   *   copia el objeto a `folder/` (reubicación para contenido migrado).
+   * - Si la URL ya apunta a `folder/`, no hace nada.
    * - Si es externa, descarga por HTTP y sube a `folder/`.
    */
   async uploadFromUrl(
@@ -294,7 +270,7 @@ export class UploadFileService {
 
     const mediaDomainClean = this.mediaDomain.replace(/\/$/, '');
     const targetFolder =
-      (folder && folder.trim())?.replace(/^\/+|\/+$/g, '').replace(/\/+/g, '/') || 'blog';
+      (folder && folder.trim())?.replace(/^\/+|\/+$/g, '').replace(/\/+/g, '/') || 'media';
 
     const urlNoFrag = url.split('#')[0];
     const expectedPrefix = `${mediaDomainClean}/${targetFolder}/`;
@@ -311,11 +287,10 @@ export class UploadFileService {
     const sourceKey = this.extractS3KeyFromMediaUrl(urlNoFrag.split('?')[0]);
     if (
       sourceKey &&
-      sourceKey.startsWith('blog/') &&
       !sourceKey.startsWith(`${targetFolder}/`)
     ) {
       this.logger.log(
-        `Reubicando imagen en S3 bajo blog/: ${sourceKey} → ${targetFolder}/`,
+        `Reubicando imagen en S3: ${sourceKey} → ${targetFolder}/`,
       );
       return await this.copyS3ObjectToFolder(sourceKey, targetFolder);
     }

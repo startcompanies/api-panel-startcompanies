@@ -4,7 +4,6 @@ import { UserSeedService } from './user-seed.service';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from './entities/user.entity';
 import { UserController } from './user.controller';
-import { Post } from '../../blog/posts/entities/post.entity';
 import { Request } from '../../panel/requests/entities/request.entity';
 import { Client } from '../../panel/clients/entities/client.entity';
 import { RolesGuard } from '../../shared/auth/roles.guard';
@@ -17,7 +16,7 @@ import { ZohoConfigModule } from '../../zoho-config/zoho-config.module';
   controllers: [UserController],
   providers: [UserService, UserSeedService, RolesGuard],
   imports: [
-    TypeOrmModule.forFeature([User, Post, Request, Client]),
+    TypeOrmModule.forFeature([User, Request, Client]),
     ZohoConfigModule,
     CommonModule,
     JwtModule.register({

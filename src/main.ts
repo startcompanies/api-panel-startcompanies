@@ -55,7 +55,7 @@ async function bootstrap() {
   const config = new DocumentBuilder()
     .setTitle('API Start Companies')
     .setDescription(
-      'Documentación de la API para Start Companies LLC - Blog y Panel Administrativo',
+      'Documentación de la API para Start Companies LLC - Panel Administrativo',
     )
     .setVersion('1.0')
     .addBearerAuth(

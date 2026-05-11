@@ -56,14 +56,14 @@ export class CreateUserDto {
   @ApiProperty({ 
     example: 'admin', 
     description: 'Tipo de usuario',
-    enum: ['user', 'client', 'partner', 'admin', 'editor'],
+    enum: ['user', 'client', 'partner', 'admin'],
     required: false 
   })
   @IsOptional()
-  @IsIn(['user', 'client', 'partner', 'admin', 'editor'], {
-    message: 'El tipo de usuario debe ser: user, client, partner, admin o editor',
+  @IsIn(['user', 'client', 'partner', 'admin'], {
+    message: 'El tipo de usuario debe ser: user, client, partner o admin',
   })
-  type?: 'user' | 'client' | 'partner' | 'admin' | 'editor';
+  type?: 'user' | 'client' | 'partner' | 'admin';
 
   @ApiProperty({
     example: '+521234567890',

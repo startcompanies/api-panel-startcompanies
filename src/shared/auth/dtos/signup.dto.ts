@@ -15,9 +15,9 @@ export class SignUpDto {
   password: string;
 
   @IsOptional()
-  @IsIn(['user', 'client', 'partner', 'admin', 'editor'])
-  @ApiProperty({ enum: ['user', 'client', 'partner', 'admin', 'editor'], default: 'user', required: false })
-  type?: 'user' | 'client' | 'partner' | 'admin' | 'editor';
+  @IsIn(['user', 'client', 'partner', 'admin'])
+  @ApiProperty({ enum: ['user', 'client', 'partner', 'admin'], default: 'user', required: false })
+  type?: 'user' | 'client' | 'partner' | 'admin';
 
   @ApiProperty({ example: 'Jhon', description: 'Nombre(s) del usuario' })
   @IsString()

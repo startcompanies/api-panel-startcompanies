@@ -1,5 +1,4 @@
-import { Post } from '../../../blog/posts/entities/post.entity';
-import { Column, CreateDateColumn, Entity, OneToMany, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
 
 @Entity('users')
 export class User {
@@ -22,11 +21,9 @@ export class User {
     type: 'varchar', 
     length: 20, 
     default: 'user',
-    // Validación a nivel de aplicación, en DB usar CHECK constraint
-    // Roles del Panel: 'admin', 'partner', 'client', 'user'
-    // Roles del Blog: 'admin', 'editor', 'user'
+    // Roles: 'admin', 'partner', 'client', 'user'
   })
-  type: 'user' | 'client' | 'partner' | 'admin' | 'editor';
+  type: 'user' | 'client' | 'partner' | 'admin';
 
   @Column({ nullable: true })
   first_name: string;
@@ -98,7 +95,4 @@ export class User {
   })
   updatedAt: Date;
 
-  // Relación de One-to-Many: un usuario puede tener muchos posts
-  @OneToMany(() => Post, (post) => post.user)
-  posts: Post[]
 }
