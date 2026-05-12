@@ -93,6 +93,29 @@ export class BillingService {
     return createdAt.getTime() <= this.existingCutoff.getTime();
   }
 
+  private daysPastDueFromIsoCutoff(cutoff: Date | null): number | null {
+    if (!cutoff) return null;
+    const diffMs = Date.now() - cutoff.getTime();
+    if (!Number.isFinite(diffMs)) return null;
+    return Math.max(0, Math.floor(diffMs / 86400000));
+  }
+
+  private computeDaysPastDue(accessState: BillingAccessState, user: User): number | null {
+    if (accessState === 'trial_expired') {
+      return user.billingTrialEndAt ? this.daysPastDueFromIsoCutoff(user.billingTrialEndAt) : null;
+    }
+    if (
+      accessState === 'subscription_past_due' ||
+      accessState === 'subscription_canceled' ||
+      accessState === 'no_subscription'
+    ) {
+      return user.billingSubscriptionCurrentPeriodEnd
+        ? this.daysPastDueFromIsoCutoff(user.billingSubscriptionCurrentPeriodEnd)
+        : null;
+    }
+    return null;
+  }
+
   private deriveAccessState(user: User): BillingAccessState {
     if (user.type !== 'client') {
       // El trial comercial solo aplica a clientes finales.
@@ -187,6 +210,8 @@ export class BillingService {
     let hydrated = await this.ensureTrialWindow(user);
     hydrated = await this.reconcileBillingFromStripe(hydrated);
     const accessState = this.deriveAccessState(hydrated);
+    const canAccessPanel = accessState === 'trial_active' || accessState === 'subscription_active';
+    const daysPastDue = this.computeDaysPastDue(accessState, hydrated);
     const trialEndAt =
       hydrated.type === 'client' && hydrated.billingTrialEndAt
         ? hydrated.billingTrialEndAt.toISOString()
@@ -197,6 +222,8 @@ export class BillingService {
         : null;
     return {
       accessState,
+      canAccessPanel,
+      daysPastDue,
       trialStartAt,
       trialEndAt,
       subscriptionStatus: hydrated.billingSubscriptionStatus ?? null,
