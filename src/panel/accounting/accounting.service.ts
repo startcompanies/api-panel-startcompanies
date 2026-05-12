@@ -990,34 +990,93 @@ export class AccountingService {
   }
 
   /** CSV tipo estado de resultados (secciones del catálogo + INTERCO aparte). */
+  /** Etiqueta corta YYYY-MM para cabeceras CSV (UTC, coherente con `monthKeysInRange`). */
+  private plCsvMonthLabelEs(monthKey: string): string {
+    const d = new Date(`${monthKey}-01T12:00:00Z`);
+    if (Number.isNaN(d.getTime())) return monthKey;
+    return d.toLocaleDateString('es-ES', { month: 'short', year: '2-digit', timeZone: 'UTC' });
+  }
+
+  /**
+   * Resumen P&L en CSV: mismo período que la consulta, columnas por mes del rango,
+   * catálogo completo (incluye cuentas en cero) y totales al pie.
+   */
   async profitAndLossCsv(user: PanelUser, fromDate: string, toDate: string): Promise<string> {
     const core = await this.computeProfitAndLossCore(user, fromDate, toDate);
+    const catalog = await this.accountCatalogRepo.find({
+      order: { orderIndex: 'ASC', code: 'ASC' },
+    });
     const esc = (s: string) => `"${String(s).replace(/"/g, '""')}"`;
-    const rows: string[] = [];
-    rows.push(['Sección', 'Concepto', 'Código cuenta', 'Monto USD'].join(','));
-    rows.push(['Cabecera', esc(`Período ${fromDate} – ${toDate}`), '', ''].join(','));
-    rows.push(['Cabecera', 'Base contable (cash); INTERCO excluido de totales operativos', '', ''].join(','));
-    for (const block of core.sections) {
-      rows.push([esc(block.section), '', '', ''].join(','));
-      for (const g of block.groups) {
-        rows.push(['', esc(g.group), '', ''].join(','));
+    const fmt = (n: number) => (n === 0 ? '-' : n.toFixed(2));
+    const monthKeys = core.monthKeys;
+    const emptyMonthCells = monthKeys.map(() => '');
+
+    const amountBy = new Map<string, number>();
+    const monthlyBy = new Map<string, number[]>();
+    for (const sec of core.sections) {
+      for (const g of sec.groups) {
         for (const line of g.lines) {
-          rows.push(['', esc(line.label), line.accountCode, String(line.amount)].join(','));
+          const code = String(line.accountCode || '').toUpperCase().trim();
+          if (!code) continue;
+          amountBy.set(code, Number(line.amount || 0));
+          monthlyBy.set(
+            code,
+            (line.monthlyAmounts || monthKeys.map(() => 0)).map((x) => Number(x || 0)),
+          );
         }
       }
     }
-    rows.push(['', 'Total ingresos (operativo)', '', String(core.totalIncome)].join(','));
-    rows.push(['', 'Total gastos (operativo)', '', String(core.totalExpense)].join(','));
-    rows.push(['', 'Resultado neto (operativo)', '', String(core.netIncome)].join(','));
-    rows.push(['', 'Margen %', '', String(core.marginPct)].join(','));
-    if (core.intercompanyLines.length) {
-      rows.push(['Intercompany', '', '', ''].join(','));
-      for (const line of core.intercompanyLines) {
-        rows.push(['', esc(line.label), line.accountCode, String(line.amount)].join(','));
-      }
-      rows.push(['', 'Total intercompany', '', String(core.intercompanyTotal)].join(','));
+    for (const line of core.intercompanyLines) {
+      const code = String(line.accountCode || '').toUpperCase().trim();
+      if (!code) continue;
+      amountBy.set(code, Number(line.amount || 0));
+      monthlyBy.set(code, monthKeys.map(() => 0));
     }
-    return rows.join('\n') + '\n';
+
+    const monthHeaders = monthKeys.map((mk) => esc(this.plCsvMonthLabelEs(mk)));
+    const rows: string[] = [];
+    rows.push(['Sección', 'Grupo', 'Código cuenta', 'Cuenta', ...monthHeaders, 'Total'].join(','));
+    rows.push(['#', esc(`Período ${fromDate} - ${toDate}`), '', '', ...emptyMonthCells, ''].join(','));
+    rows.push(['#', esc('Base contable (cash); INTERCO excluido de totales operativos'), '', '', ...emptyMonthCells, ''].join(','));
+
+    const seenCatalogCodes = new Set<string>();
+    for (const c of catalog) {
+      const code = c.code.toUpperCase().trim();
+      seenCatalogCodes.add(code);
+      const amount = amountBy.get(code) ?? 0;
+      const monthly = monthlyBy.get(code) ?? monthKeys.map(() => 0);
+      const monthCols = monthKeys.map((_, i) => fmt(monthly[i] ?? 0));
+      rows.push([esc(c.plSection || '—'), esc(c.plGroup || '—'), code, esc(c.name), ...monthCols, fmt(amount)].join(','));
+    }
+
+    for (const sec of core.sections) {
+      for (const g of sec.groups) {
+        for (const line of g.lines) {
+          const code = String(line.accountCode || '').toUpperCase().trim();
+          if (!code || seenCatalogCodes.has(code)) continue;
+          const monthly = monthlyBy.get(code) ?? monthKeys.map(() => 0);
+          const monthCols = monthKeys.map((_, i) => fmt(monthly[i] ?? 0));
+          rows.push(
+            [esc(sec.section), esc(g.group), code, esc(line.label), ...monthCols, fmt(Number(line.amount || 0))].join(','),
+          );
+        }
+      }
+    }
+
+    rows.push(['', '', '', esc('Total ingresos (operativo)'), ...emptyMonthCells, core.totalIncome.toFixed(2)].join(','));
+    rows.push(['', '', '', esc('Total gastos (operativo)'), ...emptyMonthCells, core.totalExpense.toFixed(2)].join(','));
+    rows.push(['', '', '', esc('Resultado neto (operativo)'), ...emptyMonthCells, core.netIncome.toFixed(2)].join(','));
+    rows.push(['', '', '', esc('Margen %'), ...emptyMonthCells, String(core.marginPct)].join(','));
+    if (core.intercompanyLines.length) {
+      rows.push([esc('Intercompany'), '', '', '', ...emptyMonthCells, ''].join(','));
+      for (const line of core.intercompanyLines) {
+        const code = String(line.accountCode || '').toUpperCase().trim();
+        rows.push(['', '', code, esc(line.label), ...emptyMonthCells, String(line.amount)].join(','));
+      }
+      rows.push(['', '', '', esc('Total intercompany'), ...emptyMonthCells, String(core.intercompanyTotal)].join(','));
+    }
+
+    return '\uFEFF' + rows.join('\n') + '\n';
   }
 
   /** Detalle por movimiento (exportación auxiliar). */
