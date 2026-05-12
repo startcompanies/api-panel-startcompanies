@@ -264,7 +264,7 @@ export class AccountingAiSuggestService {
   }
 
   private anthropicModel(): string {
-    return this.config.get<string>('ANTHROPIC_MODEL') || 'claude-3-5-haiku-20241022';
+    return this.config.get<string>('ANTHROPIC_MODEL') || 'claude-haiku-4-5-20251001';
   }
 
   private openaiModel(): string {

@@ -120,12 +120,16 @@ export class EmailService {
 
   /**
    * Patrón "On Behalf Of" para proveedores como Resend:
-   * - From usa dominio verificado (Start Companies)
+   * - From usa dominio verificado (plataforma)
    * - Reply-To apunta al correo real del emisor (usuario/empresa)
+   * Si no hay nombre legal de emisor, solo se muestra la plataforma (sin inventar otra razón social).
    */
   private formatOnBehalfOfFrom(issuerName: string, platformName: string, verifiedFromEmail: string): string {
-    const safeIssuer = issuerName.replace(/[\r\n]/g, ' ').trim() || 'Cliente';
-    const display = `${safeIssuer} via ${platformName}`.slice(0, 140);
+    const t = issuerName.replace(/[\r\n]/g, ' ').trim();
+    if (!t) {
+      return this.formatFromDisplayNameAndEmail(platformName, verifiedFromEmail);
+    }
+    const display = `${t} via ${platformName}`.slice(0, 140);
     return this.formatFromDisplayNameAndEmail(display, verifiedFromEmail);
   }
 
@@ -775,9 +779,13 @@ export class EmailService {
       this.configService.get<string>('RESEND_FROM_EMAIL') ||
       'Start Companies <noreply@startcompanies.us>';
     const fromEmail = this.extractFromEmailAddress(configuredFrom);
-    const issuerName = params.issuerLegalName?.trim() || 'Start Companies';
     const platformName = this.configService.get<string>('EMAIL_PLATFORM_NAME')?.trim() || 'Start Companies';
-    const from = this.formatOnBehalfOfFrom(issuerName, platformName, fromEmail);
+    const legalIssuer = params.issuerLegalName?.trim() || '';
+    /** Misma razón social que el PDF (perfil empresa); si falta, no usar "Start Companies" como emisor ficticio. */
+    const issuerNameForDisplay = legalIssuer || platformName;
+    const from = legalIssuer
+      ? this.formatOnBehalfOfFrom(legalIssuer, platformName, fromEmail)
+      : this.formatFromDisplayNameAndEmail(platformName, fromEmail);
     const replyTo =
       params.issuerEmail?.trim() ||
       params.replyTo?.trim() ||
@@ -795,13 +803,22 @@ export class EmailService {
       <p>Adjuntamos la factura <strong>${invNumSafe}</strong> por un total de <strong>${totalLabel}</strong>.</p>
       <p>Gracias por tu confianza.</p>
     `;
+    const textPlain = [
+      cn ? `Hola ${cn},` : 'Hola,',
+      '',
+      `Adjuntamos la factura ${params.invoiceNumber} por un total de ${totalLabel}.`,
+      '',
+      'Gracias por tu confianza.',
+    ].join('\n');
     const payload: {
       from: string;
       to: string;
       subject: string;
       html: string;
+      text: string;
       attachments: { filename: string; content: Buffer }[];
       replyTo?: string;
+      headers?: Record<string, string>;
     } = {
       from,
       to: params.to.trim(),
@@ -809,15 +826,19 @@ export class EmailService {
       html: this.getInvoiceEmailHtml({
         title: invTitle,
         bodyHtml,
-        issuerName,
+        issuerName: issuerNameForDisplay,
         issuerLogoUrl: params.issuerLogoUrl ?? null,
       }),
+      text: textPlain,
       attachments: [
         {
           filename: `invoice-${params.invoiceNumber.replace(/[^\w.-]+/g, '_')}.pdf`,
           content: params.pdfBuffer,
         },
       ],
+      headers: {
+        'X-Entity-Ref-ID': `inv-${String(params.invoiceNumber).replace(/[^\w.-]+/g, '_')}-${Date.now()}`.slice(0, 240),
+      },
     };
     if (replyTo) {
       payload.replyTo = replyTo;
