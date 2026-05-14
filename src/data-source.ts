@@ -46,6 +46,12 @@ import { DocumentShare } from './panel/documents-library/entities/document-share
 import { PremiumVideo } from './panel/media/entities/premium-video.entity';
 import { LlcGuide } from './panel/media/entities/llc-guide.entity';
 import { ContentAccessLog } from './panel/media/entities/content-access-log.entity';
+import { PricingPlan } from './panel/pricing/entities/pricing-plan.entity';
+import { PricingPlanState } from './panel/pricing/entities/pricing-plan-state.entity';
+import { PricingPlanFeature } from './panel/pricing/entities/pricing-plan-feature.entity';
+import { PricingRenewal } from './panel/pricing/entities/pricing-renewal.entity';
+import { PricingOverride } from './panel/pricing/entities/pricing-override.entity';
+import { PricingMisc } from './panel/pricing/entities/pricing-misc.entity';
 
 // Validar que existan las variables de entorno requeridas
 const requiredEnvVars = ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'];
@@ -101,6 +107,12 @@ export const dataSourceOptions: DataSourceOptions = {
     PremiumVideo,
     LlcGuide,
     ContentAccessLog,
+    PricingPlan,
+    PricingPlanState,
+    PricingPlanFeature,
+    PricingRenewal,
+    PricingOverride,
+    PricingMisc,
   ],
   migrations: [
     // Compiladas junto a src → dist/src/migrations (npm run migration:run / migration:run:prod)

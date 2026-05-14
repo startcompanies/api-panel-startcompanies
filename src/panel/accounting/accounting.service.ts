@@ -834,6 +834,9 @@ export class AccountingService {
     expenseLines: { accountCode: string; label: string; amount: number }[];
     totalIncome: number;
     totalExpense: number;
+    cogsTotal: number;
+    grossProfit: number;
+    grossMarginPct: number;
     netIncome: number;
     marginPct: number;
     intercompanyLines: { accountCode: string; label: string; amount: number }[];
@@ -932,6 +935,22 @@ export class AccountingService {
 
     const totalIncome = incomeLines.reduce((s, l) => s + Number(l.amount), 0);
     const totalExpense = expenseLines.reduce((s, l) => s + Math.abs(Number(l.amount)), 0);
+
+    // COGS: lines in "Costo de Servicios" section or codes starting with '5' / 'COL_SERV'
+    const cogsTotal = metas
+      .filter(
+        (m) =>
+          (m.type === 'expense' || m.type === 'other') &&
+          (m.plSection === 'Costo de Servicios' ||
+            m.accountCode.startsWith('5') ||
+            m.accountCode === 'COL_SERV'),
+      )
+      .reduce((s, l) => s + Math.abs(Number(l.amount)), 0);
+
+    const grossProfit = totalIncome - cogsTotal;
+    const grossMarginPct =
+      totalIncome > 0 ? Math.round((grossProfit / totalIncome) * 1000) / 10 : 0;
+
     const netIncome = totalIncome - totalExpense;
     const marginPct = totalIncome > 0 ? Math.round((netIncome / totalIncome) * 1000) / 10 : 0;
 
@@ -942,6 +961,9 @@ export class AccountingService {
       expenseLines,
       totalIncome,
       totalExpense,
+      cogsTotal,
+      grossProfit,
+      grossMarginPct,
       netIncome,
       marginPct,
       intercompanyLines,
@@ -980,6 +1002,9 @@ export class AccountingService {
       basis: 'cash' as const,
       income: { lines: core.incomeLines, total: core.totalIncome },
       expense: { lines: core.expenseLines, total: core.totalExpense },
+      cogsTotal: core.cogsTotal,
+      grossProfit: core.grossProfit,
+      grossMarginPct: core.grossMarginPct,
       netIncome: core.netIncome,
       marginPct: core.marginPct,
       projectedPendingInvoices,

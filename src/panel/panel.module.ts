@@ -13,6 +13,7 @@ import { CatalogModule } from './catalog/catalog.module';
 import { AccountingModule } from './accounting/accounting.module';
 import { DocumentsLibraryModule } from './documents-library/documents-library.module';
 import { MediaModule } from './media/media.module';
+import { PricingModule } from './pricing/pricing.module';
 
 /**
  * Módulo wrapper que agrupa todos los módulos relacionados con el Panel Administrativo
@@ -34,6 +35,7 @@ import { MediaModule } from './media/media.module';
     AccountingModule,
     DocumentsLibraryModule,
     MediaModule,
+    PricingModule,
   ],
   exports: [
     RequestsModule,
@@ -50,6 +52,7 @@ import { MediaModule } from './media/media.module';
     AccountingModule,
     DocumentsLibraryModule,
     MediaModule,
+    PricingModule,
   ],
 })
 export class PanelModule {}

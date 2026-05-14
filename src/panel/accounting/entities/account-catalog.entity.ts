@@ -20,6 +20,9 @@ export class AccountCatalog {
   @Column({ name: 'pl_group', type: 'varchar', length: 80, nullable: true })
   plGroup: string | null;
 
+  @Column({ type: 'int', default: 1 })
+  level: number;
+
   @Column({ name: 'order_index', type: 'int', default: 0 })
   orderIndex: number;
 

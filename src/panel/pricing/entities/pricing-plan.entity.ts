@@ -1,0 +1,61 @@
+import {
+  Column,
+  CreateDateColumn,
+  Entity,
+  Index,
+  OneToMany,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
+} from 'typeorm';
+import { PricingPlanState } from './pricing-plan-state.entity';
+import { PricingPlanFeature } from './pricing-plan-feature.entity';
+
+/**
+ * Plan comercializable del wizard (apertura LLC).
+ * `code` es el identificador estable usado por el frontend (Entrepreneur | Elite | Premium | ...).
+ */
+@Entity('pricing_plans')
+export class PricingPlan {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Index({ unique: true })
+  @Column({ type: 'varchar', length: 40 })
+  code: string;
+
+  @Column({ type: 'varchar', length: 120 })
+  label: string;
+
+  @Column({ type: 'numeric', precision: 10, scale: 2 })
+  price: string;
+
+  @Column({ type: 'boolean', default: false })
+  recommended: boolean;
+
+  @Column({ type: 'text', nullable: true })
+  description: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  subtitle: string | null;
+
+  @Column({ name: 'order_index', type: 'int', default: 0 })
+  orderIndex: number;
+
+  @Column({ name: 'is_active', type: 'boolean', default: true })
+  isActive: boolean;
+
+  @Column({ name: 'updated_by', type: 'int', nullable: true })
+  updatedBy: number | null;
+
+  @CreateDateColumn({ name: 'created_at', type: 'timestamp with time zone' })
+  createdAt: Date;
+
+  @UpdateDateColumn({ name: 'updated_at', type: 'timestamp with time zone' })
+  updatedAt: Date;
+
+  @OneToMany(() => PricingPlanState, (s) => s.plan)
+  states: PricingPlanState[];
+
+  @OneToMany(() => PricingPlanFeature, (f) => f.plan)
+  features: PricingPlanFeature[];
+}

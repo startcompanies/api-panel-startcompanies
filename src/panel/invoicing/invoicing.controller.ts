@@ -79,6 +79,11 @@ export class InvoicingController {
     return this.invoicingService.updateForUser(id, req.user.id, body as any);
   }
 
+  @Delete('invoices/:id')
+  deleteInvoice(@Req() req: { user: { id: number } }, @Param('id', ParseIntPipe) id: number) {
+    return this.invoicingService.deleteInvoice(id, req.user.id);
+  }
+
   @Post('invoices/:id/send')
   sendInvoice(@Req() req: { user: { id: number } }, @Param('id', ParseIntPipe) id: number) {
     return this.invoicingService.markAsSent(id, req.user.id);

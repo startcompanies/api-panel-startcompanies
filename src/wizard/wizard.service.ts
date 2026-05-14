@@ -28,6 +28,7 @@ import { validateRequestData } from '../panel/requests/validation/request-valida
 import { RequestSubmittedNotificationsService } from '../panel/notifications/request-submitted-notifications.service';
 import { applyOptionalPublicWebUrlsToObject } from '../shared/common/utils/public-web-url.util';
 import { ZohoContactService } from '../zoho-config/zoho-contact.service';
+import { PricingService } from '../panel/pricing/pricing.service';
 import * as crypto from 'crypto';
 
 @Injectable()
@@ -57,7 +58,40 @@ export class WizardService {
     private readonly jwtService: JwtService,
     private readonly requestSubmittedNotifications: RequestSubmittedNotificationsService,
     private readonly zohoContactService: ZohoContactService,
+    private readonly pricingService: PricingService,
   ) { }
+
+  /**
+   * Recalcula el monto a cobrar desde la base de datos del módulo de precios.
+   * El front sólo informa "qué" servicio, plan y estado se eligió; el "cuánto"
+   * es siempre autoridad del backend para evitar manipulación del checkout.
+   *
+   * Devuelve `null` si no hay un precio determinable (p.ej. flujo sin pago).
+   */
+  private async computeExpectedAmountUsd(
+    dto: CreateWizardRequestDto,
+  ): Promise<number | null> {
+    if (dto.type === 'apertura-llc') {
+      const plan = dto.aperturaLlcData?.plan ?? null;
+      const state = dto.aperturaLlcData?.incorporationState ?? null;
+      if (!plan) return null;
+      return this.pricingService.calculateAperturaOpeningAmountUsd(
+        'apertura-llc',
+        plan,
+        state,
+      );
+    }
+    if (dto.type === 'renovacion-llc') {
+      const state = dto.renovacionLlcData?.state;
+      const llcType = dto.renovacionLlcData?.llcType;
+      if (!state || !llcType) return null;
+      return this.pricingService.calculateRenewalAmountUsd(state, llcType);
+    }
+    if (dto.type === 'cuenta-bancaria') {
+      return this.pricingService.getMiscPriceUsd('bank-account-fixed');
+    }
+    return null;
+  }
 
   /**
    * Convierte una fecha string a Date de manera segura
@@ -586,6 +620,28 @@ export class WizardService {
         !isNoInitialPaymentSource &&
         createWizardRequestDto.paymentAmount > 0 &&
         createWizardRequestDto.stripeToken !== 'no-payment';
+
+      /**
+       * Seguridad: el monto a cobrar siempre se recalcula desde el módulo de precios
+       * en backend (`pricing_*`). Si el cliente envía un `paymentAmount` distinto,
+       * se sobrescribe con el valor canónico antes de cargar a Stripe.
+       *
+       * Se mantiene el `paymentAmount` del cliente sólo cuando el backend no logra
+       * determinar un precio (p. ej. flujos sin pago o servicios fuera del catálogo).
+       */
+      if (hasPayment) {
+        const expectedAmount = await this.computeExpectedAmountUsd(
+          createWizardRequestDto,
+        );
+        if (expectedAmount != null && expectedAmount >= 0) {
+          if (Number(createWizardRequestDto.paymentAmount) !== expectedAmount) {
+            this.logger.warn(
+              `[Wizard] Recalculando monto: cliente=${createWizardRequestDto.paymentAmount} → servidor=${expectedAmount} (type=${createWizardRequestDto.type})`,
+            );
+            createWizardRequestDto.paymentAmount = expectedAmount;
+          }
+        }
+      }
 
       if (hasPayment) {
         if (createWizardRequestDto.paymentMethod === 'stripe' && createWizardRequestDto.stripeToken) {

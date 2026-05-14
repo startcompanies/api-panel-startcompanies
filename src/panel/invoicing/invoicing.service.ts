@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Invoice, InvoiceStatus } from './entities/invoice.entity';
+import { Invoice } from './entities/invoice.entity';
 import { InvoiceEvent } from './entities/invoice-event.entity';
 import { InvoicePayment } from './entities/invoice-payment.entity';
 import { InvoiceItem } from './entities/invoice-item.entity';
@@ -179,7 +179,7 @@ export class InvoicingService {
       notes?: string | null;
       billTo?: Record<string, unknown> | null;
       paymentInstructions?: Record<string, unknown> | null;
-      status?: InvoiceStatus;
+      status?: 'draft' | 'sent' | 'partial' | 'paid' | 'overdue' | 'void';
       items?: InvoiceLineInput[];
     },
   ) {
@@ -248,7 +248,7 @@ export class InvoicingService {
       notes?: string | null;
       billTo?: Record<string, unknown> | null;
       paymentInstructions?: Record<string, unknown> | null;
-      status?: InvoiceStatus;
+      status?: 'draft' | 'sent' | 'partial' | 'paid' | 'overdue' | 'void';
       items?: InvoiceLineInput[];
     },
   ) {
@@ -492,6 +492,19 @@ export class InvoicingService {
   async deleteBillingClient(id: number, userId: number) {
     await this.assertBillingClientOwner(id, userId);
     await this.billingClientsRepo.delete({ id, ownerUserId: userId });
+    return { ok: true as const };
+  }
+
+  async deleteInvoice(id: number, userId: number) {
+    const inv = await this.invoicesRepo.findOne({ where: { id, ownerUserId: userId } });
+    if (!inv) throw new NotFoundException('Factura no encontrada');
+    if (inv.status !== 'draft') {
+      throw new BadRequestException('Solo se pueden eliminar facturas en estado borrador (draft).');
+    }
+    await this.itemsRepo.delete({ invoiceId: id });
+    await this.paymentsRepo.delete({ invoiceId: id });
+    await this.eventsRepo.delete({ invoiceId: id });
+    await this.invoicesRepo.delete({ id, ownerUserId: userId });
     return { ok: true as const };
   }
 }
