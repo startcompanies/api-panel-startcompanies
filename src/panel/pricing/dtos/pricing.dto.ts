@@ -90,6 +90,7 @@ export class UpdatePricingPlanDto {
   @IsOptional() @IsString() @MaxLength(4000) subtitle?: string | null;
   @IsOptional() @IsInt() @Min(0) orderIndex?: number;
   @IsOptional() @IsBoolean() isActive?: boolean;
+  @IsOptional() @IsIn(['single', 'multi', 'both']) memberType?: 'single' | 'multi' | 'both';
 
   @IsOptional()
   @IsArray()

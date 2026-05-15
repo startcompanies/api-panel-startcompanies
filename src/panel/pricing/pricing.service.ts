@@ -31,6 +31,7 @@ export interface PublicPricingPayloadPlan {
   description: string | null;
   subtitle: string | null;
   orderIndex: number;
+  memberType: 'single' | 'multi' | 'both';
   /** Estados habilitados; `['*']` significa "cualquiera". */
   states: string[];
   features: string[];
@@ -123,6 +124,7 @@ export class PricingService {
         description: p.description,
         subtitle: p.subtitle,
         orderIndex: p.orderIndex,
+        memberType: p.memberType ?? 'both',
         states,
         features,
         renewalFeatures,
@@ -256,6 +258,7 @@ export class PricingService {
       description: p.description,
       subtitle: p.subtitle,
       orderIndex: p.orderIndex,
+      memberType: p.memberType ?? 'both',
       states,
       features,
       renewalFeatures,
@@ -306,6 +309,7 @@ export class PricingService {
         subtitle: dto.subtitle !== undefined ? dto.subtitle : plan.subtitle,
         orderIndex: dto.orderIndex ?? plan.orderIndex,
         isActive: dto.isActive ?? plan.isActive,
+        memberType: dto.memberType ?? plan.memberType,
         updatedBy: userId,
       });
       await repo.save(merged);

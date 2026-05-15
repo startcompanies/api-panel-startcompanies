@@ -41,6 +41,14 @@ export class PricingPlan {
   @Column({ name: 'order_index', type: 'int', default: 0 })
   orderIndex: number;
 
+  @Column({
+    name: 'member_type',
+    type: 'varchar',
+    length: 10,
+    default: 'both',
+  })
+  memberType: 'single' | 'multi' | 'both';
+
   @Column({ name: 'is_active', type: 'boolean', default: true })
   isActive: boolean;
 
