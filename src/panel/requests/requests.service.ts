@@ -7,8 +7,9 @@ import {
   Logger,
   HttpException,
 } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, EntityManager } from 'typeorm';
+import { Repository, DataSource, EntityManager, LessThan } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { Request } from './entities/request.entity';
 import { AperturaLlcRequest } from './entities/apertura-llc-request.entity';
@@ -3492,6 +3493,32 @@ export class RequestsService {
       // No lanzar error, solo loguear
     } finally {
       await queryRunner.release();
+    }
+  }
+
+  /**
+   * Elimina solicitudes con status='pendiente' creadas hace más de 72 horas.
+   * Corre cada 6 horas para mantener la base de datos limpia.
+   */
+  @Cron(CronExpression.EVERY_6_HOURS)
+  async cleanupStalePendingRequests(): Promise<void> {
+    const cutoff = new Date(Date.now() - 72 * 60 * 60 * 1000);
+    try {
+      const stale = await this.requestRepository.find({
+        where: {
+          status: 'pendiente',
+          createdAt: LessThan(cutoff),
+        },
+        select: ['id', 'uuid'],
+      });
+      if (!stale.length) return;
+      const ids = stale.map((r) => r.id);
+      await this.requestRepository.delete(ids);
+      this.logger.log(
+        `[cleanup] Eliminadas ${ids.length} solicitudes pendientes con más de 72h: ${ids.join(', ')}`,
+      );
+    } catch (err) {
+      this.logger.error('[cleanup] Error al eliminar solicitudes pendientes expiradas:', err);
     }
   }
 }

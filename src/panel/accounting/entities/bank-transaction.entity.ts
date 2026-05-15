@@ -43,6 +43,19 @@ export class BankTransaction {
   @Column({ name: 'needs_review', type: 'boolean', default: false })
   needsReview: boolean;
 
+  /** Estado del flujo de categorización: pendiente | revision | categorizado. */
+  @Column({
+    name: 'categorization_status',
+    type: 'varchar',
+    length: 24,
+    default: 'pendiente',
+  })
+  categorizationStatus: 'pendiente' | 'revision' | 'categorizado';
+
+  /** Código de cuenta sugerido (IA/regla) pendiente de aprobación por el usuario. */
+  @Column({ name: 'suggested_account_code', type: 'varchar', length: 64, nullable: true })
+  suggestedAccountCode: string | null;
+
   /** Clave estable para reglas exactas (payee / descripción normalizada). */
   @Column({ name: 'payee_normalized', type: 'varchar', length: 255, nullable: true })
   payeeNormalized: string | null;

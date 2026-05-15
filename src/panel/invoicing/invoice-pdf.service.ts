@@ -18,7 +18,7 @@ const WHITE = '#ffffff';
 const HEADER_ACCENT_TEXT = '#8AA8CC';
 const TABLE_TH_TEXT = '#A8C4E8';
 
-const PAGE_W = 612;
+const PAGE_W = 595;
 const MARGIN = 40;
 const CONTENT_W = PAGE_W - MARGIN * 2;
 
@@ -36,7 +36,7 @@ export class InvoicePdfService {
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];
       const doc = new PDFDocument({
-        size: 'LETTER',
+        size: 'A4',
         margin: 0,
         info: { Title: `Invoice ${invoice.invoiceNumber || invoice.id}` },
       });
@@ -286,54 +286,9 @@ export class InvoicePdfService {
         y += 36;
       }
 
-      /* ── TOTALS (right-aligned box) ──────────────────────────── */
+      /* ── TOTALS + PAYMENT INSTRUCTIONS (side by side) ──────── */
       y += 16;
-      const totalsBoxW = 260;
-      const totalsX = bodyX + CONTENT_W - totalsBoxW;
-      const sub = Number(invoice.subtotalAmount).toFixed(2);
-      const tax = Number(invoice.taxAmount).toFixed(2);
-      const tot = Number(invoice.totalAmount).toFixed(2);
 
-      // Subtotal row
-      const totRowH = 32;
-      doc.save();
-      doc.fillColor(WHITE).roundedRect(totalsX, y, totalsBoxW, totRowH * 2 + totRowH, 8).fill();
-      doc.strokeColor(BORDER).lineWidth(1).roundedRect(totalsX, y, totalsBoxW, totRowH * 2 + totRowH, 8).stroke();
-      doc.restore();
-
-      // Subtotal
-      doc.fillColor(MUTED).font('Helvetica').fontSize(10).text('Subtotal', totalsX + 14, y + 11, { width: 100 });
-      doc.fillColor(TEXT).font('Helvetica').fontSize(10).text(`${cur} ${sub}`, totalsX + 14, y + 11, {
-        width: totalsBoxW - 28,
-        align: 'right',
-      });
-      doc.moveTo(totalsX, y + totRowH).lineTo(totalsX + totalsBoxW, y + totRowH).strokeColor(BORDER).lineWidth(0.5).stroke();
-      y += totRowH;
-
-      // Tax
-      doc.fillColor(MUTED).font('Helvetica').fontSize(10).text(`Impuesto (${taxLabel})`, totalsX + 14, y + 11, {
-        width: 140,
-      });
-      doc.fillColor(TEXT).font('Helvetica').fontSize(10).text(`${cur} ${tax}`, totalsX + 14, y + 11, {
-        width: totalsBoxW - 28,
-        align: 'right',
-      });
-      doc.moveTo(totalsX, y + totRowH).lineTo(totalsX + totalsBoxW, y + totRowH).strokeColor(BORDER).lineWidth(0.5).stroke();
-      y += totRowH;
-
-      // Total final (blue background)
-      doc.save();
-      doc.fillColor(BLUE_MID).rect(totalsX, y, totalsBoxW, totRowH).fill();
-      doc.restore();
-      doc.fillColor('#A8C4E8').font('Helvetica-Bold').fontSize(11).text('TOTAL', totalsX + 14, y + 10, { width: 100 });
-      doc.fillColor(WHITE).font('Helvetica-Bold').fontSize(13).text(`${cur} ${tot}`, totalsX + 14, y + 9, {
-        width: totalsBoxW - 28,
-        align: 'right',
-      });
-
-      y += totRowH + 24;
-
-      /* ── PAYMENT INSTRUCTIONS ────────────────────────────────── */
       const pay = invoice.paymentInstructions || {};
       const payRows = [
         pay['bankName'] && ['Banco', String(pay['bankName'])],
@@ -344,43 +299,82 @@ export class InvoicePdfService {
         pay['zelleOrPaypal'] && ['Zelle / PayPal', String(pay['zelleOrPaypal'])],
       ].filter(Boolean) as [string, string][];
 
+      const totalsBoxW = 250;
+      const totalsX = bodyX + CONTENT_W - totalsBoxW;
+      const sub = Number(invoice.subtotalAmount).toFixed(2);
+      const tax = Number(invoice.taxAmount).toFixed(2);
+      const tot = Number(invoice.totalAmount).toFixed(2);
+      const totRowH = 30;
+
+      // Totals box (right column)
+      doc.save();
+      doc.fillColor(WHITE).roundedRect(totalsX, y, totalsBoxW, totRowH * 3, 8).fill();
+      doc.strokeColor(BORDER).lineWidth(1).roundedRect(totalsX, y, totalsBoxW, totRowH * 3, 8).stroke();
+      doc.restore();
+
+      // Subtotal
+      doc.fillColor(MUTED).font('Helvetica').fontSize(9.5).text('Subtotal', totalsX + 12, y + 10, { width: 90 });
+      doc.fillColor(TEXT).font('Helvetica').fontSize(9.5).text(`${cur} ${sub}`, totalsX + 12, y + 10, {
+        width: totalsBoxW - 24,
+        align: 'right',
+      });
+      doc.moveTo(totalsX, y + totRowH).lineTo(totalsX + totalsBoxW, y + totRowH).strokeColor(BORDER).lineWidth(0.5).stroke();
+      y += totRowH;
+
+      // Tax
+      doc.fillColor(MUTED).font('Helvetica').fontSize(9.5).text(`Impuesto (${taxLabel})`, totalsX + 12, y + 10, { width: 130 });
+      doc.fillColor(TEXT).font('Helvetica').fontSize(9.5).text(`${cur} ${tax}`, totalsX + 12, y + 10, {
+        width: totalsBoxW - 24,
+        align: 'right',
+      });
+      doc.moveTo(totalsX, y + totRowH).lineTo(totalsX + totalsBoxW, y + totRowH).strokeColor(BORDER).lineWidth(0.5).stroke();
+      y += totRowH;
+
+      // Total final (blue background)
+      doc.save();
+      doc.fillColor(BLUE_MID).roundedRect(totalsX, y, totalsBoxW, totRowH, 8).fill();
+      doc.restore();
+      doc.fillColor('#A8C4E8').font('Helvetica-Bold').fontSize(10).text('TOTAL', totalsX + 12, y + 9, { width: 90 });
+      doc.fillColor(WHITE).font('Helvetica-Bold').fontSize(12).text(`${cur} ${tot}`, totalsX + 12, y + 8, {
+        width: totalsBoxW - 24,
+        align: 'right',
+      });
+      y += totRowH;
+
+      // Payment instructions (left column, aligned with totals)
       if (payRows.length) {
-        if (y > 650) {
-          doc.addPage();
-          y = MARGIN + 20;
-        }
-        const payBlockW = 300;
+        const payStartY = y - totRowH * 3;
+        const payBlockW = totalsX - bodyX - 16;
+        const payRowH = 18;
+        const payBodyH = payRows.length * payRowH + 12;
+        const payHeaderH = 24;
+        const payTotalH = payHeaderH + payBodyH;
 
-        // Payment header
+        // Header
         doc.save();
-        doc.save();
-        doc.fillColor(BLUE_MID).roundedRect(bodyX, y, payBlockW, 26, 6).fill();
-        // clip bottom corners square by covering them with a filled rect
-        doc.fillColor(BLUE_MID).rect(bodyX, y + 13, payBlockW, 13).fill();
+        doc.fillColor(BLUE_MID).roundedRect(bodyX, payStartY, payBlockW, payHeaderH, 6).fill();
         doc.restore();
-        doc.fillColor(WHITE).font('Helvetica-Bold').fontSize(8).text('INSTRUCCIONES DE PAGO', bodyX + 12, y + 9, {
-          width: payBlockW - 20,
-        });
-        doc.restore();
-        y += 26;
+        doc.fillColor(WHITE).font('Helvetica-Bold').fontSize(7.5).text(
+          'INSTRUCCIONES DE PAGO', bodyX + 10, payStartY + 8, { width: payBlockW - 16 },
+        );
 
-        // Payment body
-        const payBodyH = payRows.length * 22 + 12;
+        // Body
         doc.save();
-        doc.fillColor(BG_LIGHT).rect(bodyX, y, payBlockW, payBodyH).fill();
-        doc.strokeColor(BORDER).lineWidth(1).rect(bodyX, y, payBlockW, payBodyH).stroke();
+        doc.fillColor(BG_LIGHT).rect(bodyX, payStartY + payHeaderH, payBlockW, payBodyH).fill();
+        doc.strokeColor(BORDER).lineWidth(1).roundedRect(bodyX, payStartY, payBlockW, payTotalH, 6).stroke();
         doc.restore();
 
-        let py = y + 8;
+        let py = payStartY + payHeaderH + 6;
         for (const [label, value] of payRows) {
-          doc.fillColor(MUTED).font('Helvetica').fontSize(9).text(label, bodyX + 12, py, { width: 100 });
-          doc.fillColor(TEXT).font('Helvetica-Bold').fontSize(9).text(value, bodyX + 120, py, {
-            width: payBlockW - 132,
+          doc.fillColor(MUTED).font('Helvetica').fontSize(8).text(label, bodyX + 10, py, { width: 85 });
+          doc.fillColor(TEXT).font('Helvetica-Bold').fontSize(8).text(value, bodyX + 100, py, {
+            width: payBlockW - 110,
           });
-          py += 22;
+          py += payRowH;
         }
-        y += payBodyH + 20;
       }
+
+      y += 24;
 
       /* ── NOTES ───────────────────────────────────────────────── */
       if (invoice.notes) {

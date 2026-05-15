@@ -144,6 +144,24 @@ export class AccountingController {
     return this.accountingService.bulkApplySuggestedCategories(req.user, body ?? {});
   }
 
+  @Post('transactions/:id/approve-suggestion')
+  @Roles('admin', 'user', 'client')
+  approveSuggestion(
+    @Req() req: { user: { id: number; type?: string } },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.accountingService.approveSuggestion(req.user, id);
+  }
+
+  @Post('transactions/:id/reject-suggestion')
+  @Roles('admin', 'user', 'client')
+  rejectSuggestion(
+    @Req() req: { user: { id: number; type?: string } },
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return this.accountingService.rejectSuggestion(req.user, id);
+  }
+
   @Get('pl')
   @Roles('admin', 'user', 'client')
   getPl(

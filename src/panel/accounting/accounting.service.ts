@@ -101,7 +101,8 @@ export class AccountingService {
   }
 
   private async ensureDefaultAccountCatalog(): Promise<void> {
-    const n = await this.accountCatalogRepo.count();
+    // Solo siembra si no existe ningún código numérico (plan genérico de Ignacio)
+    const n = await this.accountCatalogRepo.count({ where: { isSystem: true } });
     if (n > 0) return;
     const rows: Array<
       Pick<AccountCatalog, 'code' | 'name' | 'type' | 'plSection' | 'plGroup' | 'orderIndex' | 'isSystem' | 'isLocked' | 'active'>
@@ -532,10 +533,14 @@ export class AccountingService {
         row.classificationSource = 'manual';
         row.classificationConfidence = null;
         row.needsReview = false;
+        row.categorizationStatus = 'categorizado';
+        row.suggestedAccountCode = null;
       } else {
         row.classificationSource = null;
         row.classificationConfidence = null;
         row.needsReview = false;
+        row.categorizationStatus = 'pendiente';
+        row.suggestedAccountCode = null;
         if (body.categoryId === undefined) row.categoryId = null;
       }
       if (trimmed && body.categoryId === undefined) {
@@ -640,28 +645,43 @@ export class AccountingService {
       }
       if (res.source === 'ai') remainingAi -= 1;
 
-      const persist =
-        !!res.accountCode &&
-        (res.accountCode === 'INTERCO' ||
-          (!res.needsReview && res.confidence >= CLASSIFICATION_CONFIDENCE_THRESHOLD));
+      const hasSuggestion = !!res.accountCode;
 
-      if (!persist) {
-        tx.needsReview = true;
-        await this.txRepo.save(tx);
+      if (!hasSuggestion) {
         if (res.source === 'ai') skippedAi += 1;
         else skippedRules += 1;
         continue;
       }
 
-      tx.accountCode = res.accountCode;
-      tx.categoryId = await this.resolveCategoryIdForAccountCode(res.accountCode);
-      tx.accountingDate = tx.accountingDate || tx.txDate;
-      tx.classificationSource = res.source;
-      tx.classificationConfidence = Number(res.confidence.toFixed(4));
-      tx.needsReview = res.needsReview;
-      await this.txRepo.save(tx);
-      if (res.source === 'ai') updatedAi += 1;
-      else updatedRules += 1;
+      // Modo sugerencia: guardar como revision para que el usuario apruebe
+      const isHighConfidence =
+        res.accountCode === 'INTERCO' ||
+        (!res.needsReview && res.confidence >= CLASSIFICATION_CONFIDENCE_THRESHOLD);
+
+      if (isHighConfidence) {
+        // Alta confianza → aplicar directamente y marcar como categorizado
+        tx.accountCode = res.accountCode;
+        tx.categoryId = await this.resolveCategoryIdForAccountCode(res.accountCode);
+        tx.accountingDate = tx.accountingDate || tx.txDate;
+        tx.classificationSource = res.source;
+        tx.classificationConfidence = Number(res.confidence.toFixed(4));
+        tx.needsReview = false;
+        tx.categorizationStatus = 'categorizado';
+        tx.suggestedAccountCode = null;
+        await this.txRepo.save(tx);
+        if (res.source === 'ai') updatedAi += 1;
+        else updatedRules += 1;
+      } else {
+        // Baja confianza → dejar como sugerencia pendiente de revisión
+        tx.suggestedAccountCode = res.accountCode;
+        tx.classificationSource = res.source;
+        tx.classificationConfidence = Number(res.confidence.toFixed(4));
+        tx.needsReview = true;
+        tx.categorizationStatus = 'revision';
+        await this.txRepo.save(tx);
+        if (res.source === 'ai') skippedAi += 1;
+        else skippedRules += 1;
+      }
     }
 
     const remainingUncategorized = (await this.listTransactions(user, { uncategorized: true })).length;
@@ -678,6 +698,44 @@ export class AccountingService {
   }
 
   /** Sugerencia alineada al catálogo + umbral; fallback plan numérico legacy. */
+  /** Aprueba la sugerencia pendiente de una transacción: mueve suggestedAccountCode → accountCode. */
+  async approveSuggestion(user: PanelUser, txId: number): Promise<BankTransaction> {
+    const qb = this.txScopeQuery(user).andWhere('tx.id = :id', { id: txId });
+    const row = await qb.getOne();
+    if (!row) throw new NotFoundException('Movimiento no encontrado');
+    if (!row.suggestedAccountCode)
+      throw new BadRequestException('Este movimiento no tiene sugerencia pendiente');
+
+    const code = row.suggestedAccountCode;
+    row.accountCode = code;
+    row.categoryId = await this.resolveCategoryIdForAccountCode(code);
+    row.accountingDate = row.accountingDate || row.txDate;
+    row.classificationSource = row.classificationSource ?? 'manual';
+    row.needsReview = false;
+    row.categorizationStatus = 'categorizado';
+    row.suggestedAccountCode = null;
+
+    // Guardar como regla para movimientos futuros similares
+    const ownerId = await this.resolveBankTxOwnerUserId(txId, user);
+    const payeeKey = row.payeeNormalized || normalizePayeeKey(row.description);
+    if (ownerId && payeeKey.length >= 3) {
+      await this.upsertUserClassificationRule(ownerId, payeeKey, code, null, txId);
+    }
+    return this.txRepo.save(row);
+  }
+
+  /** Rechaza la sugerencia pendiente de una transacción. */
+  async rejectSuggestion(user: PanelUser, txId: number): Promise<BankTransaction> {
+    const qb = this.txScopeQuery(user).andWhere('tx.id = :id', { id: txId });
+    const row = await qb.getOne();
+    if (!row) throw new NotFoundException('Movimiento no encontrado');
+
+    row.suggestedAccountCode = null;
+    row.needsReview = false;
+    row.categorizationStatus = 'pendiente';
+    return this.txRepo.save(row);
+  }
+
   async suggestCategory(user: PanelUser, description: string, amountUsd?: number) {
     await this.ensureDefaultAccountCatalog();
     const catalog = await this.accountCatalogRepo.find({ where: { active: true } });
