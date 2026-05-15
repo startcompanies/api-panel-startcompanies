@@ -5,9 +5,10 @@ import { User } from '../../shared/user/entities/user.entity';
 import { BillingController } from './billing.controller';
 import { BillingService } from './billing.service';
 import { StripeWebhookEvent } from './entities/stripe-webhook-event.entity';
+import { PricingPlan } from '../pricing/entities/pricing-plan.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([User, StripeWebhookEvent]), PaymentsModule],
+  imports: [TypeOrmModule.forFeature([User, StripeWebhookEvent, PricingPlan]), PaymentsModule],
   controllers: [BillingController],
   providers: [BillingService],
   exports: [BillingService],

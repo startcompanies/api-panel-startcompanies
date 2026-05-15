@@ -14,6 +14,9 @@ export class PremiumVideo {
   @Column({ name: 'video_url', type: 'text' })
   videoUrl: string;
 
+  @Column({ name: 'thumbnail_url', type: 'text', nullable: true })
+  thumbnailUrl: string | null;
+
   @Column({ name: 'is_published', type: 'boolean', default: true })
   isPublished: boolean;
 

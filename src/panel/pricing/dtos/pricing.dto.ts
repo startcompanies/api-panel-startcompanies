@@ -15,6 +15,23 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
+/* ----------------------- Platform config ------------------------- */
+
+export class PlatformFeaturesDto {
+  @IsBoolean() invoicing: boolean;
+  @IsBoolean() accounting: boolean;
+  @IsBoolean() accountingAi: boolean;
+  @IsBoolean() aiConfig: boolean;
+  @IsBoolean() videos: boolean;
+  @IsBoolean() guides: boolean;
+}
+
+export class PlatformPlanConfigDto {
+  @IsInt() @Min(0) trialMonths: number;
+  @IsOptional() @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) monthlyPriceAfterTrial: number | null;
+  @ValidateNested() @Type(() => PlatformFeaturesDto) features: PlatformFeaturesDto;
+}
+
 /* ----------------------------- Planes ----------------------------- */
 
 export class PricingPlanFeatureDto {
@@ -91,6 +108,7 @@ export class UpdatePricingPlanDto {
   @IsOptional() @IsInt() @Min(0) orderIndex?: number;
   @IsOptional() @IsBoolean() isActive?: boolean;
   @IsOptional() @IsIn(['single', 'multi', 'both']) memberType?: 'single' | 'multi' | 'both';
+  @IsOptional() @ValidateNested() @Type(() => PlatformPlanConfigDto) platformConfig?: PlatformPlanConfigDto | null;
 
   @IsOptional()
   @IsArray()

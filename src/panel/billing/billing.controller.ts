@@ -1,15 +1,18 @@
 import {
   Body,
   Controller,
+  ForbiddenException,
   Get,
   Headers,
   HttpCode,
+  Param,
+  ParseIntPipe,
   Post,
   Req,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '../../shared/auth/auth.guard';
 import { BillingService } from './billing.service';
 
@@ -48,6 +51,21 @@ export class BillingController {
     const userId = req.user?.id;
     if (!userId) throw new UnauthorizedException();
     return this.billingService.createCustomerPortalSession(Number(userId));
+  }
+
+  @Post('users/:userId/platform-access')
+  @UseGuards(AuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Otorgar acceso a la plataforma a un usuario (solo admin)' })
+  @ApiBody({ schema: { properties: { planCode: { type: 'string' } }, required: ['planCode'] } })
+  async grantPlatformAccess(
+    @Param('userId', ParseIntPipe) userId: number,
+    @Body() body: { planCode: string },
+    @Req() req: { user?: { id?: number; type?: string } },
+  ) {
+    if (req.user?.type !== 'admin') throw new ForbiddenException('Solo admins pueden ejecutar esta acción');
+    await this.billingService.grantPlatformAccess(userId, body.planCode);
+    return { ok: true };
   }
 
   @Post('webhook')

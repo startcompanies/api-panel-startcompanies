@@ -20,6 +20,7 @@ import {
   UpsertMiscDto,
   UpsertRenewalDto,
 } from './dtos/pricing.dto';
+import { PlatformPlanConfig } from './entities/pricing-plan.entity';
 
 /** Shape consumido por el frontend (wizard + admin). */
 export interface PublicPricingPayloadPlan {
@@ -32,6 +33,7 @@ export interface PublicPricingPayloadPlan {
   subtitle: string | null;
   orderIndex: number;
   memberType: 'single' | 'multi' | 'both';
+  platformConfig: PlatformPlanConfig | null;
   /** Estados habilitados; `['*']` significa "cualquiera". */
   states: string[];
   features: string[];
@@ -125,6 +127,7 @@ export class PricingService {
         subtitle: p.subtitle,
         orderIndex: p.orderIndex,
         memberType: p.memberType ?? 'both',
+        platformConfig: p.platformConfig ?? null,
         states,
         features,
         renewalFeatures,
@@ -259,6 +262,7 @@ export class PricingService {
       subtitle: p.subtitle,
       orderIndex: p.orderIndex,
       memberType: p.memberType ?? 'both',
+      platformConfig: p.platformConfig ?? null,
       states,
       features,
       renewalFeatures,
@@ -310,6 +314,7 @@ export class PricingService {
         orderIndex: dto.orderIndex ?? plan.orderIndex,
         isActive: dto.isActive ?? plan.isActive,
         memberType: dto.memberType ?? plan.memberType,
+        platformConfig: dto.platformConfig !== undefined ? dto.platformConfig : plan.platformConfig,
         updatedBy: userId,
       });
       await repo.save(merged);

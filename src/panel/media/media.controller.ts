@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -8,20 +9,27 @@ import {
   Patch,
   Post,
   Request,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '../../shared/auth/auth.guard';
 import { RolesGuard } from '../../shared/auth/roles.guard';
 import { Roles } from '../../shared/auth/roles.decorator';
 import { MediaService } from './media.service';
+import { UploadFileService } from '../../shared/upload-file/upload-file.service';
 
 @ApiTags('Panel - Media Premium')
 @Controller('panel/media')
 @UseGuards(AuthGuard)
 @ApiBearerAuth('JWT-auth')
 export class MediaController {
-  constructor(private readonly mediaService: MediaService) {}
+  constructor(
+    private readonly mediaService: MediaService,
+    private readonly uploadFileService: UploadFileService,
+  ) {}
 
   @Get('videos')
   videos(@Request() req) {
@@ -54,7 +62,7 @@ export class MediaController {
   @UseGuards(RolesGuard)
   @Roles('admin', 'user')
   adminCreateVideo(
-    @Body() body: { title: string; description: string; videoUrl: string; isPublished?: boolean },
+    @Body() body: { title: string; description: string; videoUrl: string; thumbnailUrl?: string | null; isPublished?: boolean },
   ) {
     return this.mediaService.adminCreateVideo(body);
   }
@@ -64,9 +72,26 @@ export class MediaController {
   @Roles('admin', 'user')
   adminUpdateVideo(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { title?: string; description?: string; videoUrl?: string; isPublished?: boolean },
+    @Body() body: { title?: string; description?: string; videoUrl?: string; thumbnailUrl?: string | null; isPublished?: boolean },
   ) {
     return this.mediaService.adminUpdateVideo(id, body);
+  }
+
+  @Post('admin/thumbnails/upload')
+  @UseGuards(RolesGuard)
+  @Roles('admin', 'user')
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  async adminUploadThumbnail(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: { type: 'videos' | 'guias'; id?: string },
+  ) {
+    if (!file) throw new BadRequestException('Archivo requerido');
+    const type = body.type === 'guias' ? 'guias' : 'videos';
+    const folder = body.id ? `thumbnails/${type}/${body.id}` : `thumbnails/${type}/temp`;
+    const result = await this.uploadFileService.uploadFile(file, undefined, undefined, folder);
+    if (!result) throw new BadRequestException('Error al subir thumbnail');
+    return { url: result.url, key: result.key };
   }
 
   @Delete('admin/videos/:id')
@@ -94,6 +119,7 @@ export class MediaController {
       contentHtml?: string | null;
       attachmentUrl?: string | null;
       attachmentMime?: string | null;
+      thumbnailUrl?: string | null;
       isPublished?: boolean;
     },
   ) {
@@ -112,6 +138,7 @@ export class MediaController {
       contentHtml?: string | null;
       attachmentUrl?: string | null;
       attachmentMime?: string | null;
+      thumbnailUrl?: string | null;
       isPublished?: boolean;
     },
   ) {

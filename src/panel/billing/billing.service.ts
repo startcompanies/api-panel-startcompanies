@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import Stripe from 'stripe';
@@ -6,6 +6,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { StripeService } from '../../shared/payments/stripe.service';
 import { User } from '../../shared/user/entities/user.entity';
 import { StripeWebhookEvent } from './entities/stripe-webhook-event.entity';
+import { PricingPlan } from '../pricing/entities/pricing-plan.entity';
 
 type BillingAccessState =
   | 'trial_active'
@@ -30,6 +31,8 @@ export class BillingService {
     @InjectRepository(User) private readonly usersRepo: Repository<User>,
     @InjectRepository(StripeWebhookEvent)
     private readonly webhookEventsRepo: Repository<StripeWebhookEvent>,
+    @InjectRepository(PricingPlan)
+    private readonly pricingPlansRepo: Repository<PricingPlan>,
     private readonly stripeService: StripeService,
   ) {}
 
@@ -234,7 +237,43 @@ export class BillingService {
         ? hydrated.billingSubscriptionCurrentPeriodEnd.toISOString()
         : null,
       monthlyPriceUsd: Number(hydrated.billingMonthlyPriceUsd || this.monthlyPriceUsd),
+      platformPlanCode: hydrated.platformPlanCode ?? null,
+      platformAccessEndsAt: hydrated.platformAccessEndsAt
+        ? hydrated.platformAccessEndsAt.toISOString()
+        : null,
+      platformFeatures: hydrated.platformFeatures ?? null,
     };
+  }
+
+  /**
+   * Asigna acceso a la plataforma a un usuario según la configuración del plan seleccionado.
+   * Llamado por el admin al activar el servicio de un cliente.
+   */
+  async grantPlatformAccess(userId: number, planCode: string): Promise<void> {
+    const user = await this.usersRepo.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException(`Usuario ${userId} no encontrado`);
+
+    const plan = await this.pricingPlansRepo.findOne({ where: { code: planCode } });
+    if (!plan) throw new NotFoundException(`Plan '${planCode}' no encontrado`);
+
+    const config = plan.platformConfig;
+    if (!config) {
+      throw new BadRequestException(`El plan '${planCode}' no tiene configuración de plataforma`);
+    }
+
+    const now = new Date();
+    const accessEndsAt = new Date(now);
+    accessEndsAt.setMonth(accessEndsAt.getMonth() + config.trialMonths);
+
+    user.platformPlanCode = planCode;
+    user.platformAccessEndsAt = accessEndsAt;
+    user.platformFeatures = config.features;
+
+    if (config.monthlyPriceAfterTrial != null) {
+      user.billingMonthlyPriceUsd = config.monthlyPriceAfterTrial;
+    }
+
+    await this.usersRepo.save(user);
   }
 
   async createCheckoutSession(userId: number): Promise<{ url: string }> {

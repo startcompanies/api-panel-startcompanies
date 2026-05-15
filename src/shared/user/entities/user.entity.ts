@@ -1,4 +1,5 @@
 import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+import { PlatformFeatures } from '../../../panel/pricing/entities/pricing-plan.entity';
 
 @Entity('users')
 export class User {
@@ -82,6 +83,15 @@ export class User {
     default: 25,
   })
   billingMonthlyPriceUsd: number;
+
+  @Column({ name: 'platform_plan_code', type: 'varchar', length: 40, nullable: true })
+  platformPlanCode: string | null;
+
+  @Column({ name: 'platform_access_ends_at', type: 'timestamp with time zone', nullable: true })
+  platformAccessEndsAt: Date | null;
+
+  @Column({ name: 'platform_features', type: 'jsonb', nullable: true })
+  platformFeatures: PlatformFeatures | null;
 
   @CreateDateColumn({
     type: 'timestamp with time zone',

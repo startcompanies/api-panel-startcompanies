@@ -10,6 +10,21 @@ import {
 import { PricingPlanState } from './pricing-plan-state.entity';
 import { PricingPlanFeature } from './pricing-plan-feature.entity';
 
+export interface PlatformFeatures {
+  invoicing: boolean;
+  accounting: boolean;
+  accountingAi: boolean;
+  aiConfig: boolean;
+  videos: boolean;
+  guides: boolean;
+}
+
+export interface PlatformPlanConfig {
+  trialMonths: number;
+  monthlyPriceAfterTrial: number | null;
+  features: PlatformFeatures;
+}
+
 /**
  * Plan comercializable del wizard (apertura LLC).
  * `code` es el identificador estable usado por el frontend (Entrepreneur | Elite | Premium | ...).
@@ -48,6 +63,9 @@ export class PricingPlan {
     default: 'both',
   })
   memberType: 'single' | 'multi' | 'both';
+
+  @Column({ name: 'platform_config', type: 'jsonb', nullable: true })
+  platformConfig: PlatformPlanConfig | null;
 
   @Column({ name: 'is_active', type: 'boolean', default: true })
   isActive: boolean;

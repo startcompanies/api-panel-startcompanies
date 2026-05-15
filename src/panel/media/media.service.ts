@@ -61,12 +61,13 @@ export class MediaService {
     return this.videosRepo.find({ order: { createdAt: 'DESC' } });
   }
 
-  adminCreateVideo(body: { title: string; description: string; videoUrl: string; isPublished?: boolean }) {
+  adminCreateVideo(body: { title: string; description: string; videoUrl: string; thumbnailUrl?: string | null; isPublished?: boolean }) {
     return this.videosRepo.save(
       this.videosRepo.create({
         title: body.title.trim(),
         description: body.description,
         videoUrl: body.videoUrl.trim(),
+        thumbnailUrl: body.thumbnailUrl ?? null,
         isPublished: body.isPublished ?? true,
       }),
     );
@@ -74,7 +75,7 @@ export class MediaService {
 
   async adminUpdateVideo(
     id: number,
-    body: { title?: string; description?: string; videoUrl?: string; isPublished?: boolean },
+    body: { title?: string; description?: string; videoUrl?: string; thumbnailUrl?: string | null; isPublished?: boolean },
   ) {
     await this.videosRepo.update(
       { id },
@@ -82,6 +83,7 @@ export class MediaService {
         ...(body.title !== undefined ? { title: body.title.trim() } : {}),
         ...(body.description !== undefined ? { description: body.description } : {}),
         ...(body.videoUrl !== undefined ? { videoUrl: body.videoUrl.trim() } : {}),
+        ...(body.thumbnailUrl !== undefined ? { thumbnailUrl: body.thumbnailUrl } : {}),
         ...(body.isPublished !== undefined ? { isPublished: body.isPublished } : {}),
       },
     );
@@ -103,6 +105,7 @@ export class MediaService {
     contentHtml?: string | null;
     attachmentUrl?: string | null;
     attachmentMime?: string | null;
+    thumbnailUrl?: string | null;
     isPublished?: boolean;
   }) {
     return this.guidesRepo.save(
@@ -112,6 +115,7 @@ export class MediaService {
         contentHtml: body.contentHtml ?? body.content ?? '',
         attachmentUrl: body.attachmentUrl ?? null,
         attachmentMime: body.attachmentMime ?? null,
+        thumbnailUrl: body.thumbnailUrl ?? null,
         isPublished: body.isPublished ?? true,
       }),
     );
@@ -125,6 +129,7 @@ export class MediaService {
       contentHtml?: string | null;
       attachmentUrl?: string | null;
       attachmentMime?: string | null;
+      thumbnailUrl?: string | null;
       isPublished?: boolean;
     },
   ) {
@@ -136,6 +141,7 @@ export class MediaService {
         ...(body.contentHtml !== undefined ? { contentHtml: body.contentHtml } : {}),
         ...(body.attachmentUrl !== undefined ? { attachmentUrl: body.attachmentUrl } : {}),
         ...(body.attachmentMime !== undefined ? { attachmentMime: body.attachmentMime } : {}),
+        ...(body.thumbnailUrl !== undefined ? { thumbnailUrl: body.thumbnailUrl } : {}),
         ...(body.isPublished !== undefined ? { isPublished: body.isPublished } : {}),
       },
     );

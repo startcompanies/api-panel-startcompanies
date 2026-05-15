@@ -20,6 +20,9 @@ export class LlcGuide {
   @Column({ name: 'attachment_mime', type: 'varchar', length: 120, nullable: true })
   attachmentMime: string | null;
 
+  @Column({ name: 'thumbnail_url', type: 'text', nullable: true })
+  thumbnailUrl: string | null;
+
   @Column({ name: 'is_published', type: 'boolean', default: true })
   isPublished: boolean;
 
