@@ -14,6 +14,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '../../shared/auth/auth.guard';
 import { RolesGuard } from '../../shared/auth/roles.guard';
 import { Roles } from '../../shared/auth/roles.decorator';
+import { Public } from '../../shared/auth/public.decorator';
 import { PricingService } from './pricing.service';
 import {
   CreatePricingOverrideDto,
@@ -33,9 +34,9 @@ export class PricingController {
 
   /* ----------- PÚBLICO (cualquier sesión autenticada) ----------- */
 
-  /** Lectura agregada usada por el wizard y la app del panel. */
+  /** Lectura agregada usada por el wizard y la app del panel. Sin autenticación requerida. */
   @Get('public')
-  @Roles('admin', 'user')
+  @Public()
   public() {
     return this.pricingService.getPublicPricing();
   }
