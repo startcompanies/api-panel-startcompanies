@@ -86,6 +86,7 @@ export class authService {
       type: user.type,
       first_name: user.first_name ?? undefined,
       last_name: user.last_name ?? undefined,
+      createdAt: user.createdAt?.toISOString?.() ?? undefined,
     };
   }
 
@@ -513,6 +514,7 @@ export class authService {
         type: user.type,
         first_name: user.first_name ?? undefined,
         last_name: user.last_name ?? undefined,
+        createdAt: user.createdAt?.toISOString?.() ?? undefined,
       };
       const token = await this.jwtService.signAsync(newPayload);
 

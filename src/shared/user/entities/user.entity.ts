@@ -1,5 +1,5 @@
-import { Post } from '../../../blog/posts/entities/post.entity';
-import { Column, CreateDateColumn, Entity, OneToMany, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+import { PlatformFeatures } from '../../../panel/pricing/entities/pricing-plan.entity';
 
 @Entity('users')
 export class User {
@@ -22,11 +22,9 @@ export class User {
     type: 'varchar', 
     length: 20, 
     default: 'user',
-    // Validación a nivel de aplicación, en DB usar CHECK constraint
-    // Roles del Panel: 'admin', 'partner', 'client', 'user'
-    // Roles del Blog: 'admin', 'editor', 'user'
+    // Roles: 'admin', 'partner', 'client', 'user'
   })
-  type: 'user' | 'client' | 'partner' | 'admin' | 'editor';
+  type: 'user' | 'client' | 'partner' | 'admin';
 
   @Column({ nullable: true })
   first_name: string;
@@ -53,6 +51,48 @@ export class User {
   @Column({ type: 'varchar', nullable: true })
   emailVerificationToken: string | null;
 
+  @Column({ name: 'stripe_customer_id', type: 'varchar', length: 100, nullable: true })
+  stripeCustomerId: string | null;
+
+  @Column({ name: 'billing_access_state', type: 'varchar', length: 40, nullable: true })
+  billingAccessState: string | null;
+
+  @Column({ name: 'billing_trial_start_at', type: 'timestamp with time zone', nullable: true })
+  billingTrialStartAt: Date | null;
+
+  @Column({ name: 'billing_trial_end_at', type: 'timestamp with time zone', nullable: true })
+  billingTrialEndAt: Date | null;
+
+  @Column({ name: 'billing_subscription_id', type: 'varchar', length: 100, nullable: true })
+  billingSubscriptionId: string | null;
+
+  @Column({ name: 'billing_subscription_status', type: 'varchar', length: 40, nullable: true })
+  billingSubscriptionStatus: string | null;
+
+  @Column({ name: 'billing_subscription_current_period_end', type: 'timestamp with time zone', nullable: true })
+  billingSubscriptionCurrentPeriodEnd: Date | null;
+
+  @Column({ name: 'billing_subscription_cancel_at', type: 'timestamp with time zone', nullable: true })
+  billingSubscriptionCancelAt: Date | null;
+
+  @Column({
+    name: 'billing_monthly_price_usd',
+    type: 'decimal',
+    precision: 10,
+    scale: 2,
+    default: 25,
+  })
+  billingMonthlyPriceUsd: number;
+
+  @Column({ name: 'platform_plan_code', type: 'varchar', length: 40, nullable: true })
+  platformPlanCode: string | null;
+
+  @Column({ name: 'platform_access_ends_at', type: 'timestamp with time zone', nullable: true })
+  platformAccessEndsAt: Date | null;
+
+  @Column({ name: 'platform_features', type: 'jsonb', nullable: true })
+  platformFeatures: PlatformFeatures | null;
+
   @CreateDateColumn({
     type: 'timestamp with time zone',
     default: () => 'CURRENT_TIMESTAMP',
@@ -65,7 +105,4 @@ export class User {
   })
   updatedAt: Date;
 
-  // Relación de One-to-Many: un usuario puede tener muchos posts
-  @OneToMany(() => Post, (post) => post.user)
-  posts: Post[]
 }

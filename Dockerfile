@@ -47,11 +47,10 @@ COPY --from=builder --chown=nestjs:nodejs /app/package*.json ./
 RUN npm install --only=production --legacy-peer-deps && \
     npm cache clean --force
 
-# Script de wipe del panel (npm run db:wipe-panel / db:wipe-panel:prod) + SQL
+# Script opcional de wipe del panel (npm run db:wipe-panel:prod). El SQL esperado
+# (scripts/sql/panel-wipe-keep-blog-staff.sql) ya no está en el repo: montarlo por volumen
+# o copiarlo en la imagen custom si lo necesitás en el contenedor.
 COPY --from=builder --chown=nestjs:nodejs /app/scripts/db-wipe-panel.cjs ./scripts/db-wipe-panel.cjs
-COPY --from=builder --chown=nestjs:nodejs /app/scripts/sql/panel-wipe-keep-blog-staff.sql ./scripts/sql/panel-wipe-keep-blog-staff.sql
-# Volcado blog posts (npm run posts:import:prod); requiere posts_data.sql en el repo o montar ruta vía POSTS_DATA_SQL / -i
-COPY --from=builder --chown=nestjs:nodejs /app/scripts/posts-portable ./scripts/posts-portable
 
 # Cambiar al usuario no-root
 USER nestjs
@@ -62,6 +61,8 @@ EXPOSE 3002
 # Variables de entorno por defecto
 ENV NODE_ENV=production
 ENV PORT=3002
+# Si es "1" o "true", no se ejecutan migraciones al arrancar (mantenimiento / rollback manual)
+# ENV SKIP_DB_MIGRATIONS=
 
 # Healthcheck para Dokploy
 # Verifica que la API esté respondiendo (cualquier respuesta 2xx o 4xx indica que el servidor está activo)
@@ -71,6 +72,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
 # Usar dumb-init para manejo correcto de señales
 ENTRYPOINT ["dumb-init", "--"]
 
-# Comando para iniciar la aplicación
-CMD ["npm", "run", "start:prod"]
+# Migraciones TypeORM antes de la API (mismo flujo que `npm run migration:run:prod`).
+# Requiere variables de BD (p. ej. DATABASE_URL) en runtime. Si fallan, el contenedor no arranca.
+CMD ["sh", "-c", "if [ \"${SKIP_DB_MIGRATIONS}\" = \"1\" ] || [ \"${SKIP_DB_MIGRATIONS}\" = \"true\" ]; then echo '[entrypoint] SKIP_DB_MIGRATIONS: omitiendo migraciones'; else echo '[entrypoint] Ejecutando migraciones...' && node dist/scripts/run-migration.js run; fi && exec node dist/src/main"]
 

@@ -6,7 +6,6 @@ export function getAllowedOrigins(): string[] {
     'http://localhost:4200',
     'http://127.0.0.1:4200',
     'https://startcompanies.us',
-    'https://admin-blog.startcompanies.us',
     'https://staging.startcompanies.io',
     'https://startcompanies.io',
   ];

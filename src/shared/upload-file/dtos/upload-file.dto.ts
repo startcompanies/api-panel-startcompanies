@@ -29,9 +29,9 @@ export class UploadFileDto {
   @ApiProperty({
     type: 'string',
     description:
-      'Carpeta destino (opcional). "blog" → blog/{timestamp}-{filename}. Para imágenes de un post del blog usar "blog/{slug}" (p. ej. blog/mi-articulo-llc). Ignora servicio/requestUuid si se usa.',
+      'Carpeta destino en S3 (opcional). Ignora servicio/requestUuid si se usa.',
     required: false,
-    example: 'blog/mi-articulo-llc',
+    example: 'media/imagenes',
   })
   folder?: string;
 }

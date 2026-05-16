@@ -48,6 +48,23 @@ export class ClientsController {
     return this.clientsService.getMyClients(partnerId);
   }
 
+  @Get('self')
+  @UseGuards(RolesGuard)
+  @Roles('client')
+  @ApiOperation({
+    summary: 'Cliente portal vinculado al usuario actual',
+    description:
+      'Devuelve la fila `clients` ligada por `user_id` o, en su defecto, por email (sin partner), para omitir el paso de asociación al crear solicitudes.',
+  })
+  @ApiResponse({ status: 200, description: 'Cliente encontrado' })
+  @ApiResponse({ status: 404, description: 'Sin fila Client vinculada' })
+  getSelfClient(@Request() req) {
+    return this.clientsService.findSelfForPortalClient(
+      req.user.id,
+      req.user.email,
+    );
+  }
+
   @Get('admin-clients')
   @UseGuards(RolesGuard)
   @Roles('admin')

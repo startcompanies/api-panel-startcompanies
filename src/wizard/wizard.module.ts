@@ -18,6 +18,7 @@ import { CommonModule } from '../shared/common/common.module';
 import { AuthModule } from '../shared/auth/auth.module';
 import { NotificationsModule } from '../panel/notifications/notifications.module';
 import { ZohoConfigModule } from '../zoho-config/zoho-config.module';
+import { PricingModule } from '../panel/pricing/pricing.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { ZohoConfigModule } from '../zoho-config/zoho-config.module';
     AuthModule,
     NotificationsModule,
     ZohoConfigModule,
+    PricingModule,
   ],
   controllers: [WizardController, GeoController],
   providers: [WizardService, GeoService],

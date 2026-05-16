@@ -1,0 +1,415 @@
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import Stripe from 'stripe';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { StripeService } from '../../shared/payments/stripe.service';
+import { User } from '../../shared/user/entities/user.entity';
+import { StripeWebhookEvent } from './entities/stripe-webhook-event.entity';
+import { PricingPlan } from '../pricing/entities/pricing-plan.entity';
+
+type BillingAccessState =
+  | 'trial_active'
+  | 'trial_expired'
+  | 'subscription_active'
+  | 'subscription_past_due'
+  | 'subscription_canceled'
+  | 'no_subscription';
+
+@Injectable()
+export class BillingService {
+  private readonly logger = new Logger(BillingService.name);
+  private readonly trialMonthsExisting = Number(process.env.BILLING_TRIAL_MONTHS_EXISTING || '6');
+  private readonly trialMonthsNew = Number(process.env.BILLING_TRIAL_MONTHS_NEW || '3');
+  private readonly existingCutoff = new Date(process.env.BILLING_EXISTING_CUTOFF || '2026-04-29T00:00:00.000Z');
+  private readonly monthlyPriceUsd = Number(process.env.BILLING_MONTHLY_PRICE_USD || '25');
+  private readonly frontendBaseUrl = process.env.FRONTEND_URL || 'http://localhost:4200';
+  private readonly stripePriceId = process.env.STRIPE_SUBSCRIPTION_PRICE_ID || '';
+  private readonly stripeWebhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
+
+  constructor(
+    @InjectRepository(User) private readonly usersRepo: Repository<User>,
+    @InjectRepository(StripeWebhookEvent)
+    private readonly webhookEventsRepo: Repository<StripeWebhookEvent>,
+    @InjectRepository(PricingPlan)
+    private readonly pricingPlansRepo: Repository<PricingPlan>,
+    private readonly stripeService: StripeService,
+  ) {}
+
+  private get stripeClient(): Stripe {
+    const client = this.stripeService.getClient();
+    if (!client) {
+      throw new BadRequestException('Stripe no está configurado en el servidor.');
+    }
+    return client;
+  }
+
+  private async ensureStripeCustomer(user: User): Promise<string> {
+    if (user.stripeCustomerId) return user.stripeCustomerId;
+    const stripe = this.stripeClient;
+    const customer = await stripe.customers.create({
+      email: user.email,
+      name: [user.first_name, user.last_name].filter(Boolean).join(' ').trim() || user.username,
+      metadata: { userId: String(user.id) },
+    });
+    user.stripeCustomerId = customer.id;
+    await this.usersRepo.save(user);
+    return customer.id;
+  }
+
+  /**
+   * Usa price fijo si existe; si no existe en Stripe, cae a price_data dinámico.
+   * Evita 500 por desconfiguración de STRIPE_SUBSCRIPTION_PRICE_ID.
+   */
+  private async buildCheckoutLineItem(): Promise<Stripe.Checkout.SessionCreateParams.LineItem> {
+    const stripe = this.stripeClient;
+    if (this.stripePriceId) {
+      try {
+        await stripe.prices.retrieve(this.stripePriceId);
+        return { price: this.stripePriceId, quantity: 1 };
+      } catch (e: any) {
+        this.logger.warn(
+          `STRIPE_SUBSCRIPTION_PRICE_ID inválido (${this.stripePriceId}). Se usará price_data. ${e?.message || e}`,
+        );
+      }
+    }
+    return {
+      quantity: 1,
+      price_data: {
+        currency: 'usd',
+        unit_amount: Math.round(Number(this.monthlyPriceUsd || 25) * 100),
+        recurring: { interval: 'month' },
+        product_data: {
+          name: 'StartCompanies Panel Subscription',
+        },
+      },
+    };
+  }
+
+  private addMonths(date: Date, months: number): Date {
+    const d = new Date(date);
+    d.setMonth(d.getMonth() + months);
+    return d;
+  }
+
+  private isExistingAccount(createdAt: Date): boolean {
+    return createdAt.getTime() <= this.existingCutoff.getTime();
+  }
+
+  private daysPastDueFromIsoCutoff(cutoff: Date | null): number | null {
+    if (!cutoff) return null;
+    const diffMs = Date.now() - cutoff.getTime();
+    if (!Number.isFinite(diffMs)) return null;
+    return Math.max(0, Math.floor(diffMs / 86400000));
+  }
+
+  private computeDaysPastDue(accessState: BillingAccessState, user: User): number | null {
+    if (accessState === 'trial_expired') {
+      return user.billingTrialEndAt ? this.daysPastDueFromIsoCutoff(user.billingTrialEndAt) : null;
+    }
+    if (
+      accessState === 'subscription_past_due' ||
+      accessState === 'subscription_canceled' ||
+      accessState === 'no_subscription'
+    ) {
+      return user.billingSubscriptionCurrentPeriodEnd
+        ? this.daysPastDueFromIsoCutoff(user.billingSubscriptionCurrentPeriodEnd)
+        : null;
+    }
+    return null;
+  }
+
+  private deriveAccessState(user: User): BillingAccessState {
+    if (user.type !== 'client') {
+      // El trial comercial solo aplica a clientes finales.
+      // Staff/admin/partners mantienen acceso al panel sin depender de suscripción.
+      return 'subscription_active';
+    }
+    const s = (user.billingSubscriptionStatus || '').toLowerCase();
+    if (s === 'active' || s === 'trialing') return 'subscription_active';
+    if (s === 'past_due' || s === 'unpaid' || s === 'incomplete' || s === 'incomplete_expired') {
+      return 'subscription_past_due';
+    }
+    if (s === 'canceled') return 'subscription_canceled';
+
+    if (user.billingTrialEndAt) {
+      return user.billingTrialEndAt.getTime() > Date.now() ? 'trial_active' : 'trial_expired';
+    }
+    return 'no_subscription';
+  }
+
+  private subscriptionPriority(status: string): number {
+    switch ((status || '').toLowerCase()) {
+      case 'active':
+      case 'trialing':
+        return 100;
+      case 'past_due':
+      case 'unpaid':
+      case 'incomplete':
+        return 80;
+      case 'canceled':
+        return 40;
+      case 'incomplete_expired':
+      default:
+        return 10;
+    }
+  }
+
+  /**
+   * Fallback de consistencia: si el webhook no actualizó aún la DB, reconciliar leyendo Stripe.
+   */
+  private async reconcileBillingFromStripe(user: User): Promise<User> {
+    if (!user.stripeCustomerId) return user;
+    const stripe = this.stripeService.getClient();
+    if (!stripe) return user;
+
+    try {
+      const list = await stripe.subscriptions.list({
+        customer: user.stripeCustomerId,
+        status: 'all',
+        limit: 10,
+      });
+      if (!list.data.length) return user;
+
+      const best = [...list.data].sort((a, b) => {
+        const p = this.subscriptionPriority(b.status) - this.subscriptionPriority(a.status);
+        if (p !== 0) return p;
+        return Number((b as any).created || 0) - Number((a as any).created || 0);
+      })[0];
+
+      const currentPeriodEndUnix = Number((best as any)?.current_period_end || 0);
+      user.billingSubscriptionId = best.id;
+      user.billingSubscriptionStatus = best.status;
+      user.billingSubscriptionCurrentPeriodEnd =
+        currentPeriodEndUnix > 0 ? new Date(currentPeriodEndUnix * 1000) : null;
+      user.billingSubscriptionCancelAt = best.cancel_at ? new Date(best.cancel_at * 1000) : null;
+      user.billingAccessState = this.deriveAccessState(user);
+      return this.usersRepo.save(user);
+    } catch (e: any) {
+      this.logger.warn(`No se pudo reconciliar suscripción desde Stripe: ${e?.message || e}`);
+      return user;
+    }
+  }
+
+  async ensureTrialWindow(user: User): Promise<User> {
+    if (user.type !== 'client') {
+      user.billingAccessState = this.deriveAccessState(user);
+      return this.usersRepo.save(user);
+    }
+    if (user.billingTrialStartAt && user.billingTrialEndAt) return user;
+    const trialMonths = this.isExistingAccount(user.createdAt) ? this.trialMonthsExisting : this.trialMonthsNew;
+    user.billingTrialStartAt = user.createdAt;
+    user.billingTrialEndAt = this.addMonths(user.createdAt, trialMonths);
+    user.billingMonthlyPriceUsd = Number(user.billingMonthlyPriceUsd || this.monthlyPriceUsd);
+    user.billingAccessState = this.deriveAccessState(user);
+    return this.usersRepo.save(user);
+  }
+
+  async getAccessSnapshot(userId: number) {
+    const user = await this.usersRepo.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new BadRequestException('Usuario no encontrado');
+    }
+    let hydrated = await this.ensureTrialWindow(user);
+    hydrated = await this.reconcileBillingFromStripe(hydrated);
+    const accessState = this.deriveAccessState(hydrated);
+    const canAccessPanel = accessState === 'trial_active' || accessState === 'subscription_active';
+    const daysPastDue = this.computeDaysPastDue(accessState, hydrated);
+    const trialEndAt =
+      hydrated.type === 'client' && hydrated.billingTrialEndAt
+        ? hydrated.billingTrialEndAt.toISOString()
+        : null;
+    const trialStartAt =
+      hydrated.type === 'client' && hydrated.billingTrialStartAt
+        ? hydrated.billingTrialStartAt.toISOString()
+        : null;
+    return {
+      accessState,
+      canAccessPanel,
+      daysPastDue,
+      trialStartAt,
+      trialEndAt,
+      subscriptionStatus: hydrated.billingSubscriptionStatus ?? null,
+      subscriptionCancelAt: hydrated.billingSubscriptionCancelAt
+        ? hydrated.billingSubscriptionCancelAt.toISOString()
+        : null,
+      subscriptionCurrentPeriodEnd: hydrated.billingSubscriptionCurrentPeriodEnd
+        ? hydrated.billingSubscriptionCurrentPeriodEnd.toISOString()
+        : null,
+      monthlyPriceUsd: Number(hydrated.billingMonthlyPriceUsd || this.monthlyPriceUsd),
+      platformPlanCode: hydrated.platformPlanCode ?? null,
+      platformAccessEndsAt: hydrated.platformAccessEndsAt
+        ? hydrated.platformAccessEndsAt.toISOString()
+        : null,
+      platformFeatures: hydrated.platformFeatures ?? null,
+    };
+  }
+
+  /**
+   * Asigna acceso a la plataforma a un usuario según la configuración del plan seleccionado.
+   * Llamado por el admin al activar el servicio de un cliente.
+   */
+  async grantPlatformAccess(userId: number, planCode: string): Promise<void> {
+    const user = await this.usersRepo.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException(`Usuario ${userId} no encontrado`);
+
+    const plan = await this.pricingPlansRepo.findOne({ where: { code: planCode } });
+    if (!plan) throw new NotFoundException(`Plan '${planCode}' no encontrado`);
+
+    const config = plan.platformConfig;
+    if (!config) {
+      throw new BadRequestException(`El plan '${planCode}' no tiene configuración de plataforma`);
+    }
+
+    const now = new Date();
+    const accessEndsAt = new Date(now);
+    accessEndsAt.setMonth(accessEndsAt.getMonth() + config.trialMonths);
+
+    user.platformPlanCode = planCode;
+    user.platformAccessEndsAt = accessEndsAt;
+    user.platformFeatures = config.features;
+
+    if (config.monthlyPriceAfterTrial != null) {
+      user.billingMonthlyPriceUsd = config.monthlyPriceAfterTrial;
+    }
+
+    await this.usersRepo.save(user);
+  }
+
+  async createCheckoutSession(userId: number): Promise<{ url: string }> {
+    const user = await this.usersRepo.findOne({ where: { id: userId } });
+    if (!user) throw new BadRequestException('Usuario no encontrado');
+    await this.ensureTrialWindow(user);
+
+    const stripe = this.stripeClient;
+    const customerId = await this.ensureStripeCustomer(user);
+    const lineItem = await this.buildCheckoutLineItem();
+
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      customer: customerId,
+      line_items: [lineItem],
+      success_url: `${this.frontendBaseUrl}/panel/subscription?checkout=success`,
+      cancel_url: `${this.frontendBaseUrl}/panel/subscription?checkout=cancel`,
+      metadata: { userId: String(user.id) },
+      subscription_data: {
+        metadata: { userId: String(user.id) },
+      },
+      allow_promotion_codes: true,
+    });
+
+    if (!session.url) {
+      throw new BadRequestException('No se pudo generar la URL de Checkout');
+    }
+    return { url: session.url };
+  }
+
+  async createCustomerPortalSession(userId: number): Promise<{ url: string }> {
+    const user = await this.usersRepo.findOne({ where: { id: userId } });
+    if (!user) throw new BadRequestException('Usuario no encontrado');
+    const customerId = await this.ensureStripeCustomer(user);
+    const stripe = this.stripeClient;
+    const session = await stripe.billingPortal.sessions.create({
+      customer: customerId,
+      return_url: `${this.frontendBaseUrl}/panel/subscription`,
+    });
+    return { url: session.url };
+  }
+
+  private async updateUserFromSubscription(subscription: Stripe.Subscription, fallbackUserId?: number): Promise<void> {
+    const customerId = typeof subscription.customer === 'string' ? subscription.customer : subscription.customer?.id;
+    let user: User | null = null;
+    if (customerId) {
+      user = await this.usersRepo.findOne({ where: { stripeCustomerId: customerId } });
+    }
+    if (!user && fallbackUserId) {
+      user = await this.usersRepo.findOne({ where: { id: fallbackUserId } });
+    }
+    if (!user) return;
+
+    user.stripeCustomerId = customerId || user.stripeCustomerId;
+    user.billingSubscriptionId = subscription.id;
+    user.billingSubscriptionStatus = subscription.status;
+    const currentPeriodEndUnix = Number((subscription as any)?.current_period_end || 0);
+    user.billingSubscriptionCurrentPeriodEnd = currentPeriodEndUnix > 0
+      ? new Date(currentPeriodEndUnix * 1000)
+      : null;
+    user.billingSubscriptionCancelAt = subscription.cancel_at ? new Date(subscription.cancel_at * 1000) : null;
+    user.billingAccessState = this.deriveAccessState(user);
+    await this.usersRepo.save(user);
+  }
+
+  async handleStripeWebhook(signature: string | undefined, payload: Buffer): Promise<{ received: true }> {
+    if (!this.stripeWebhookSecret) throw new BadRequestException('Falta STRIPE_WEBHOOK_SECRET');
+    const stripe = this.stripeClient;
+    let event: Stripe.Event;
+    try {
+      event = stripe.webhooks.constructEvent(payload, signature || '', this.stripeWebhookSecret);
+    } catch (err: any) {
+      this.logger.warn(`Webhook de Stripe inválido: ${err?.message || err}`);
+      throw new BadRequestException('Firma inválida de webhook');
+    }
+
+    const alreadyProcessed = await this.webhookEventsRepo.findOne({ where: { id: event.id } });
+    if (alreadyProcessed) {
+      return { received: true };
+    }
+
+    switch (event.type) {
+      case 'checkout.session.completed': {
+        const session = event.data.object as Stripe.Checkout.Session;
+        const userId = Number(session.metadata?.userId || 0) || undefined;
+        const subscriptionId =
+          typeof session.subscription === 'string' ? session.subscription : session.subscription?.id;
+        if (subscriptionId) {
+          const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+          await this.updateUserFromSubscription(subscription, userId);
+        }
+        break;
+      }
+      case 'customer.subscription.updated':
+      case 'customer.subscription.deleted': {
+        const subscription = event.data.object as Stripe.Subscription;
+        await this.updateUserFromSubscription(subscription);
+        break;
+      }
+      default:
+        break;
+    }
+    const processedEvent = this.webhookEventsRepo.create({ id: event.id, type: event.type });
+    await this.webhookEventsRepo.save(processedEvent);
+    return { received: true };
+  }
+
+  /**
+   * Fallback periódico: si una suscripción ya pasó su fecha efectiva de cancelación
+   * y no llegó webhook, cortar acceso marcándola como cancelada.
+   */
+  @Cron(CronExpression.EVERY_HOUR)
+  async reconcileExpiredScheduledCancellations(): Promise<void> {
+    const now = new Date();
+    const candidates = await this.usersRepo.find({
+      where: [
+        { type: 'client', billingSubscriptionStatus: 'active' },
+        { type: 'client', billingSubscriptionStatus: 'trialing' },
+        { type: 'client', billingSubscriptionStatus: 'past_due' },
+      ],
+    });
+
+    let updated = 0;
+    for (const user of candidates) {
+      const cancelAt = user.billingSubscriptionCancelAt;
+      if (!cancelAt || cancelAt.getTime() > now.getTime()) continue;
+
+      user.billingSubscriptionStatus = 'canceled';
+      user.billingAccessState = this.deriveAccessState(user);
+      await this.usersRepo.save(user);
+      updated += 1;
+    }
+
+    if (updated > 0) {
+      this.logger.log(`Billing cron: ${updated} suscripción(es) vencidas marcadas como canceladas.`);
+    }
+  }
+}
+

@@ -1,0 +1,510 @@
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+  NotFoundException,
+} from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Invoice } from './entities/invoice.entity';
+import { InvoiceEvent } from './entities/invoice-event.entity';
+import { InvoicePayment } from './entities/invoice-payment.entity';
+import { InvoiceItem } from './entities/invoice-item.entity';
+import { ClientCompanyProfile } from '../settings/entities/client-company-profile.entity';
+import { InvoicePdfService } from './invoice-pdf.service';
+import { EmailService } from '../../shared/common/services/email.service';
+import { InvoiceBillingClient } from './entities/invoice-billing-client.entity';
+import { CreateBillingClientDto } from './dtos/create-billing-client.dto';
+import { UpdateBillingClientDto } from './dtos/update-billing-client.dto';
+
+export type InvoiceLineInput = {
+  productName?: string;
+  description: string;
+  unitMeasure?: string;
+  qty: number;
+  unitPrice: number;
+  discountPercent?: number;
+};
+
+@Injectable()
+export class InvoicingService {
+  constructor(
+    @InjectRepository(Invoice)
+    private readonly invoicesRepo: Repository<Invoice>,
+    @InjectRepository(InvoiceItem)
+    private readonly itemsRepo: Repository<InvoiceItem>,
+    @InjectRepository(InvoicePayment)
+    private readonly paymentsRepo: Repository<InvoicePayment>,
+    @InjectRepository(InvoiceEvent)
+    private readonly eventsRepo: Repository<InvoiceEvent>,
+    @InjectRepository(ClientCompanyProfile)
+    private readonly companyRepo: Repository<ClientCompanyProfile>,
+    @InjectRepository(InvoiceBillingClient)
+    private readonly billingClientsRepo: Repository<InvoiceBillingClient>,
+    private readonly invoicePdfService: InvoicePdfService,
+    private readonly emailService: EmailService,
+  ) {}
+
+  private lineTotal(qty: number, unitPrice: number, discountPercent: number): number {
+    const base = Number(qty) * Number(unitPrice);
+    const d = Number(discountPercent || 0);
+    return Math.round(base * (1 - d / 100) * 100) / 100;
+  }
+
+  /** Descripción obligatoria en BD; si solo viene producto, se usa como descripción. product_name se conserva si viene informado. */
+  private normalizeLineInput(row: InvoiceLineInput): InvoiceLineInput {
+    const desc = (row.description?.trim() || row.productName?.trim() || '').trim();
+    const pn = row.productName?.trim();
+    return {
+      ...row,
+      description: desc,
+      productName: pn ? pn : undefined,
+    };
+  }
+
+  private async assertInvoiceOwner(invoiceId: number, userId: number): Promise<Invoice> {
+    const inv = await this.invoicesRepo
+      .createQueryBuilder('inv')
+      .leftJoinAndSelect('inv.items', 'items')
+      .where('inv.id = :id', { id: invoiceId })
+      .andWhere('(inv.ownerUserId = :uid OR inv.issuedByUserId = :uid)', { uid: userId })
+      .orderBy('items.id', 'ASC')
+      .getOne();
+    if (!inv) throw new NotFoundException('Invoice no encontrada');
+    return inv;
+  }
+
+  /** JSON seguro (sin ref. circular item.invoice) + fechas/números estables para el cliente. */
+  serializeInvoiceForClient(inv: Invoice): Record<string, unknown> {
+    return {
+      id: inv.id,
+      clientId: inv.clientId,
+      ownerUserId: inv.ownerUserId,
+      issuedByUserId: inv.issuedByUserId,
+      invoiceNumber: inv.invoiceNumber,
+      billTo: inv.billTo,
+      paymentInstructions: inv.paymentInstructions,
+      taxRate: inv.taxRate != null ? Number(inv.taxRate) : 0,
+      taxLabel: inv.taxLabel,
+      issueDate: this.formatDateOnly(inv.issueDate),
+      dueDate: this.formatDateOnly(inv.dueDate),
+      status: inv.status,
+      currency: inv.currency,
+      subtotalAmount: inv.subtotalAmount != null ? Number(inv.subtotalAmount) : 0,
+      taxAmount: inv.taxAmount != null ? Number(inv.taxAmount) : 0,
+      totalAmount: inv.totalAmount != null ? Number(inv.totalAmount) : 0,
+      paidAmount: inv.paidAmount != null ? Number(inv.paidAmount) : 0,
+      sentAt: inv.sentAt,
+      pdfUrl: inv.pdfUrl,
+      notes: inv.notes,
+      createdAt: inv.createdAt,
+      updatedAt: inv.updatedAt,
+      items: (inv.items ?? []).map((it) => ({
+        id: it.id,
+        invoiceId: it.invoiceId,
+        productName: it.productName,
+        description: it.description,
+        unitMeasure: it.unitMeasure,
+        discountPercent: it.discountPercent != null ? Number(it.discountPercent) : 0,
+        qty: it.qty != null ? Number(it.qty) : 0,
+        unitPrice: it.unitPrice != null ? Number(it.unitPrice) : 0,
+        lineTotal: it.lineTotal != null ? Number(it.lineTotal) : 0,
+        createdAt: it.createdAt,
+      })),
+    };
+  }
+
+  private formatDateOnly(v: string | Date | null | undefined): string | null {
+    if (v == null || v === '') return null;
+    if (typeof v === 'string') return v.length >= 10 ? v.slice(0, 10) : v;
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    return String(v).slice(0, 10);
+  }
+
+  async listForUser(userId: number) {
+    const rows = await this.invoicesRepo.find({
+      where: [{ ownerUserId: userId }, { issuedByUserId: userId }],
+      relations: { items: true },
+      order: { createdAt: 'DESC' },
+    });
+    return rows.map((r) => this.serializeInvoiceForClient(r));
+  }
+
+  async getOneForUser(invoiceId: number, userId: number) {
+    const inv = await this.assertInvoiceOwner(invoiceId, userId);
+    return this.serializeInvoiceForClient(inv);
+  }
+
+  private async nextInvoiceNumber(userId: number): Promise<string> {
+    const n = await this.invoicesRepo.count({ where: { ownerUserId: userId } });
+    const y = new Date().getFullYear();
+    return `SC-${y}-${String(n + 1).padStart(4, '0')}`;
+  }
+
+  private computeTotals(
+    items: InvoiceLineInput[],
+    taxRate: number,
+  ): { subtotal: number; taxAmount: number; total: number } {
+    const subtotal = items.reduce(
+      (acc, row) => acc + this.lineTotal(row.qty, row.unitPrice, row.discountPercent ?? 0),
+      0,
+    );
+    const rate = Number(taxRate || 0);
+    const taxAmount = Math.round(subtotal * rate * 100) / 100;
+    const total = Math.round((subtotal + taxAmount) * 100) / 100;
+    return { subtotal, taxAmount, total };
+  }
+
+  private async paymentSnapshotFromCompany(userId: number): Promise<Record<string, unknown>> {
+    const row = await this.companyRepo.findOne({ where: { userId } });
+    if (!row) return {};
+    return {
+      bankName: row.bankName,
+      accountNumber: row.accountNumber,
+      routingAch: row.routingAch,
+      swift: row.swift,
+      iban: row.iban,
+      zelleOrPaypal: row.zelleOrPaypal,
+    };
+  }
+
+  async createForUser(
+    userId: number,
+    body: {
+      currency?: string;
+      issueDate?: string;
+      dueDate?: string | null;
+      taxRate?: number;
+      taxLabel?: string | null;
+      notes?: string | null;
+      billTo?: Record<string, unknown> | null;
+      paymentInstructions?: Record<string, unknown> | null;
+      status?: 'draft' | 'sent' | 'partial' | 'paid' | 'overdue' | 'void';
+      items?: InvoiceLineInput[];
+    },
+  ) {
+    const items = (body.items ?? []).map((r) => this.normalizeLineInput(r));
+    if (items.some((i) => !i.description)) {
+      throw new BadRequestException('Cada línea requiere descripción o nombre de producto/servicio');
+    }
+    const taxRate = body.taxRate !== undefined ? Number(body.taxRate) : 0;
+    const { subtotal, taxAmount, total } = this.computeTotals(items, taxRate);
+    const paymentInstructions =
+      body.paymentInstructions ?? (await this.paymentSnapshotFromCompany(userId));
+    const invoiceNumber = await this.nextInvoiceNumber(userId);
+    const issueDate = body.issueDate ?? new Date().toISOString().slice(0, 10);
+
+    return this.invoicesRepo.manager.transaction(async (em) => {
+      const inv = em.create(Invoice, {
+        clientId: null,
+        ownerUserId: userId,
+        issuedByUserId: userId,
+        invoiceNumber,
+        billTo: body.billTo ?? null,
+        paymentInstructions,
+        taxRate,
+        taxLabel: body.taxLabel ?? (taxRate === 0 ? '0% — No ECI' : null),
+        issueDate,
+        status: body.status ?? 'draft',
+        currency: (body.currency || 'USD').slice(0, 3).toUpperCase(),
+        subtotalAmount: subtotal,
+        taxAmount,
+        totalAmount: total,
+        paidAmount: 0,
+        dueDate: body.dueDate ?? null,
+        notes: body.notes ?? null,
+      });
+      const saved = await em.save(inv);
+      for (const row of items) {
+        const lineTotal = this.lineTotal(row.qty, row.unitPrice, row.discountPercent ?? 0);
+        await em.save(
+          em.create(InvoiceItem, {
+            invoiceId: saved.id,
+            productName: row.productName?.trim() || null,
+            description: row.description.trim(),
+            unitMeasure: row.unitMeasure?.trim() || 'u',
+            discountPercent: row.discountPercent ?? 0,
+            qty: row.qty,
+            unitPrice: row.unitPrice,
+            lineTotal,
+          }),
+        );
+      }
+      const full = await em.findOne(Invoice, { where: { id: saved.id }, relations: { items: true } });
+      if (!full) throw new InternalServerErrorException('Factura no recuperada tras crear');
+      return this.serializeInvoiceForClient(full);
+    });
+  }
+
+  async updateForUser(
+    invoiceId: number,
+    userId: number,
+    body: {
+      currency?: string;
+      issueDate?: string;
+      dueDate?: string | null;
+      taxRate?: number;
+      taxLabel?: string | null;
+      notes?: string | null;
+      billTo?: Record<string, unknown> | null;
+      paymentInstructions?: Record<string, unknown> | null;
+      status?: 'draft' | 'sent' | 'partial' | 'paid' | 'overdue' | 'void';
+      items?: InvoiceLineInput[];
+    },
+  ) {
+    const inv = await this.assertInvoiceOwner(invoiceId, userId);
+    if (inv.status === 'paid' || inv.status === 'void') {
+      // Solo se permiten actualizar campos no financieros (notas, cliente, instrucciones de cobro)
+      if (body.notes !== undefined) inv.notes = body.notes ?? null;
+      if (body.billTo !== undefined) inv.billTo = (body.billTo ?? null) as any;
+      if (body.paymentInstructions !== undefined) inv.paymentInstructions = (body.paymentInstructions ?? null) as any;
+      await this.invoicesRepo.save(inv);
+      const full = await this.assertInvoiceOwner(invoiceId, userId);
+      return this.serializeInvoiceForClient(full);
+    }
+    const rawItems =
+      body.items !== undefined
+        ? body.items
+        : (inv.items?.map((r) => ({
+            productName: r.productName ?? undefined,
+            description: r.description,
+            unitMeasure: r.unitMeasure,
+            qty: Number(r.qty),
+            unitPrice: Number(r.unitPrice),
+            discountPercent: Number(r.discountPercent),
+          })) ?? []);
+    const items = rawItems.map((r) => this.normalizeLineInput(r));
+    if (items.some((i) => !i.description)) {
+      throw new BadRequestException('Cada línea requiere descripción o nombre de producto/servicio');
+    }
+    const taxRate = body.taxRate !== undefined ? Number(body.taxRate) : Number(inv.taxRate);
+    const { subtotal, taxAmount, total } = this.computeTotals(items, taxRate);
+
+    return this.invoicesRepo.manager.transaction(async (em) => {
+      await em.delete(InvoiceItem, { invoiceId: inv.id });
+      /* Sin esto, cascade en Invoice.items vuelve a persistir las líneas viejas en memoria + las nuevas del bucle. */
+      inv.items = [];
+      if (body.currency !== undefined) inv.currency = body.currency.slice(0, 3).toUpperCase();
+      if (body.issueDate !== undefined) inv.issueDate = body.issueDate;
+      if (body.dueDate !== undefined) inv.dueDate = body.dueDate;
+      if (body.taxLabel !== undefined) inv.taxLabel = body.taxLabel;
+      if (body.notes !== undefined) inv.notes = body.notes;
+      if (body.billTo !== undefined) inv.billTo = body.billTo;
+      if (body.paymentInstructions !== undefined) inv.paymentInstructions = body.paymentInstructions;
+      if (body.status !== undefined) inv.status = body.status;
+      inv.taxRate = taxRate;
+      inv.subtotalAmount = subtotal;
+      inv.taxAmount = taxAmount;
+      inv.totalAmount = total;
+      await em.save(inv);
+      for (const row of items) {
+        const lineTotal = this.lineTotal(row.qty, row.unitPrice, row.discountPercent ?? 0);
+        await em.save(
+          em.create(InvoiceItem, {
+            invoiceId: inv.id,
+            productName: row.productName?.trim() || null,
+            description: row.description.trim(),
+            unitMeasure: row.unitMeasure?.trim() || 'u',
+            discountPercent: row.discountPercent ?? 0,
+            qty: row.qty,
+            unitPrice: row.unitPrice,
+            lineTotal,
+          }),
+        );
+      }
+      const full = await em.findOne(Invoice, { where: { id: inv.id }, relations: { items: true } });
+      if (!full) throw new InternalServerErrorException('Factura no recuperada tras actualizar');
+      return this.serializeInvoiceForClient(full);
+    });
+  }
+
+  private async recomputePaymentStatus(invoiceId: number): Promise<void> {
+    const inv = await this.invoicesRepo.findOne({ where: { id: invoiceId } });
+    if (!inv) return;
+    const payments = await this.paymentsRepo.find({ where: { invoiceId } });
+    const paid = Math.round(payments.reduce((s, p) => s + Number(p.amount), 0) * 100) / 100;
+    inv.paidAmount = paid;
+    const total = Math.round(Number(inv.totalAmount) * 100) / 100;
+    const eps = 0.009;
+    if (paid <= eps) {
+      inv.status = inv.sentAt ? 'sent' : 'draft';
+    } else if (paid >= total - eps) {
+      inv.status = 'paid';
+    } else {
+      inv.status = 'partial';
+    }
+    await this.invoicesRepo.save(inv);
+  }
+
+  async addPartialPayment(invoiceId: number, userId: number, amount: number, method?: string) {
+    await this.assertInvoiceOwner(invoiceId, userId);
+    if (!(Number(amount) > 0)) {
+      throw new BadRequestException('El monto debe ser mayor a cero');
+    }
+    const payment = this.paymentsRepo.create({ invoiceId, amount, method: method ?? null });
+    await this.paymentsRepo.save(payment);
+    await this.eventsRepo.save(
+      this.eventsRepo.create({
+        invoiceId,
+        eventType: 'partial_payment',
+        payload: { amount, method: method ?? null },
+      }),
+    );
+    await this.recomputePaymentStatus(invoiceId);
+    const full = await this.assertInvoiceOwner(invoiceId, userId);
+    return this.serializeInvoiceForClient(full);
+  }
+
+  async listPayments(invoiceId: number, userId: number) {
+    await this.assertInvoiceOwner(invoiceId, userId);
+    const rows = await this.paymentsRepo.find({ where: { invoiceId }, order: { id: 'ASC' } });
+    return rows.map((p) => ({
+      id: p.id,
+      amount: Number(p.amount),
+      method: p.method,
+      paidAt: p.paidAt,
+    }));
+  }
+
+  async updatePayment(
+    invoiceId: number,
+    paymentId: number,
+    userId: number,
+    body: { amount?: number; method?: string | null; paidAt?: string | null },
+  ) {
+    await this.assertInvoiceOwner(invoiceId, userId);
+    const p = await this.paymentsRepo.findOne({ where: { id: paymentId, invoiceId } });
+    if (!p) throw new NotFoundException('Pago no encontrado');
+    if (body.amount !== undefined) {
+      if (!(Number(body.amount) > 0)) throw new BadRequestException('El monto debe ser mayor a cero');
+      p.amount = Number(body.amount);
+    }
+    if (body.method !== undefined) p.method = body.method;
+    if (body.paidAt !== undefined && body.paidAt !== null) {
+      const d = new Date(body.paidAt);
+      if (!Number.isNaN(d.getTime())) p.paidAt = d;
+    }
+    await this.paymentsRepo.save(p);
+    await this.recomputePaymentStatus(invoiceId);
+    const full = await this.assertInvoiceOwner(invoiceId, userId);
+    return this.serializeInvoiceForClient(full);
+  }
+
+  async deletePayment(invoiceId: number, paymentId: number, userId: number) {
+    await this.assertInvoiceOwner(invoiceId, userId);
+    const r = await this.paymentsRepo.delete({ id: paymentId, invoiceId });
+    if (!r.affected) throw new NotFoundException('Pago no encontrado');
+    await this.recomputePaymentStatus(invoiceId);
+    const full = await this.assertInvoiceOwner(invoiceId, userId);
+    return this.serializeInvoiceForClient(full);
+  }
+
+  async markAsSent(id: number, userId: number) {
+    const inv = await this.assertInvoiceOwner(id, userId);
+    const billTo = (inv.billTo || {}) as Record<string, unknown>;
+    const to = String(billTo['email'] || '').trim();
+    if (!to) {
+      throw new BadRequestException('Añade el correo del cliente en «Facturar a» para enviar la factura.');
+    }
+    const company = await this.companyRepo.findOne({ where: { userId } });
+    const pdfBuffer = await this.invoicePdfService.buildInvoicePdf(inv, company);
+    const replyTo = company?.billingEmail?.trim() || undefined;
+    await this.emailService.sendInvoiceToClient({
+      to,
+      invoiceNumber: inv.invoiceNumber || String(inv.id),
+      totalAmount: Number(inv.totalAmount),
+      currency: inv.currency || 'USD',
+      pdfBuffer,
+      clientName: String(billTo['companyName'] || billTo['name'] || ''),
+      replyTo,
+      issuerLegalName: company?.legalName ?? null,
+      issuerLogoUrl: company?.logoUrl ?? null,
+      issuerEmail: company?.billingEmail ?? null,
+    });
+    inv.status = 'sent';
+    inv.sentAt = new Date();
+    await this.invoicesRepo.save(inv);
+    const full = await this.assertInvoiceOwner(id, userId);
+    return this.serializeInvoiceForClient(full);
+  }
+
+  async getPdfBuffer(id: number, userId: number): Promise<Buffer> {
+    const invoice = await this.assertInvoiceOwner(id, userId);
+    const company = await this.companyRepo.findOne({ where: { userId } });
+    return this.invoicePdfService.buildInvoicePdf(invoice, company);
+  }
+
+  /** Clientes de facturación (Bill-to reutilizables). */
+  serializeBillingClient(row: InvoiceBillingClient): Record<string, unknown> {
+    return {
+      id: row.id,
+      companyName: row.companyName,
+      ein: row.ein,
+      address: row.address,
+      email: row.email,
+      phone: row.phone,
+      notes: row.notes,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  private async assertBillingClientOwner(id: number, userId: number): Promise<InvoiceBillingClient> {
+    const r = await this.billingClientsRepo.findOne({ where: { id, ownerUserId: userId } });
+    if (!r) throw new NotFoundException('Cliente de facturación no encontrado');
+    return r;
+  }
+
+  async listBillingClients(userId: number) {
+    const rows = await this.billingClientsRepo.find({
+      where: { ownerUserId: userId },
+      order: { companyName: 'ASC', id: 'ASC' },
+    });
+    return rows.map((x) => this.serializeBillingClient(x));
+  }
+
+  async createBillingClient(userId: number, dto: CreateBillingClientDto) {
+    const row = this.billingClientsRepo.create({
+      ownerUserId: userId,
+      companyName: dto.companyName.trim(),
+      ein: dto.ein?.trim() || null,
+      address: dto.address?.trim() || null,
+      email: dto.email?.trim() || null,
+      phone: dto.phone?.trim() || null,
+      notes: dto.notes?.trim() || null,
+    });
+    const saved = await this.billingClientsRepo.save(row);
+    return this.serializeBillingClient(saved);
+  }
+
+  async updateBillingClient(id: number, userId: number, dto: UpdateBillingClientDto) {
+    const row = await this.assertBillingClientOwner(id, userId);
+    if (dto.companyName != null) row.companyName = dto.companyName.trim();
+    if (dto.ein !== undefined) row.ein = dto.ein?.trim() || null;
+    if (dto.address !== undefined) row.address = dto.address?.trim() || null;
+    if (dto.email !== undefined) row.email = dto.email?.trim() || null;
+    if (dto.phone !== undefined) row.phone = dto.phone?.trim() || null;
+    if (dto.notes !== undefined) row.notes = dto.notes?.trim() || null;
+    await this.billingClientsRepo.save(row);
+    return this.serializeBillingClient(row);
+  }
+
+  async deleteBillingClient(id: number, userId: number) {
+    await this.assertBillingClientOwner(id, userId);
+    await this.billingClientsRepo.delete({ id, ownerUserId: userId });
+    return { ok: true as const };
+  }
+
+  async deleteInvoice(id: number, userId: number) {
+    const inv = await this.invoicesRepo.findOne({ where: { id, ownerUserId: userId } });
+    if (!inv) throw new NotFoundException('Factura no encontrada');
+    if (inv.status !== 'draft') {
+      throw new BadRequestException('Solo se pueden eliminar facturas en estado borrador (draft).');
+    }
+    await this.itemsRepo.delete({ invoiceId: id });
+    await this.paymentsRepo.delete({ invoiceId: id });
+    await this.eventsRepo.delete({ invoiceId: id });
+    await this.invoicesRepo.delete({ id, ownerUserId: userId });
+    return { ok: true as const };
+  }
+}

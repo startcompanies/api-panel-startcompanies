@@ -226,6 +226,38 @@ export class ClientsService {
   }
 
   /**
+   * Fila `clients` del usuario portal con rol client (para flujo nueva solicitud sin paso de asociación).
+   * 1) `user_id` = usuario; 2) mismo email (normalizado) y sin partner (alineado a solicitudes directas).
+   */
+  async findSelfForPortalClient(userId: number, userEmail?: string | null): Promise<Client> {
+    const byUser = await this.clientRepository.findOne({
+      where: { userId },
+      relations: ['user'],
+    });
+    if (byUser) {
+      return byUser;
+    }
+    const emailNorm = (userEmail || '').trim().toLowerCase();
+    if (!emailNorm) {
+      throw new NotFoundException(
+        'No hay perfil de cliente vinculado. Completa tu cuenta o contacta a soporte.',
+      );
+    }
+    const row = await this.clientRepository
+      .createQueryBuilder('c')
+      .leftJoinAndSelect('c.user', 'user')
+      .where('c.partner_id IS NULL')
+      .andWhere('LOWER(TRIM(c.email)) = :emailNorm', { emailNorm })
+      .getOne();
+    if (row) {
+      return row;
+    }
+    throw new NotFoundException(
+      'No hay perfil de cliente vinculado. Completa tu cuenta o contacta a soporte.',
+    );
+  }
+
+  /**
    * Obtener un cliente por ID
    */
   async getClientById(id: number, partnerId?: number): Promise<Client> {

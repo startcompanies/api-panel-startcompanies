@@ -26,6 +26,9 @@ async function bootstrap() {
   
   // Configurar cookie parser para SSO
   app.use(cookieParser());
+
+  // Stripe webhook necesita body crudo para validar firma.
+  app.use('/billing/webhook', express.raw({ type: 'application/json' }));
   
   // Configurar límite de tamaño de peticiones
   app.use(express.json({ limit: '10mb' }));
@@ -52,7 +55,7 @@ async function bootstrap() {
   const config = new DocumentBuilder()
     .setTitle('API Start Companies')
     .setDescription(
-      'Documentación de la API para Start Companies LLC - Blog y Panel Administrativo',
+      'Documentación de la API para Start Companies LLC - Panel Administrativo',
     )
     .setVersion('1.0')
     .addBearerAuth(

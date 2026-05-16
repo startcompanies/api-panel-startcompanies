@@ -31,7 +31,7 @@ export class UploadFileController {
   @ApiOperation({
     summary: 'Subir un archivo',
     description:
-      'Sube un archivo al bucket S3. Con servicio + requestUuid (UUID real de la solicitud, no id numérico): request/{servicio}/{uuid}/. Solo servicio: request/{servicio}/{timestamp}-archivo (temporal). folder ignora servicio/requestUuid (p. ej. blog/{slug}).',
+      'Sube un archivo al bucket S3. Con servicio + requestUuid (UUID real de la solicitud, no id numérico): request/{servicio}/{uuid}/. Solo servicio: request/{servicio}/{timestamp}-archivo (temporal). folder ignora servicio/requestUuid.',
   })
   async uploadFile(
     @UploadedFile() file: Express.Multer.File,
@@ -63,7 +63,7 @@ export class UploadFileController {
   @ApiOperation({
     summary: 'Subir imagen desde URL',
     description:
-      'Descarga la imagen desde la URL (en el servidor, sin CORS) y la sube a S3. Si la URL ya es de media.../blog/ devuelve la misma URL. Carpeta por defecto: blog; para posts usar blog/{slug}. El nombre de archivo conserva el de la URL (sanitizado).',
+      'Descarga la imagen desde la URL (en el servidor, sin CORS) y la sube a S3. El nombre de archivo conserva el de la URL (sanitizado).',
   })
   @ApiBody({ type: UploadFromUrlDto })
   async uploadFromUrl(@Body() body: UploadFromUrlDto) {
@@ -73,7 +73,7 @@ export class UploadFileController {
     }
     const result = await this.uploadFileService.uploadFromUrl(
       url.trim(),
-      folder?.trim() || 'blog',
+      folder?.trim(),
     );
     return {
       url: result.url,

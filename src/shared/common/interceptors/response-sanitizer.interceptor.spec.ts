@@ -1,5 +1,5 @@
 import { of, lastValueFrom } from 'rxjs';
-import { CallHandler, ExecutionContext } from '@nestjs/common';
+import { CallHandler, ExecutionContext, StreamableFile } from '@nestjs/common';
 import { ResponseSanitizerInterceptor } from './response-sanitizer.interceptor';
 
 describe('ResponseSanitizerInterceptor', () => {
@@ -30,5 +30,18 @@ describe('ResponseSanitizerInterceptor', () => {
     expect(result.post.user.password).toBeUndefined();
     expect(result.post.user.emailVerificationToken).toBeUndefined();
     expect(result.post.title).toBe('Hello');
+  });
+
+  it('no altera StreamableFile (PDF, etc.)', async () => {
+    const interceptor = new ResponseSanitizerInterceptor();
+    const context = {} as ExecutionContext;
+    const pdf = new StreamableFile(Buffer.from('%PDF-1.4 test'), {
+      type: 'application/pdf',
+    });
+    const next: CallHandler = { handle: () => of(pdf) };
+
+    const out = await lastValueFrom(interceptor.intercept(context, next));
+    expect(out).toBe(pdf);
+    expect(out).toBeInstanceOf(StreamableFile);
   });
 });
