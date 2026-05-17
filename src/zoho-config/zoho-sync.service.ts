@@ -78,24 +78,58 @@ export class ZohoSyncService implements OnModuleInit {
   }
 
   private async backfillMissingWorkDrivePermalinks(): Promise<void> {
+    const MAX_ATTEMPTS = 3;
+    const SENTINEL = 'NOT_AVAILABLE';
+
     try {
       const pending = await this.requestRepository
         .createQueryBuilder('r')
         .where('r.work_drive_id IS NOT NULL')
-        .andWhere('(r.work_drive_url_external IS NULL OR r.work_drive_url_external = :empty)', { empty: '' })
+        .andWhere(
+          '(r.work_drive_url_external IS NULL OR r.work_drive_url_external = :empty)',
+          { empty: '' },
+        )
         .getMany();
+
       if (pending.length === 0) {
         this.logger.log('WorkDrive backfill: sin permalinks pendientes');
         return;
       }
+
       this.logger.log(`WorkDrive backfill: ${pending.length} registro(s) sin permalink`);
+
       for (const request of pending) {
-        try {
-          const permalink = await this.zohoWorkDriveService.generateEmbedPermalink(request.workDriveId!);
-          await this.requestRepository.update(request.id, { workDriveUrlExternal: permalink });
-          this.logger.log(`WorkDrive backfill: permalink generado para request ${request.id}`);
-        } catch (err: any) {
-          this.logger.warn(`WorkDrive backfill: error en request ${request.id}: ${err.message}`);
+        let lastErr: any;
+        let succeeded = false;
+
+        for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+          try {
+            const permalink = await this.zohoWorkDriveService.generateEmbedPermalink(request.workDriveId!);
+            await this.requestRepository.update(request.id, { workDriveUrlExternal: permalink });
+            this.logger.log(`WorkDrive backfill: permalink generado para request ${request.id}`);
+            succeeded = true;
+            break;
+          } catch (err: any) {
+            lastErr = err;
+            const status = err?.status ?? err?.response?.status;
+            // 401 = recurso no accesible; no tiene sentido reintentar
+            if (status === 401) break;
+          }
+        }
+
+        if (!succeeded) {
+          const status = lastErr?.status ?? lastErr?.response?.status;
+          if (status === 401) {
+            // Marcar como no disponible para no reintentar en ejecuciones futuras
+            await this.requestRepository.update(request.id, { workDriveUrlExternal: SENTINEL });
+            this.logger.warn(
+              `WorkDrive backfill: request ${request.id} marcado como ${SENTINEL} tras 401 en resource_id ${request.workDriveId}`,
+            );
+          } else {
+            this.logger.warn(
+              `WorkDrive backfill: error en request ${request.id} tras ${MAX_ATTEMPTS} intentos: ${lastErr?.message}`,
+            );
+          }
         }
       }
     } catch (err: any) {

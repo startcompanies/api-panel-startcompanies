@@ -9,7 +9,7 @@ import {
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource, EntityManager, LessThan } from 'typeorm';
+import { Repository, DataSource, EntityManager, LessThan, In } from 'typeorm';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { Request } from './entities/request.entity';
 import { AperturaLlcRequest } from './entities/apertura-llc-request.entity';
@@ -3030,7 +3030,7 @@ export class RequestsService {
     if (filters?.search && filters.search.length > 0) {
       const searchPattern = `%${filters.search}%`;
       queryBuilder.andWhere(
-        '(client.email ILIKE :search OR client.username ILIKE :search OR client.first_name ILIKE :search OR client.last_name ILIKE :search OR partner.email ILIKE :search OR partner.username ILIKE :search OR partner.first_name ILIKE :search OR partner.last_name ILIKE :search)',
+        '(client.email ILIKE :search OR client.full_name ILIKE :search OR partner.email ILIKE :search OR partner.username ILIKE :search OR partner.first_name ILIKE :search OR partner.last_name ILIKE :search)',
         { search: searchPattern }
       );
     }
@@ -3513,6 +3513,13 @@ export class RequestsService {
       });
       if (!stale.length) return;
       const ids = stale.map((r) => r.id);
+
+      // Eliminar primero los registros hijo que no tienen onDelete CASCADE
+      await this.aperturaRepo.delete({ requestId: In(ids) });
+      await this.renovacionRepo.delete({ requestId: In(ids) });
+      await this.cuentaRepo.delete({ requestId: In(ids) });
+
+      // Ahora sí eliminar el padre
       await this.requestRepository.delete(ids);
       this.logger.log(
         `[cleanup] Eliminadas ${ids.length} solicitudes pendientes con más de 72h: ${ids.join(', ')}`,

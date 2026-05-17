@@ -1,18 +1,25 @@
 /**
  * Orígenes permitidos para HTTP CORS y Socket.IO (deben coincidir).
+ * localhost solo se permite en entornos de desarrollo (MODE=DEV o NODE_ENV=development).
  */
+const isDev = process.env.MODE === 'DEV' || process.env.NODE_ENV === 'development';
+
 export function getAllowedOrigins(): string[] {
   const allowedOrigins = [
-    'http://localhost:4200',
-    'http://127.0.0.1:4200',
     'https://startcompanies.us',
     'https://staging.startcompanies.io',
     'https://startcompanies.io',
   ];
+
+  if (isDev) {
+    allowedOrigins.push('http://localhost:4200', 'http://127.0.0.1:4200');
+  }
+
   if (process.env.ZOHO_CRM_DOMAINS) {
     const zohoDomains = process.env.ZOHO_CRM_DOMAINS.split(',').map((d) => d.trim());
     allowedOrigins.push(...zohoDomains);
   }
+
   return allowedOrigins;
 }
 
@@ -25,6 +32,7 @@ export function createCorsOriginCallback(): (
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
+      console.warn(`[CORS] Origen rechazado: ${origin}`);
       callback(new Error('Not allowed by CORS'));
     }
   };
