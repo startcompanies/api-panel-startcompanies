@@ -18,6 +18,7 @@ import { ServiceHistoryService } from './service-history.service';
 import { CreateRequestDto } from './dtos/create-request.dto';
 import { UpdateRequestDto } from './dtos/update-request.dto';
 import { ApproveRequestDto } from './dtos/approve-request.dto';
+import { MarkManualPaymentDto } from './dtos/mark-manual-payment.dto';
 import { RejectRequestDto } from './dtos/reject-request.dto';
 import { PanelRequestActorUser } from '../notifications/request-submitted-notifications.service';
 import { AuthGuard } from '../../shared/auth/auth.guard';
@@ -247,6 +248,21 @@ export class RequestsController {
   @ApiResponse({ status: 200, description: 'Lista de aperturas del cliente' })
   getClientAperturasByEmail(@Param('email') email: string) {
     return this.requestsService.getClientAperturas(undefined, email);
+  }
+
+  @Post(':id/mark-manual-payment')
+  @UseGuards(RolesGuard)
+  @Roles('admin')
+  @ApiOperation({
+    summary: 'Registrar pago manual (Admin)',
+    description:
+      'Marca la solicitud como pagada fuera de Stripe (transferencia, efectivo, etc.) y la pasa a solicitud-recibida para poder aprobarla.',
+  })
+  markManualPayment(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: MarkManualPaymentDto,
+  ) {
+    return this.requestsService.markManualPayment(id, dto);
   }
 
   // Aprobar solicitud (solo admin) - desde pendiente o solicitud-recibida a en-proceso

@@ -496,13 +496,9 @@ export class AccountingService {
     if (o.needsReview) {
       qb.andWhere('tx.needs_review = TRUE');
     } else if (o.uncategorized) {
-      qb.andWhere(
-        '(tx.category_id IS NULL AND (tx.account_code IS NULL OR TRIM(tx.account_code) = \'\'))',
-      );
+      qb.andWhere("(tx.account_code IS NULL OR TRIM(tx.account_code) = '')");
     } else {
-      qb.andWhere(
-        '(tx.category_id IS NOT NULL OR (tx.account_code IS NOT NULL AND TRIM(tx.account_code) <> \'\'))',
-      );
+      qb.andWhere("(tx.account_code IS NOT NULL AND TRIM(tx.account_code) <> '')");
     }
     return qb.getMany();
   }
@@ -565,6 +561,7 @@ export class AccountingService {
     skippedRules: number;
     skippedAi: number;
     remainingUncategorized: number;
+    needsReview?: number;
     aiQuotaExceeded?: boolean;
     aiErrorStatus?: number;
     aiStoppedEarly?: boolean;
@@ -685,16 +682,30 @@ export class AccountingService {
     }
 
     const remainingUncategorized = (await this.listTransactions(user, { uncategorized: true })).length;
+    const needsReview = (await this.listTransactions(user, { needsReview: true })).length;
     return {
       updatedRules,
       updatedAi,
       skippedRules,
       skippedAi,
       remainingUncategorized,
+      needsReview,
       ...(aiErrorStatus ? { aiErrorStatus } : {}),
       ...(aiQuotaExceeded ? { aiQuotaExceeded } : {}),
       ...(aiStoppedEarly ? { aiStoppedEarly } : {}),
     };
+  }
+
+  /** Aprueba todas las sugerencias en revisión del usuario (scope por cuenta bancaria). */
+  async bulkApproveSuggestions(user: PanelUser): Promise<{ approved: number }> {
+    const rows = await this.listTransactions(user, { needsReview: true });
+    let approved = 0;
+    for (const row of rows) {
+      if (!row.suggestedAccountCode?.trim()) continue;
+      await this.approveSuggestion(user, row.id);
+      approved += 1;
+    }
+    return { approved };
   }
 
   /** Sugerencia alineada al catálogo + umbral; fallback plan numérico legacy. */
