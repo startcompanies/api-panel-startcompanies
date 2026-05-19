@@ -409,7 +409,7 @@ export class InvoicePdfService {
         .fillColor(HEADER_ACCENT_TEXT)
         .font('Helvetica')
         .fontSize(9)
-        .text('Powered by Start Companies · startcompanies.com', 0, footerY + 13, {
+        .text('Powered by Start Companies · startcompanies.io', 0, footerY + 13, {
           width: PAGE_W,
           align: 'center',
         });
