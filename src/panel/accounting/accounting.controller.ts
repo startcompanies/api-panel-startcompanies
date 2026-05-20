@@ -144,6 +144,12 @@ export class AccountingController {
     return this.accountingService.bulkApplySuggestedCategories(req.user, body ?? {});
   }
 
+  @Post('transactions/bulk-approve-suggestions')
+  @Roles('admin', 'user', 'client')
+  bulkApproveSuggestions(@Req() req: { user: { id: number; type?: string } }) {
+    return this.accountingService.bulkApproveSuggestions(req.user);
+  }
+
   @Post('transactions/:id/approve-suggestion')
   @Roles('admin', 'user', 'client')
   approveSuggestion(

@@ -205,7 +205,7 @@ export class InvoicingService {
         taxRate,
         taxLabel: body.taxLabel ?? (taxRate === 0 ? '0% — No ECI' : null),
         issueDate,
-        status: body.status ?? 'draft',
+        status: body.status ?? 'sent',
         currency: (body.currency || 'USD').slice(0, 3).toUpperCase(),
         subtotalAmount: subtotal,
         taxAmount,
@@ -327,7 +327,12 @@ export class InvoicingService {
     const total = Math.round(Number(inv.totalAmount) * 100) / 100;
     const eps = 0.009;
     if (paid <= eps) {
-      inv.status = inv.sentAt ? 'sent' : 'draft';
+      // No degradar facturas ya emitidas (sent/partial/paid) a borrador
+      if (inv.status === 'draft' && !inv.sentAt) {
+        inv.status = 'draft';
+      } else if (inv.status !== 'void') {
+        inv.status = 'sent';
+      }
     } else if (paid >= total - eps) {
       inv.status = 'paid';
     } else {
@@ -421,7 +426,6 @@ export class InvoicingService {
       issuerLogoUrl: company?.logoUrl ?? null,
       issuerEmail: company?.billingEmail ?? null,
     });
-    inv.status = 'sent';
     inv.sentAt = new Date();
     await this.invoicesRepo.save(inv);
     const full = await this.assertInvoiceOwner(id, userId);
@@ -495,11 +499,31 @@ export class InvoicingService {
     return { ok: true as const };
   }
 
+  async voidInvoice(id: number, userId: number) {
+    const inv = await this.assertInvoiceOwner(id, userId);
+    if (inv.status === 'void') {
+      return this.serializeInvoiceForClient(inv);
+    }
+    if (inv.status === 'paid' || Number(inv.paidAmount) > 0) {
+      throw new BadRequestException('No se puede anular una factura con pagos registrados.');
+    }
+    inv.status = 'void';
+    await this.invoicesRepo.save(inv);
+    const full = await this.assertInvoiceOwner(id, userId);
+    return this.serializeInvoiceForClient(full);
+  }
+
   async deleteInvoice(id: number, userId: number) {
     const inv = await this.invoicesRepo.findOne({ where: { id, ownerUserId: userId } });
     if (!inv) throw new NotFoundException('Factura no encontrada');
-    if (inv.status !== 'draft') {
-      throw new BadRequestException('Solo se pueden eliminar facturas en estado borrador (draft).');
+    const paid = Math.round(Number(inv.paidAmount || 0) * 100) / 100;
+    const canDelete =
+      inv.status === 'draft' ||
+      (inv.status === 'sent' && paid <= 0);
+    if (!canDelete) {
+      throw new BadRequestException(
+        'Solo se pueden eliminar facturas sin pagos (borrador o emitida sin cobros).',
+      );
     }
     await this.itemsRepo.delete({ invoiceId: id });
     await this.paymentsRepo.delete({ invoiceId: id });

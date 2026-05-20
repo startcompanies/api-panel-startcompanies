@@ -89,6 +89,11 @@ export class InvoicingController {
     return this.invoicingService.markAsSent(id, req.user.id);
   }
 
+  @Post('invoices/:id/void')
+  voidInvoice(@Req() req: { user: { id: number } }, @Param('id', ParseIntPipe) id: number) {
+    return this.invoicingService.voidInvoice(id, req.user.id);
+  }
+
   @Get('invoices/:id/pdf')
   async getInvoicePdf(@Req() req: { user: { id: number } }, @Param('id', ParseIntPipe) id: number) {
     const buf = await this.invoicingService.getPdfBuffer(id, req.user.id);

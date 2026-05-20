@@ -23,6 +23,7 @@ import { Client } from '../clients/entities/client.entity';
 import { CreateRequestDto } from './dtos/create-request.dto';
 import { UpdateRequestDto } from './dtos/update-request.dto';
 import { ApproveRequestDto } from './dtos/approve-request.dto';
+import { MarkManualPaymentDto } from './dtos/mark-manual-payment.dto';
 import { RejectRequestDto } from './dtos/reject-request.dto';
 import { CreateMemberDto } from './dtos/create-member.dto';
 import { UpdateMemberDto } from './dtos/update-member.dto';
@@ -3152,6 +3153,75 @@ export class RequestsService {
       return error.message;
     }
     return 'Error desconocido';
+  }
+
+  private isRequestPaymentRegistered(request: {
+    paymentProofUrl?: string | null;
+    stripeChargeId?: string | null;
+    paymentStatus?: string | null;
+  }): boolean {
+    return !!(
+      request.paymentProofUrl?.trim() ||
+      request.stripeChargeId?.trim() ||
+      request.paymentStatus === 'succeeded'
+    );
+  }
+
+  /**
+   * Admin: registrar pago recibido fuera de Stripe/formulario y habilitar aprobación.
+   */
+  async markManualPayment(id: number, dto: MarkManualPaymentDto) {
+    const request = await this.requestRepository.findOne({ where: { id } });
+    if (!request) {
+      throw new NotFoundException(`Solicitud con ID ${id} no encontrada`);
+    }
+    if (request.status !== 'pendiente') {
+      throw new BadRequestException(
+        'Solo se puede registrar pago manual en solicitudes en estado Pendiente.',
+      );
+    }
+    if (this.isRequestPaymentRegistered(request)) {
+      throw new BadRequestException('Esta solicitud ya tiene un pago registrado.');
+    }
+
+    const channelLabels: Record<MarkManualPaymentDto['paymentChannel'], string> = {
+      transferencia: 'Transferencia bancaria',
+      efectivo: 'Efectivo',
+      zelle: 'Zelle',
+      paypal: 'PayPal',
+      otro: 'Otro',
+    };
+    const channelLabel = channelLabels[dto.paymentChannel];
+    const detail = dto.paymentNotes?.trim();
+    const manualNote = detail
+      ? `[Pago manual — ${channelLabel}] ${detail}`
+      : `[Pago manual — ${channelLabel}]`;
+
+    request.paymentMethod = 'transferencia';
+    request.paymentStatus = 'succeeded';
+    if (dto.paymentProofUrl?.trim()) {
+      request.paymentProofUrl = dto.paymentProofUrl.trim();
+    }
+    request.status = 'solicitud-recibida';
+    if ((request.currentStep ?? 0) < 4) {
+      request.currentStep = 4;
+    }
+    const prevNotes = request.notes?.trim();
+    request.notes = prevNotes ? `${prevNotes}\n\n${manualNote}` : manualNote;
+
+    await this.requestRepository.save(request);
+    this.logger.log(`Solicitud ${id}: pago manual registrado (${dto.paymentChannel})`);
+
+    return {
+      message: 'Pago registrado. La solicitud quedó en Solicitud Recibida y puede aprobarse.',
+      request: {
+        id: request.id,
+        status: request.status,
+        paymentMethod: request.paymentMethod,
+        paymentStatus: request.paymentStatus,
+        paymentProofUrl: request.paymentProofUrl,
+      },
+    };
   }
 
   /**

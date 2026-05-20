@@ -8,10 +8,13 @@ import {
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 import { Request, Response } from 'express';
+import { FileLoggerService } from '../services/file-logger.service';
 
 @Injectable()
 export class LoggingInterceptor implements NestInterceptor {
   private readonly logger = new Logger('HTTP');
+
+  constructor(private readonly fileLogger: FileLoggerService) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
     const request = context.switchToHttp().getRequest<Request>();
@@ -21,7 +24,12 @@ export class LoggingInterceptor implements NestInterceptor {
     const timestamp = new Date().toISOString();
 
     // Omitir logs de healthcheck y rutas estáticas
-    if (url.includes('/api/explorer') || url === '/api' || url.includes('/favicon.ico')) {
+    if (
+      url.includes('/api/explorer') ||
+      url === '/api' ||
+      url.includes('/favicon.ico') ||
+      url.includes('/panel/admin/logs')
+    ) {
       return next.handle();
     }
 
@@ -34,25 +42,21 @@ export class LoggingInterceptor implements NestInterceptor {
     // Preparar datos de la petición (sin contraseñas)
     const requestData = this.sanitizeRequest(body);
 
-    // Log de Request
-    this.logger.log(
+    const reqLines = [
       `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
-    );
-    this.logger.log(`📥 [${timestamp}] ${method} ${url}`);
-    this.logger.log(`   IP: ${ip} | User: ${userId} (${userEmail}) | Role: ${userRole}`);
-    
+      `📥 [${timestamp}] ${method} ${url}`,
+      `   IP: ${ip} | User: ${userId} (${userEmail}) | Role: ${userRole}`,
+    ];
     if (Object.keys(query).length > 0) {
-      this.logger.log(`   Query: ${JSON.stringify(query)}`);
+      reqLines.push(`   Query: ${JSON.stringify(query)}`);
     }
-    
     if (Object.keys(params).length > 0) {
-      this.logger.log(`   Params: ${JSON.stringify(params)}`);
+      reqLines.push(`   Params: ${JSON.stringify(params)}`);
     }
-    
     if (body && this.hasBody(body)) {
-      const bodyStr = this.formatBody(requestData);
-      this.logger.log(`   Body: ${bodyStr}`);
+      reqLines.push(`   Body: ${this.formatBody(requestData)}`);
     }
+    this.writeLog('LOG', reqLines.join('\n'));
 
     return next.handle().pipe(
       tap({
@@ -65,38 +69,47 @@ export class LoggingInterceptor implements NestInterceptor {
           const responseData = this.formatResponse(data);
           const statusEmoji = statusCode >= 200 && statusCode < 300 ? '✅' : '⚠️';
 
-          // Log de Response
-          this.logger.log(`📤 [${responseTimestamp}] ${method} ${url}`);
-          this.logger.log(`   ${statusEmoji} Status: ${statusCode} | Duration: ${duration}ms`);
-          
+          const resLines = [
+            `📤 [${responseTimestamp}] ${method} ${url}`,
+            `   ${statusEmoji} Status: ${statusCode} | Duration: ${duration}ms`,
+          ];
           if (responseData) {
-            this.logger.log(`   Response: ${responseData}`);
+            resLines.push(`   Response: ${responseData}`);
           }
-          
-          this.logger.log(
+          resLines.push(
             `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
           );
+          this.writeLog('LOG', resLines.join('\n'));
         },
         error: (error) => {
           const duration = Date.now() - startTime;
           const statusCode = error.status || 500;
           const errorTimestamp = new Date().toISOString();
 
-          // Log de Error
-          this.logger.error(`❌ [${errorTimestamp}] ${method} ${url}`);
-          this.logger.error(`   Status: ${statusCode} | Duration: ${duration}ms`);
-          this.logger.error(`   Error: ${error.message || error}`);
-          
+          const errLines = [
+            `❌ [${errorTimestamp}] ${method} ${url}`,
+            `   Status: ${statusCode} | Duration: ${duration}ms`,
+            `   Error: ${error.message || error}`,
+          ];
           if (error.stack) {
-            this.logger.error(`   Stack: ${error.stack.substring(0, 500)}...`);
+            errLines.push(`   Stack: ${error.stack.substring(0, 500)}...`);
           }
-          
-          this.logger.error(
+          errLines.push(
             `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
           );
+          this.writeLog('ERROR', errLines.join('\n'));
         },
       }),
     );
+  }
+
+  private writeLog(level: string, message: string): void {
+    this.fileLogger.append(level, message);
+    if (level === 'ERROR') {
+      this.logger.error(message);
+    } else {
+      this.logger.log(message);
+    }
   }
 
   private sanitizeRequest(body: any): any {
