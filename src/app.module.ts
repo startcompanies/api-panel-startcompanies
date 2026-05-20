@@ -14,6 +14,8 @@ import { PanelModule } from './panel/panel.module';
 import { WizardModule } from './wizard/wizard.module';
 import { ZohoConfigModule } from './zoho-config/zoho-config.module';
 import { LiliModule } from './lili/lili.module';
+import { LoggingInterceptor } from './shared/common/interceptors/logging.interceptor';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 
 @Module({
   imports: [
@@ -38,6 +40,12 @@ import { LiliModule } from './lili/lili.module';
     LiliModule,
   ],
   controllers: [],
-  providers: [AppService],
+  providers: [
+    AppService,
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: LoggingInterceptor,
+    },
+  ],
 })
 export class AppModule {}
