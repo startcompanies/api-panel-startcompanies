@@ -568,7 +568,7 @@ export class AccountingService {
   }> {
     await this.ensureExtendedCategoryPlan();
     await this.ensureDefaultAccountCatalog();
-    const useAi = opts?.useAi !== false;
+    const useAiRequested = opts?.useAi !== false;
     let updatedRules = 0;
     let updatedAi = 0;
     let skippedRules = 0;
@@ -607,11 +607,15 @@ export class AccountingService {
       rulesByOwner.set(oid, merged);
     }
 
-    const cred = useAi ? await this.userAiCredentials.getDecryptedForUser(user.id) : null;
+    const cred =
+      useAiRequested && user.type === 'client'
+        ? await this.userAiCredentials.getDecryptedForUser(user.id)
+        : null;
     const ai =
       cred && (cred.provider === 'anthropic' || cred.provider === 'openai')
         ? { provider: cred.provider, apiKey: cred.apiKey }
         : null;
+    const useAi = !!ai;
     const maxAi = parseInt(this.config.get<string>('AI_BULK_MAX_PER_REQUEST') || '20', 10);
     let remainingAi = maxAi;
 
