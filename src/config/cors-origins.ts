@@ -20,6 +20,13 @@ export function getAllowedOrigins(): string[] {
     allowedOrigins.push(...zohoDomains);
   }
 
+  if (process.env.TENANT_CORS_ORIGINS) {
+    const tenantOrigins = process.env.TENANT_CORS_ORIGINS.split(',')
+      .map((d) => d.trim())
+      .filter(Boolean);
+    allowedOrigins.push(...tenantOrigins);
+  }
+
   return allowedOrigins;
 }
 

@@ -11,6 +11,7 @@ import { CommonModule } from '../common/common.module';
 import { JwtModule } from '@nestjs/jwt';
 import { jwtConstants } from '../common/constants/jwtConstants';
 import { ZohoConfigModule } from '../../zoho-config/zoho-config.module';
+import { PartnerTenantsModule } from '../../panel/partner-tenants/partner-tenants.module';
 
 @Module({
   controllers: [UserController],
@@ -18,6 +19,7 @@ import { ZohoConfigModule } from '../../zoho-config/zoho-config.module';
   imports: [
     TypeOrmModule.forFeature([User, Request, Client]),
     ZohoConfigModule,
+    PartnerTenantsModule,
     CommonModule,
     JwtModule.register({
       secret: jwtConstants.secret,

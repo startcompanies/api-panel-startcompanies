@@ -9,9 +9,15 @@ import { RequestSubmittedNotificationsService } from './request-submitted-notifi
 import { RolesGuard } from '../../shared/auth/roles.guard';
 import { CommonModule } from '../../shared/common/common.module';
 import { SettingsModule } from '../settings/settings.module';
+import { PartnerTenantsModule } from '../partner-tenants/partner-tenants.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Notification, User]), CommonModule, SettingsModule],
+  imports: [
+    TypeOrmModule.forFeature([Notification, User]),
+    CommonModule,
+    SettingsModule,
+    PartnerTenantsModule,
+  ],
   controllers: [NotificationsController],
   providers: [
     NotificationsGateway,

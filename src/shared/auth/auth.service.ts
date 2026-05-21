@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -24,6 +25,8 @@ import * as crypto from 'crypto';
 import { jwtConstants } from 'src/shared/common/constants/jwtConstants';
 import { normalizeAuthEmail } from 'src/shared/common/utils/normalize-auth-email';
 import { PANEL_LOGIN_FAILED_MESSAGE } from './constants/auth-login.constants';
+import { TenantAccessService } from '../../panel/partner-tenants/tenant-access.service';
+import { EmailTenantBrandingService } from '../../panel/partner-tenants/email-tenant-branding.service';
 
 export interface LoginTrustRequestContext {
   deviceCookie?: string;
@@ -47,7 +50,24 @@ export class authService {
     private handleExceptionService: HandleExceptionsService,
     private jwtService: JwtService,
     private emailService: EmailService,
+    private readonly tenantAccessService: TenantAccessService,
+    private readonly emailTenantBranding: EmailTenantBrandingService,
   ) {}
+
+  private async enforceTenantAccess(
+    user: User,
+    tenantHost?: string,
+  ): Promise<void> {
+    try {
+      const tenant = await this.tenantAccessService.resolveForAuth(tenantHost);
+      await this.tenantAccessService.assertUserMayAccessTenant(user, tenant);
+    } catch (e) {
+      if (e instanceof ForbiddenException) {
+        throw e;
+      }
+      throw new ForbiddenException(PANEL_LOGIN_FAILED_MESSAGE);
+    }
+  }
 
   async signUp(signUpDto: SignUpDto) {
     const password = encodePassword(signUpDto.password);
@@ -195,7 +215,11 @@ export class authService {
    * Paso 1 del login: valida credenciales; si hay dispositivo confiable válido emite sesión (sin OTP).
    * Si no, envía OTP por correo. No emite cookies aquí salvo bypass (el controlador las setea).
    */
-  async signIn(signInDto: SignInDto, trustCtx?: LoginTrustRequestContext) {
+  async signIn(
+    signInDto: SignInDto,
+    trustCtx?: LoginTrustRequestContext,
+    tenantHost?: string,
+  ) {
     const { password, rememberMe } = signInDto;
     const email = normalizeAuthEmail(signInDto.email);
 
@@ -216,6 +240,8 @@ export class authService {
     if (!isMatch) {
       throw new UnauthorizedException(PANEL_LOGIN_FAILED_MESSAGE);
     }
+
+    await this.enforceTenantAccess(user, tenantHost);
 
     if (trustCtx && (await this.consumeTrustedDeviceIfValid(user, trustCtx))) {
       const session = await this.issueSessionTokens(user, Boolean(rememberMe));
@@ -248,7 +274,16 @@ export class authService {
     const displayName =
       `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username;
     try {
-      await this.emailService.sendPanelLoginOtpEmail(user.email, displayName, code);
+      const branding = await this.emailTenantBranding.resolveForUser(
+        user,
+        tenantHost,
+      );
+      await this.emailService.sendPanelLoginOtpEmail(
+        user.email,
+        displayName,
+        code,
+        branding,
+      );
     } catch (e) {
       await this.loginOtpRepository.delete({ id: saved.id });
       throw new BadRequestException(
@@ -263,7 +298,7 @@ export class authService {
     };
   }
 
-  async signInVerify(signInVerifyDto: SignInVerifyDto) {
+  async signInVerify(signInVerifyDto: SignInVerifyDto, tenantHost?: string) {
     const { challengeId, code } = signInVerifyDto;
 
     const challenge = await this.loginOtpRepository.findOne({
@@ -312,6 +347,8 @@ export class authService {
       throw new UnauthorizedException('Usuario no encontrado o inactivo');
     }
 
+    await this.enforceTenantAccess(user, tenantHost);
+
     if (!user.emailVerified) {
       user.emailVerified = true;
       user.emailVerificationToken = null;
@@ -322,7 +359,7 @@ export class authService {
     return { ...session, rememberMe: challenge.rememberMe };
   }
 
-  async signInResendOtp(dto: SignInResendOtpDto) {
+  async signInResendOtp(dto: SignInResendOtpDto, tenantHost?: string) {
     const challenge = await this.loginOtpRepository.findOne({
       where: { id: dto.challengeId },
     });
@@ -357,7 +394,16 @@ export class authService {
     const displayName =
       `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username;
     try {
-      await this.emailService.sendPanelLoginOtpEmail(user.email, displayName, code);
+      const branding = await this.emailTenantBranding.resolveForUser(
+        user,
+        tenantHost,
+      );
+      await this.emailService.sendPanelLoginOtpEmail(
+        user.email,
+        displayName,
+        code,
+        branding,
+      );
     } catch {
       throw new BadRequestException('No pudimos reenviar el correo. Inténtalo más tarde.');
     }
@@ -409,7 +455,7 @@ export class authService {
     }
   }
 
-  async forgotPassword(forgotPasswordDto: ForgotPasswordDto) {
+  async forgotPassword(forgotPasswordDto: ForgotPasswordDto, tenantHost?: string) {
     const email = normalizeAuthEmail(forgotPasswordDto.email);
 
     const user = await this.userRepository.findOneBy({
@@ -431,7 +477,16 @@ export class authService {
 
     const userName = `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username;
     try {
-      await this.emailService.sendPasswordResetEmail(user.email, userName, resetToken);
+      const branding = await this.emailTenantBranding.resolveForUser(
+        user,
+        tenantHost,
+      );
+      await this.emailService.sendPasswordResetEmail(
+        user.email,
+        userName,
+        resetToken,
+        branding,
+      );
     } catch (emailError) {
       console.error('Error al enviar email de reset:', emailError);
     }
@@ -486,7 +541,7 @@ export class authService {
     }
   }
 
-  async refresh(refreshToken: string | undefined) {
+  async refresh(refreshToken: string | undefined, tenantHost?: string) {
     if (!refreshToken) {
       throw new UnauthorizedException('Refresh token requerido');
     }
@@ -505,6 +560,8 @@ export class authService {
         throw new UnauthorizedException('Usuario no encontrado o inactivo');
       }
 
+      await this.enforceTenantAccess(user, tenantHost);
+
       const newPayload = {
         id: user.id,
         userName: user.username,
@@ -520,7 +577,24 @@ export class authService {
 
       return { token };
     } catch (error) {
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
       throw new UnauthorizedException('Token inválido o expirado');
     }
+  }
+
+  /**
+   * Valida que la sesión siga siendo válida para el dominio actual (GET /auth/me).
+   */
+  async resolveMeForTenant(
+    userId: number,
+    tenantHost?: string,
+  ): Promise<void> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user || !user.status) {
+      throw new UnauthorizedException('Usuario no encontrado o inactivo');
+    }
+    await this.enforceTenantAccess(user, tenantHost);
   }
 }

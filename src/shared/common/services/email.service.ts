@@ -1,6 +1,7 @@
 import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
+import { EmailBranding } from '../types/email-branding.types';
 
 /** Colores y assets de marca (alineados con portal-startcompanies) */
 const BRAND = {
@@ -28,25 +29,68 @@ export class EmailService {
     }
   }
 
+  private platformDisplayName(): string {
+    return (
+      this.configService.get<string>('PLATFORM_DISPLAY_NAME')?.trim() ||
+      'Start Companies'
+    );
+  }
+
+  private mergeBranding(partial?: Partial<EmailBranding>): EmailBranding {
+    const platformName = this.platformDisplayName();
+    const frontendUrl =
+      this.configService.get<string>('FRONTEND_URL')?.replace(/\/$/, '') ||
+      'http://localhost:4200';
+    return {
+      brandDisplayName: partial?.brandDisplayName?.trim() || platformName,
+      frontendBaseUrl: partial?.frontendBaseUrl?.replace(/\/$/, '') || frontendUrl,
+      logoUrl: partial?.logoUrl ?? BRAND.logoWhite,
+      logoDarkUrl: partial?.logoDarkUrl ?? BRAND.logoDark,
+      primaryColor: partial?.primaryColor || BRAND.primary,
+      secondaryColor: partial?.secondaryColor || BRAND.secondary,
+    };
+  }
+
+  private formatResendFrom(branding: EmailBranding): string {
+    const configuredFrom =
+      this.configService.get<string>('RESEND_FROM_EMAIL') ||
+      'Start Companies <noreply@startcompanies.us>';
+    const platformName = this.platformDisplayName();
+    if (branding.brandDisplayName === platformName) {
+      return configuredFrom;
+    }
+    const verifiedEmail = this.extractFromEmailAddress(configuredFrom);
+    return this.formatOnBehalfOfFrom(
+      branding.brandDisplayName,
+      platformName,
+      verifiedEmail,
+    );
+  }
+
   /**
-   * Genera el HTML de un correo con marca Start Companies (logos y colores del portal).
+   * HTML de correo con colores y logos del tenant (o plataforma por defecto).
    */
   private getEmailHtml(params: {
     title: string;
     bodyHtml: string;
     button?: { text: string; url: string };
     codeBlock?: string;
+    branding?: Partial<EmailBranding>;
   }): string {
     const { title, bodyHtml, button, codeBlock } = params;
+    const b = this.mergeBranding(params.branding);
     const year = new Date().getFullYear();
+    const headerLogo = this.escapeHtmlAttr(b.logoUrl || BRAND.logoWhite);
+    const footerLogo = this.escapeHtmlAttr(b.logoDarkUrl || BRAND.logoDark);
+    const brandAlt = this.escapeHtmlAttr(b.brandDisplayName);
     const buttonHtml = button
       ? `<div style="text-align: center; margin: 24px 0;">
-          <a href="${button.url}" style="display: inline-block; padding: 14px 32px; background: ${BRAND.secondary}; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;">${button.text}</a>
+          <a href="${button.url}" style="display: inline-block; padding: 14px 32px; background: ${b.secondaryColor}; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;">${button.text}</a>
         </div>`
       : '';
     const codeHtml = codeBlock
       ? `<div style="text-align: center; margin: 20px 0;">
-          <span style="display: inline-block; padding: 14px 28px; background: ${BRAND.bgMuted}; border: 2px solid ${BRAND.secondary}; border-radius: 8px; font-size: 20px; font-weight: 700; letter-spacing: 4px; color: ${BRAND.text};">${codeBlock}</span>
+          <span style="display: inline-block; padding: 14px 28px; background: ${BRAND.bgMuted}; border: 2px solid ${b.secondaryColor}; border-radius: 8px; font-size: 20px; font-weight: 700; letter-spacing: 4px; color: ${BRAND.text};">${codeBlock}</span>
         </div>`
       : '';
     return `
@@ -59,12 +103,12 @@ export class EmailService {
     body { margin: 0; font-family: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.6; color: ${BRAND.text}; background: ${BRAND.bgMuted}; }
     .wrap { max-width: 600px; margin: 0 auto; padding: 24px; }
     .card { background: ${BRAND.bgLight}; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,22,39,0.08); }
-    .header { background: linear-gradient(180deg, ${BRAND.primary} 0%, ${BRAND.secondary} 100%); padding: 28px 24px; text-align: center; }
+    .header { background: linear-gradient(180deg, ${b.primaryColor} 0%, ${b.secondaryColor} 100%); padding: 28px 24px; text-align: center; }
     .header img { height: 40px; width: auto; display: block; margin: 0 auto; }
     .header h1 { margin: 0; color: #ffffff; font-size: 22px; font-weight: 600; }
     .content { padding: 32px 28px; }
     .content p { margin: 0 0 16px; color: ${BRAND.text}; }
-    .content a { color: ${BRAND.secondary}; }
+    .content a { color: ${b.secondaryColor}; }
     .footer { padding: 20px 28px; text-align: center; border-top: 1px solid #e5e7eb; background: ${BRAND.bgLight}; }
     .footer img { height: 28px; opacity: 0.85; }
     .footer p { margin: 12px 0 0; font-size: 12px; color: #6b7280; }
@@ -74,7 +118,7 @@ export class EmailService {
   <div class="wrap">
     <div class="card">
       <div class="header">
-        <img src="${BRAND.logoWhite}" alt="Start Companies" width="160" height="40" />
+        <img src="${headerLogo}" alt="${brandAlt}" width="160" height="40" />
         <h1>${title}</h1>
       </div>
       <div class="content">
@@ -84,8 +128,8 @@ export class EmailService {
       </div>
     </div>
     <div class="footer">
-      <img src="${BRAND.logoDark}" alt="Start Companies" width="112" height="28" />
-      <p>© ${year} Start Companies LLC. Todos los derechos reservados.</p>
+      <img src="${footerLogo}" alt="${brandAlt}" width="112" height="28" />
+      <p>© ${year} ${brandAlt}. Todos los derechos reservados.</p>
     </div>
   </div>
 </body>
@@ -219,14 +263,15 @@ export class EmailService {
     name: string,
     resetToken: string,
     userType: 'partner' | 'client' | 'admin',
+    branding?: Partial<EmailBranding>,
   ): Promise<void> {
     if (!this.resend) {
       this.logger.warn(`Email de invitación no enviado a ${email} (Resend no configurado)`);
       return;
     }
 
-    const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'http://localhost:4200';
-    const resetUrl = `${frontendUrl}/panel/set-password?token=${resetToken}`;
+    const b = this.mergeBranding(branding);
+    const resetUrl = `${b.frontendBaseUrl}/panel/set-password?token=${resetToken}`;
 
     const userTypeLabel = {
       partner: 'Partner',
@@ -236,7 +281,7 @@ export class EmailService {
 
     const bodyHtml = `
       <p>Hola ${name},</p>
-      <p>Has sido registrado como <strong>${userTypeLabel}</strong> en Start Companies.</p>
+      <p>Has sido registrado como <strong>${userTypeLabel}</strong> en <strong>${b.brandDisplayName}</strong>.</p>
       <p>Para completar tu registro, necesitas establecer una contraseña. Haz clic en el botón para continuar:</p>
       <p>O copia y pega este enlace en tu navegador:</p>
       <p style="word-break: break-all;"><a href="${resetUrl}">${resetUrl}</a></p>
@@ -245,13 +290,14 @@ export class EmailService {
     `;
     try {
       await this.resend.emails.send({
-        from: this.configService.get<string>('RESEND_FROM_EMAIL') || 'Start Companies <noreply@startcompanies.us>',
+        from: this.formatResendFrom(b),
         to: email,
-        subject: `Bienvenido a Start Companies - Establece tu contraseña`,
+        subject: `Bienvenido a ${b.brandDisplayName} - Establece tu contraseña`,
         html: this.getEmailHtml({
-          title: 'Bienvenido a Start Companies',
+          title: `Bienvenido a ${b.brandDisplayName}`,
           bodyHtml,
           button: { text: 'Establecer Contraseña', url: resetUrl },
+          branding: b,
         }),
       });
 
@@ -265,18 +311,23 @@ export class EmailService {
   /**
    * Envía un email de recuperación de contraseña
    */
-  async sendPasswordResetEmail(email: string, name: string, resetToken: string): Promise<void> {
+  async sendPasswordResetEmail(
+    email: string,
+    name: string,
+    resetToken: string,
+    branding?: Partial<EmailBranding>,
+  ): Promise<void> {
     if (!this.resend) {
       this.logger.warn(`Email de reset no enviado a ${email} (Resend no configurado)`);
       return;
     }
 
-    const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'http://localhost:4200';
-    const resetUrl = `${frontendUrl}/panel/reset-password?token=${resetToken}`;
+    const b = this.mergeBranding(branding);
+    const resetUrl = `${b.frontendBaseUrl}/panel/reset-password?token=${resetToken}`;
 
     const bodyHtml = `
       <p>Hola ${name},</p>
-      <p>Recibimos una solicitud para restablecer tu contraseña. Haz clic en el botón para continuar:</p>
+      <p>Recibimos una solicitud para restablecer tu contraseña en <strong>${b.brandDisplayName}</strong>. Haz clic en el botón para continuar:</p>
       <p>O copia y pega este enlace en tu navegador:</p>
       <p style="word-break: break-all;"><a href="${resetUrl}">${resetUrl}</a></p>
       <p><strong>Importante:</strong> Este enlace expirará en 1 hora por seguridad.</p>
@@ -284,13 +335,14 @@ export class EmailService {
     `;
     try {
       await this.resend.emails.send({
-        from: this.configService.get<string>('RESEND_FROM_EMAIL') || 'Start Companies <noreply@startcompanies.us>',
+        from: this.formatResendFrom(b),
         to: email,
-        subject: 'Restablecer tu contraseña - Start Companies',
+        subject: `Restablecer tu contraseña - ${b.brandDisplayName}`,
         html: this.getEmailHtml({
           title: 'Restablecer Contraseña',
           bodyHtml,
           button: { text: 'Restablecer Contraseña', url: resetUrl },
+          branding: b,
         }),
       });
 
@@ -390,27 +442,30 @@ export class EmailService {
     email: string,
     name: string,
     code: string,
+    branding?: Partial<EmailBranding>,
   ): Promise<void> {
     if (!this.resend) {
       this.logger.warn(`Email de login 2FA no enviado a ${email} (Resend no configurado)`);
       return;
     }
 
+    const b = this.mergeBranding(branding);
     const bodyHtml = `
       <p>Hola ${name},</p>
-      <p>Alguien está intentando iniciar sesión en el panel de Start Companies con tu cuenta.</p>
+      <p>Alguien está intentando iniciar sesión en el panel de <strong>${b.brandDisplayName}</strong> con tu cuenta.</p>
       <p>Introduce este código para completar el acceso. Caduca en pocos minutos.</p>
       <p>Si no fuiste tú, ignora este mensaje y tu contraseña sigue siendo necesaria para entrar.</p>
     `;
     try {
       await this.resend.emails.send({
-        from: this.configService.get<string>('RESEND_FROM_EMAIL') || 'Start Companies <noreply@startcompanies.us>',
+        from: this.formatResendFrom(b),
         to: email,
-        subject: 'Código de acceso al panel - Start Companies',
+        subject: `Código de acceso al panel - ${b.brandDisplayName}`,
         html: this.getEmailHtml({
           title: 'Verificación en dos pasos',
           bodyHtml,
           codeBlock: code,
+          branding: b,
         }),
       });
 
@@ -431,6 +486,7 @@ export class EmailService {
     requestId: number;
     requestType: string;
     includeActivationCta?: boolean;
+    branding?: Partial<EmailBranding>;
   }): Promise<void> {
     const {
       email,
@@ -438,6 +494,7 @@ export class EmailService {
       requestId,
       requestType,
       includeActivationCta = true,
+      branding,
     } = params;
 
     if (!this.resend) {
@@ -445,10 +502,9 @@ export class EmailService {
       return;
     }
 
-    const frontendUrl =
-      this.configService.get<string>('FRONTEND_URL') || 'http://localhost:4200';
-    const panelUrl = `${frontendUrl}/panel`;
-    const activateAccountUrl = `${frontendUrl}/panel/login`;
+    const b = this.mergeBranding(branding);
+    const panelUrl = `${b.frontendBaseUrl}/panel`;
+    const activateAccountUrl = `${b.frontendBaseUrl}/panel/login`;
 
     const typeLabel =
       requestType === 'apertura-llc'
@@ -465,7 +521,7 @@ export class EmailService {
 
     const bodyHtml = `
       <p>Hola ${name || email},</p>
-      <p>Tu solicitud de <strong>${typeLabel}</strong> ha sido enviada exitosamente.</p>
+      <p>Tu solicitud de <strong>${typeLabel}</strong> en <strong>${b.brandDisplayName}</strong> ha sido enviada exitosamente.</p>
       <p><strong>ID de solicitud: #${requestId}</strong></p>
       <p>En breve nuestro equipo revisará tu información y se pondrá en contacto contigo.</p>
       ${activationLine}
@@ -473,11 +529,9 @@ export class EmailService {
     `;
 
     await this.resend.emails.send({
-      from:
-        this.configService.get<string>('RESEND_FROM_EMAIL') ||
-        'Start Companies <noreply@startcompanies.us>',
+      from: this.formatResendFrom(b),
       to: email,
-      subject: `Hemos recibido tu solicitud - ${typeLabel}`,
+      subject: `Hemos recibido tu solicitud - ${typeLabel} — ${b.brandDisplayName}`,
       html: this.getEmailHtml({
         title: includeActivationCta
           ? 'Solicitud enviada y activa tu cuenta'
@@ -486,6 +540,7 @@ export class EmailService {
         button: includeActivationCta
           ? { text: 'Activar mi cuenta', url: activateAccountUrl || panelUrl }
           : undefined,
+        branding: b,
       }),
     });
 
@@ -499,18 +554,19 @@ export class EmailService {
     newEmail: string,
     name: string,
     token: string,
+    branding?: Partial<EmailBranding>,
   ): Promise<void> {
     if (!this.resend) {
       this.logger.warn(`Email de cambio de correo no enviado a ${newEmail} (Resend no configurado)`);
       return;
     }
 
-    const frontendUrl = this.configService.get<string>('FRONTEND_URL') || 'http://localhost:4200';
-    const confirmUrl = `${frontendUrl}/panel/settings?confirmEmailToken=${encodeURIComponent(token)}`;
+    const b = this.mergeBranding(branding);
+    const confirmUrl = `${b.frontendBaseUrl}/panel/settings?confirmEmailToken=${encodeURIComponent(token)}`;
 
     const bodyHtml = `
       <p>Hola ${name || newEmail},</p>
-      <p>Recibimos una solicitud para cambiar el correo electrónico de tu cuenta a <strong>${newEmail}</strong>.</p>
+      <p>Recibimos una solicitud para cambiar el correo electrónico de tu cuenta en <strong>${b.brandDisplayName}</strong> a <strong>${newEmail}</strong>.</p>
       <p>Haz clic en el botón para confirmar el cambio:</p>
       <p>O copia y pega este enlace en tu navegador:</p>
       <p style="word-break: break-all;"><a href="${confirmUrl}">${confirmUrl}</a></p>
@@ -519,13 +575,14 @@ export class EmailService {
     `;
     try {
       await this.resend.emails.send({
-        from: this.configService.get<string>('RESEND_FROM_EMAIL') || 'Start Companies <noreply@startcompanies.us>',
+        from: this.formatResendFrom(b),
         to: newEmail,
-        subject: 'Confirma tu nuevo correo - Start Companies',
+        subject: `Confirma tu nuevo correo - ${b.brandDisplayName}`,
         html: this.getEmailHtml({
           title: 'Confirma tu nuevo correo',
           bodyHtml,
           button: { text: 'Confirmar nuevo correo', url: confirmUrl },
+          branding: b,
         }),
       });
       this.logger.log(`Email de cambio de correo enviado a ${newEmail}`);
@@ -553,16 +610,16 @@ export class EmailService {
     requestId: number;
     requestType: string;
     actorType: 'partner' | 'client';
+    branding?: Partial<EmailBranding>;
   }): Promise<void> {
-    const { email, displayName, requestId, requestType, actorType } = params;
+    const { email, displayName, requestId, requestType, actorType, branding } = params;
     if (!this.resend) {
       this.logger.warn(`Email actor panel no enviado a ${email} (Resend no configurado)`);
       return;
     }
 
-    const frontendUrl =
-      this.configService.get<string>('FRONTEND_URL') || 'http://localhost:4200';
-    const detailUrl = `${frontendUrl}/panel/my-requests/${requestId}`;
+    const b = this.mergeBranding(branding);
+    const detailUrl = `${b.frontendBaseUrl}/panel/my-requests/${requestId}`;
     const typeLabel = this.requestTypeToLabel(requestType);
 
     const roleLine =
@@ -579,15 +636,14 @@ export class EmailService {
 
     try {
       await this.resend.emails.send({
-        from:
-          this.configService.get<string>('RESEND_FROM_EMAIL') ||
-          'Start Companies <noreply@startcompanies.us>',
+        from: this.formatResendFrom(b),
         to: email,
-        subject: `Solicitud enviada — #${requestId} (${typeLabel})`,
+        subject: `Solicitud enviada — #${requestId} (${typeLabel}) — ${b.brandDisplayName}`,
         html: this.getEmailHtml({
           title: 'Solicitud registrada',
           bodyHtml,
           button: { text: 'Ver mi solicitud', url: detailUrl },
+          branding: b,
         }),
       });
       this.logger.log(`Email confirmación actor panel enviado a ${email} (request #${requestId})`);

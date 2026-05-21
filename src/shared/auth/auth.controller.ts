@@ -6,6 +6,7 @@ import {
   Post,
   Req,
   Res,
+  ForbiddenException,
   UnauthorizedException,
   UseGuards,
   UsePipes,
@@ -31,6 +32,7 @@ import {
   PANEL_DEVICE_TRUST_COOKIE,
 } from './constants/login-trust.constants';
 import type { LoginTrustRequestContext } from './auth.service';
+import { extractTenantHostFromRequest } from '../../panel/partner-tenants/utils/extract-tenant-host';
 
 const isProduction = process.env.NODE_ENV === 'production';
 // SameSite=None + Secure para que las cookies se envíen en peticiones cross-origin (frontend en otro dominio)
@@ -133,7 +135,11 @@ export class AuthController {
     @Req() req: express.Request,
     @Res({ passthrough: true }) res: express.Response,
   ) {
-    const result = await this.authService.signIn(signInDto, buildLoginTrustContext(req));
+    const result = await this.authService.signIn(
+      signInDto,
+      buildLoginTrustContext(req),
+      extractTenantHostFromRequest(req),
+    );
     if (
       result &&
       typeof result === 'object' &&
@@ -197,9 +203,13 @@ export class AuthController {
   @ApiResponse({ status: 429, description: 'Demasiados intentos' })
   async signInVerify(
     @Body() dto: SignInVerifyDto,
+    @Req() req: express.Request,
     @Res({ passthrough: true }) res: express.Response,
   ) {
-    const result = await this.authService.signInVerify(dto);
+    const result = await this.authService.signInVerify(
+      dto,
+      extractTenantHostFromRequest(req),
+    );
     const rememberMe = Boolean(result.rememberMe);
     setPanelSessionCookies(res, result.token, result.refreshToken, rememberMe);
     const { rememberMe: _rm, ...body } = result;
@@ -213,8 +223,14 @@ export class AuthController {
   @ApiOperation({ summary: 'Reenviar código OTP del login' })
   @ApiBody({ type: SignInResendOtpDto })
   @ApiResponse({ status: 429, description: 'Demasiados reenvíos o intentos' })
-  async signInResendOtp(@Body() dto: SignInResendOtpDto) {
-    return this.authService.signInResendOtp(dto);
+  async signInResendOtp(
+    @Body() dto: SignInResendOtpDto,
+    @Req() req: express.Request,
+  ) {
+    return this.authService.signInResendOtp(
+      dto,
+      extractTenantHostFromRequest(req),
+    );
   }
 
   @Get('/me')
@@ -247,8 +263,18 @@ export class AuthController {
       const payload = await this.jwtService.verifyAsync(token, {
         secret: jwtConstants.secret,
       });
+      const id = (payload as { id?: number }).id;
+      if (id != null && Number.isFinite(Number(id))) {
+        await this.authService.resolveMeForTenant(
+          Number(id),
+          extractTenantHostFromRequest(req),
+        );
+      }
       return payload;
-    } catch {
+    } catch (e) {
+      if (e instanceof ForbiddenException) {
+        throw e;
+      }
       if (refreshCookie) {
         res.setHeader('X-Session-Refresh', '1');
       }
@@ -283,11 +309,14 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Refresh token inválido o expirado' })
   async refresh(
     @Body() dto: RefreshTokenDto,
-    @Req() req: { cookies?: { refresh_token?: string } },
+    @Req() req: express.Request,
     @Res({ passthrough: true }) res: express.Response,
   ) {
     const refreshToken = dto?.refreshToken ?? req.cookies?.refresh_token;
-    const result = await this.authService.refresh(refreshToken);
+    const result = await this.authService.refresh(
+      refreshToken,
+      extractTenantHostFromRequest(req),
+    );
     res.cookie('access_token', result.token, {
       ...cookieOptions,
       maxAge: 60 * 60 * 1000,
@@ -320,8 +349,14 @@ export class AuthController {
   @ApiBody({ type: ForgotPasswordDto })
   @ApiResponse({ status: 200, description: 'Email de restablecimiento enviado' })
   @ApiResponse({ status: 404, description: 'Usuario no encontrado' })
-  forgotPassword(@Body() forgotPasswordDto: ForgotPasswordDto) {
-    return this.authService.forgotPassword(forgotPasswordDto);
+  forgotPassword(
+    @Body() forgotPasswordDto: ForgotPasswordDto,
+    @Req() req: express.Request,
+  ) {
+    return this.authService.forgotPassword(
+      forgotPasswordDto,
+      extractTenantHostFromRequest(req),
+    );
   }
 
   @Post('/reset-password')

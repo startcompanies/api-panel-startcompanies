@@ -15,6 +15,7 @@ import { DocumentsLibraryModule } from './documents-library/documents-library.mo
 import { MediaModule } from './media/media.module';
 import { PricingModule } from './pricing/pricing.module';
 import { AppLogsModule } from './app-logs/app-logs.module';
+import { PartnerTenantsModule } from './partner-tenants/partner-tenants.module';
 
 /**
  * Módulo wrapper que agrupa todos los módulos relacionados con el Panel Administrativo
@@ -38,6 +39,7 @@ import { AppLogsModule } from './app-logs/app-logs.module';
     MediaModule,
     PricingModule,
     AppLogsModule,
+    PartnerTenantsModule,
   ],
   exports: [
     RequestsModule,
@@ -56,6 +58,7 @@ import { AppLogsModule } from './app-logs/app-logs.module';
     MediaModule,
     PricingModule,
     AppLogsModule,
+    PartnerTenantsModule,
   ],
 })
 export class PanelModule {}

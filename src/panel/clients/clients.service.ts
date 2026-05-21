@@ -5,13 +5,18 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, IsNull } from 'typeorm';
+import { Repository, IsNull, Not } from 'typeorm';
+import { JwtService } from '@nestjs/jwt';
 import { Client } from './entities/client.entity';
 import { CreateClientDto } from './dtos/create-client.dto';
 import { UpdateClientDto } from './dtos/update-client.dto';
 import { Request } from '../requests/entities/request.entity';
 import { User } from '../../shared/user/entities/user.entity';
 import { ZohoContactService } from '../../zoho-config/zoho-contact.service';
+import { EmailService } from '../../shared/common/services/email.service';
+import { PartnerTenantsService } from '../partner-tenants/partner-tenants.service';
+import { EmailTenantBrandingService } from '../partner-tenants/email-tenant-branding.service';
+import { encodePassword } from '../../shared/common/utils/bcrypt';
 
 @Injectable()
 export class ClientsService {
@@ -23,6 +28,10 @@ export class ClientsService {
     @InjectRepository(User)
     private userRepository: Repository<User>,
     private readonly zohoContactService: ZohoContactService,
+    private readonly emailService: EmailService,
+    private readonly partnerTenantsService: PartnerTenantsService,
+    private readonly emailTenantBranding: EmailTenantBrandingService,
+    private readonly jwtService: JwtService,
   ) {}
 
   /**
@@ -384,6 +393,28 @@ export class ClientsService {
       if (!saved.partnerId) {
         void this.zohoContactService.findOrCreateContact(saved);
       }
+      if (createClientDto.inviteToPortal && saved.partnerId) {
+        try {
+          await this.inviteClientToPortal(saved.id, {
+            partnerScopeId: partnerId,
+          });
+          const refreshed = await this.clientRepository.findOne({
+            where: { id: saved.id },
+          });
+          return refreshed ?? saved;
+        } catch (inviteError) {
+          if (
+            inviteError instanceof BadRequestException ||
+            inviteError instanceof NotFoundException
+          ) {
+            throw inviteError;
+          }
+          console.error(
+            'Cliente creado pero falló la invitación al portal:',
+            inviteError,
+          );
+        }
+      }
       return saved;
     } catch (e) {
       if (e instanceof BadRequestException || e instanceof NotFoundException) {
@@ -652,6 +683,190 @@ export class ClientsService {
     };
   }
 
+  private generateTemporaryPassword(): string {
+    const length = 16;
+    const charset =
+      'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*';
+    let password = '';
+    password += 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'[Math.floor(Math.random() * 26)];
+    password += 'abcdefghijklmnopqrstuvwxyz'[Math.floor(Math.random() * 26)];
+    password += '0123456789'[Math.floor(Math.random() * 10)];
+    password += '!@#$%^&*'[Math.floor(Math.random() * 8)];
+    for (let i = password.length; i < length; i++) {
+      password += charset[Math.floor(Math.random() * charset.length)];
+    }
+    return password.split('').sort(() => Math.random() - 0.5).join('');
+  }
+
+  private async buildUniqueUsername(email: string): Promise<string> {
+    const base = email.split('@')[0].replace(/[^a-zA-Z0-9._-]/g, '') || 'user';
+    let username = base;
+    let counter = 1;
+    while (await this.userRepository.findOne({ where: { username } })) {
+      username = `${base}${counter}`;
+      counter++;
+    }
+    return username;
+  }
+
+  private splitFullName(fullName: string): { first: string; last: string } {
+    const parts = fullName.trim().split(/\s+/).filter(Boolean);
+    return {
+      first: parts[0] || '',
+      last: parts.slice(1).join(' ') || '',
+    };
+  }
+
+  /**
+   * Crea o reutiliza un usuario `client`, enlaza `clients.user_id` y envía invitación.
+   * Solo clientes con `partner_id` (white-label).
+   */
+  async inviteClientToPortal(
+    clientId: number,
+    options?: { partnerScopeId?: number; tenantHost?: string },
+  ): Promise<{
+    userId: number;
+    invited: boolean;
+    resent: boolean;
+    message: string;
+  }> {
+    const where: { id: number; partnerId?: number } = { id: clientId };
+    if (options?.partnerScopeId) {
+      where.partnerId = options.partnerScopeId;
+    }
+
+    const client = await this.clientRepository.findOne({ where });
+    if (!client) {
+      throw new NotFoundException('Cliente no encontrado');
+    }
+    if (!client.partnerId) {
+      throw new BadRequestException(
+        'Solo los clientes de un partner pueden recibir acceso al portal',
+      );
+    }
+    if (!client.email?.trim()) {
+      throw new BadRequestException('El cliente debe tener un email válido');
+    }
+
+    const tenant = options?.tenantHost
+      ? await this.partnerTenantsService.resolveByHost(options.tenantHost)
+      : await this.partnerTenantsService.resolveByPartnerId(client.partnerId);
+
+    if (
+      tenant.kind === 'partner' &&
+      tenant.partnerId != null &&
+      tenant.partnerId !== client.partnerId
+    ) {
+      throw new BadRequestException(
+        'El dominio del tenant no coincide con el partner del cliente',
+      );
+    }
+
+    const branding = await this.emailTenantBranding.resolveByPartnerId(
+      client.partnerId,
+    );
+
+    let user: User | null = null;
+    let resent = false;
+
+    if (client.userId) {
+      user = await this.userRepository.findOne({ where: { id: client.userId } });
+      if (!user) {
+        client.userId = undefined;
+        await this.clientRepository.save(client);
+      } else if (user.type !== 'client') {
+        throw new BadRequestException(
+          'El email ya está asociado a una cuenta que no es de cliente',
+        );
+      } else {
+        resent = true;
+      }
+    }
+
+    if (!user) {
+      const existingByEmail = await this.userRepository.findOne({
+        where: { email: client.email.trim() },
+      });
+
+      if (existingByEmail) {
+        if (existingByEmail.type !== 'client') {
+          throw new BadRequestException(
+            'Ya existe una cuenta con este email con otro rol en el sistema',
+          );
+        }
+        const otherClient = await this.clientRepository.findOne({
+          where: { userId: existingByEmail.id, id: Not(clientId) },
+        });
+        if (
+          otherClient &&
+          otherClient.partnerId != null &&
+          otherClient.partnerId !== client.partnerId
+        ) {
+          throw new BadRequestException(
+            'Este email ya está vinculado a un cliente de otro partner',
+          );
+        }
+        user = existingByEmail;
+        client.userId = user.id;
+        await this.clientRepository.save(client);
+        resent = true;
+      }
+    }
+
+    if (!user) {
+      const { first, last } = this.splitFullName(client.full_name);
+      const username = await this.buildUniqueUsername(client.email);
+      const hashedPassword = encodePassword(this.generateTemporaryPassword());
+      user = this.userRepository.create({
+        username,
+        email: client.email.trim(),
+        password: hashedPassword,
+        first_name: first,
+        last_name: last,
+        phone: client.phone || undefined,
+        company: client.company || undefined,
+        type: 'client',
+        status: client.status !== false,
+      });
+      user = await this.userRepository.save(user);
+      client.userId = user.id;
+      await this.clientRepository.save(client);
+    }
+
+    const resetToken = await this.jwtService.signAsync(
+      { id: user.id, email: user.email, type: 'password-setup' },
+      { expiresIn: '24h' },
+    );
+
+    const displayName =
+      `${user.first_name || ''} ${user.last_name || ''}`.trim() ||
+      client.full_name ||
+      user.username;
+
+    try {
+      await this.emailService.sendInvitationEmail(
+        user.email,
+        displayName,
+        resetToken,
+        'client',
+        branding,
+      );
+    } catch (emailError) {
+      console.error('Error al enviar invitación al portal:', emailError);
+      throw new InternalServerErrorException(
+        'No se pudo enviar el email de invitación. El usuario puede estar creado; inténtalo de nuevo.',
+      );
+    }
+
+    return {
+      userId: user.id,
+      invited: !resent,
+      resent,
+      message: resent
+        ? 'Invitación reenviada por email'
+        : 'Usuario creado e invitación enviada por email',
+    };
+  }
 }
 
 

@@ -17,6 +17,7 @@ import { encodePassword } from '../common/utils/bcrypt';
 import { EmailService } from '../common/services/email.service';
 import { JwtService } from '@nestjs/jwt';
 import { ZohoContactService } from '../../zoho-config/zoho-contact.service';
+import { EmailTenantBrandingService } from '../../panel/partner-tenants/email-tenant-branding.service';
 
 @Injectable()
 export class UserService {
@@ -30,6 +31,7 @@ export class UserService {
     private emailService: EmailService,
     private jwtService: JwtService,
     private readonly zohoContactService: ZohoContactService,
+    private readonly emailTenantBranding: EmailTenantBrandingService,
   ) {}
 
   /**
@@ -149,11 +151,13 @@ export class UserService {
       // Enviar email de invitación
       const userName = `${savedUser.first_name || ''} ${savedUser.last_name || ''}`.trim() || savedUser.username;
       try {
+        const branding = await this.emailTenantBranding.resolveForUser(savedUser);
         await this.emailService.sendInvitationEmail(
           savedUser.email,
           userName,
           resetToken,
           (savedUser.type as 'partner' | 'client' | 'admin') || 'user',
+          branding,
         );
       } catch (emailError) {
         console.error('Error al enviar email de invitación:', emailError);
@@ -495,7 +499,13 @@ export class UserService {
 
     const name = `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username;
     try {
-      await this.emailService.sendEmailChangeVerification(newEmail, name, token);
+      const branding = await this.emailTenantBranding.resolveForUser(user);
+      await this.emailService.sendEmailChangeVerification(
+        newEmail,
+        name,
+        token,
+        branding,
+      );
     } catch (emailError) {
       console.error('Error al enviar email de cambio de correo:', emailError);
     }
