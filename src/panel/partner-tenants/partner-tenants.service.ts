@@ -346,13 +346,13 @@ export class PartnerTenantsService {
       const host = this.normalizeHost(row.customDomain) || row.customDomain;
       row.frontendBaseUrl = this.normalizeFrontendUrl(dto.frontendBaseUrl, host);
     }
-    if (dto.logoUrl !== undefined) {
+    if (dto.logoUrl !== undefined && dto.logoUrl !== null) {
       row.logoUrl = dto.logoUrl;
     }
-    if (dto.logoDarkUrl !== undefined) {
+    if (dto.logoDarkUrl !== undefined && dto.logoDarkUrl !== null) {
       row.logoDarkUrl = dto.logoDarkUrl;
     }
-    if (dto.faviconUrl !== undefined) {
+    if (dto.faviconUrl !== undefined && dto.faviconUrl !== null) {
       row.faviconUrl = dto.faviconUrl;
     }
     if (dto.primaryColor !== undefined) {
