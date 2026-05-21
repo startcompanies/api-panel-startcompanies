@@ -1,10 +1,12 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { UserAiCredential, AiProvider } from './entities/user-ai-credential.entity';
 import { UserSecretEncryptionService } from '../../shared/common/services/user-secret-encryption.service';
+import { User } from '../../shared/user/entities/user.entity';
+import type { PlatformFeatures } from '../pricing/entities/pricing-plan.entity';
 
 export type UserAiCredentialsStatus = {
   provider: AiProvider | null;
@@ -22,8 +24,38 @@ export class UserAiCredentialsService {
   constructor(
     @InjectRepository(UserAiCredential)
     private readonly repo: Repository<UserAiCredential>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
     private readonly encryption: UserSecretEncryptionService,
   ) {}
+
+  /** Claves API de categorización: solo clientes con `accountingAi` en su plan de plataforma. */
+  async assertAccountingAiClient(userId: number): Promise<void> {
+    const user = await this.userRepo.findOne({
+      where: { id: userId },
+      select: ['id', 'type', 'platformFeatures'],
+    });
+    if (!user || user.type !== 'client') {
+      throw new ForbiddenException(
+        'Las claves API de categorización solo están disponibles para clientes.',
+      );
+    }
+    const features = user.platformFeatures as PlatformFeatures | null | undefined;
+    if (!features?.accountingAi) {
+      throw new ForbiddenException(
+        'Tu plan no incluye categorización con IA. Actualiza tu plan para configurar una API key.',
+      );
+    }
+  }
+
+  private async canUseAccountingAi(userId: number): Promise<boolean> {
+    try {
+      await this.assertAccountingAiClient(userId);
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   /** Quita espacios, saltos de línea y BOM (muy habitual al pegar claves). */
   private normalizeApiKey(raw: string): string {
@@ -88,6 +120,7 @@ export class UserAiCredentialsService {
   }
 
   async getStatus(userId: number): Promise<UserAiCredentialsStatus> {
+    await this.assertAccountingAiClient(userId);
     const row = await this.repo.findOne({ where: { userId } });
     if (!row) {
       return { provider: null, hasKey: false, keyLast4: null };
@@ -100,6 +133,9 @@ export class UserAiCredentialsService {
   }
 
   async getDecryptedForUser(userId: number): Promise<DecryptedUserAiCredentials | null> {
+    if (!(await this.canUseAccountingAi(userId))) {
+      return null;
+    }
     const row = await this.repo.findOne({ where: { userId } });
     if (!row) return null;
     const apiKey = this.encryption.decrypt(row.keyCiphertext, row.keyIv, row.keyAuthTag);
@@ -107,6 +143,7 @@ export class UserAiCredentialsService {
   }
 
   async upsert(userId: number, provider: AiProvider, apiKey: string): Promise<UserAiCredentialsStatus> {
+    await this.assertAccountingAiClient(userId);
     const normalized = this.normalizeApiKey(apiKey);
     await this.assertProviderKeyValid(provider, normalized);
 
@@ -134,6 +171,7 @@ export class UserAiCredentialsService {
   }
 
   async remove(userId: number): Promise<void> {
+    await this.assertAccountingAiClient(userId);
     await this.repo.delete({ userId });
   }
 }

@@ -206,15 +206,7 @@ export class ClientsService {
       const total = filtered.length;
       const skip = (page - 1) * limit;
       const pageRows = filtered.slice(skip, skip + limit);
-      const data = pageRows.map((c) => {
-        const isUserOnly = !!(c as any).isUserOnlyListItem;
-        const requestClientId = isUserOnly ? null : c.id;
-        const { isUserOnlyListItem: _omit, ...rest } = c as any;
-        return {
-          ...rest,
-          requestClientId,
-        };
-      });
+      const data = pageRows.map((c) => this.mapAdminClientListItem(c));
 
       return { data, total, page, limit };
     } catch (e) {
@@ -223,6 +215,46 @@ export class ClientsService {
         'No se pudieron obtener los clientes del admin',
       );
     }
+  }
+
+  /** Respuesta segura del listado admin (sin password ni relación user anidada). */
+  private mapAdminClientListItem(
+    c: Client & { isUserOnlyListItem?: boolean },
+  ): Record<string, unknown> & {
+    requestClientId: number | null;
+    portalUserId: number | null;
+    platformPlanCode: string | null;
+    platformAccessEndsAt: string | null;
+  } {
+    const isUserOnly = !!c.isUserOnlyListItem;
+    const portalUser = c.user ?? null;
+    const portalUserId =
+      c.userId ?? (isUserOnly ? c.id : portalUser?.id ?? null) ?? null;
+    const endsAt = portalUser?.platformAccessEndsAt;
+    return {
+      id: c.id,
+      uuid: c.uuid,
+      partnerId: c.partnerId ?? null,
+      userId: c.userId ?? portalUserId,
+      full_name: c.full_name,
+      email: c.email,
+      phone: c.phone ?? null,
+      company: c.company ?? null,
+      address: c.address ?? null,
+      status: c.status,
+      notes: c.notes ?? null,
+      createdAt: c.createdAt,
+      updatedAt: c.updatedAt,
+      requestClientId: isUserOnly ? null : c.id,
+      portalUserId,
+      platformPlanCode: portalUser?.platformPlanCode ?? null,
+      platformAccessEndsAt:
+        endsAt instanceof Date
+          ? endsAt.toISOString()
+          : endsAt
+            ? new Date(endsAt as string).toISOString()
+            : null,
+    };
   }
 
   /**
