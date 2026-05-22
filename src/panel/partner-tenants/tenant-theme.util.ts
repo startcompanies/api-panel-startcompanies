@@ -96,7 +96,6 @@ function resolveBaseColors(input: ResolveTenantThemeInput): {
   accent: string;
 } {
   const palette = normalizeBrandPalette(input.brandPalette);
-  const shell = normalizeShellAppearance(input.shellAppearance);
 
   if (palette === 'custom') {
     const primary = input.primaryColor?.trim() || '#0068BD';
@@ -105,47 +104,35 @@ function resolveBaseColors(input: ResolveTenantThemeInput): {
     return { primary, secondary, accent };
   }
 
-  const base = PRESET_PALETTE_BASE[palette][shell];
+  const base = PRESET_PALETTE_BASE[palette];
   return { primary: base.primary, secondary: base.secondary, accent: base.accent };
 }
+
+const PLATFORM_SHELL = {
+  sidebarBg: '#07131f',
+  topbarBg: '#0a1828',
+  sidebarBorder: '#1a3354',
+  workspaceBg: '#f4f7fb',
+} as const;
 
 export function resolveTenantThemeTokens(
   input: ResolveTenantThemeInput,
 ): TenantThemeTokens {
-  const shell = normalizeShellAppearance(input.shellAppearance);
   const { primary, secondary, accent } = resolveBaseColors(input);
-
-  if (shell === 'light') {
-    return {
-      primary,
-      secondary,
-      accent,
-      sidebarBg: lighten(primary, 0.92),
-      topbarBg: '#FFFFFF',
-      sidebarBorder: mix(primary, '#E2E8F0', 0.35),
-      workspaceBg: '#F4F7FB',
-      authGradientFrom: lighten(primary, 0.55),
-      authGradientMid: lighten(secondary, 0.45),
-      authGradientTo: lighten(accent, 0.35),
-      authGlow: alpha(accent, 0.2),
-      panelBrandPrimary: primary,
-      panelBrandCyan: accent,
-    };
-  }
 
   return {
     primary,
     secondary,
     accent,
-    sidebarBg: darken(primary, 0.72),
-    topbarBg: darken(primary, 0.65),
-    sidebarBorder: mix(primary, '#1A3354', 0.45),
-    workspaceBg: '#F4F7FB',
+    sidebarBg: PLATFORM_SHELL.sidebarBg,
+    topbarBg: PLATFORM_SHELL.topbarBg,
+    sidebarBorder: PLATFORM_SHELL.sidebarBorder,
+    workspaceBg: PLATFORM_SHELL.workspaceBg,
     authGradientFrom: darken(primary, 0.78),
     authGradientMid: darken(primary, 0.55),
     authGradientTo: darken(secondary, 0.35),
     authGlow: alpha(accent, 0.12),
-    panelBrandPrimary: secondary,
+    panelBrandPrimary: primary,
     panelBrandCyan: accent,
   };
 }
