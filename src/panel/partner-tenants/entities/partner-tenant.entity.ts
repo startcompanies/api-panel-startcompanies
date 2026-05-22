@@ -64,7 +64,7 @@ export class PartnerTenant {
   @Column({
     name: 'enabled_surfaces',
     type: 'jsonb',
-    default: () => `'["panel","wizard"]'`,
+    default: () => `'["panel"]'`,
   })
   enabledSurfaces: PartnerTenantSurface[];
 

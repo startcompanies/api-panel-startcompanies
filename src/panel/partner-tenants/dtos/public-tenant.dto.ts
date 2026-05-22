@@ -39,7 +39,10 @@ export class PublicTenantDto {
   @ApiProperty({ nullable: true, example: '#01C9E2' })
   accentColor: string | null;
 
-  @ApiProperty({ example: 'blue', enum: ['blue', 'teal', 'green', 'indigo', 'amber', 'slate', 'custom'] })
+  @ApiProperty({
+    example: 'blue',
+    enum: ['blue', 'teal', 'green', 'indigo', 'amber', 'slate', 'red', 'yellow', 'custom'],
+  })
   brandPalette: string;
 
   @ApiProperty({ example: 'dark', enum: ['light', 'dark'] })
@@ -48,6 +51,6 @@ export class PublicTenantDto {
   @ApiProperty({ type: TenantThemeTokensDto })
   themeTokens: TenantThemeTokensDto;
 
-  @ApiProperty({ type: [String], example: ['panel', 'wizard'] })
+  @ApiProperty({ type: [String], example: ['panel'] })
   enabledSurfaces: PartnerTenantSurface[];
 }

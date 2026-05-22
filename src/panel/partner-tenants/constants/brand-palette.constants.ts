@@ -5,6 +5,8 @@ export const BRAND_PALETTE_IDS = [
   'indigo',
   'amber',
   'slate',
+  'red',
+  'yellow',
   'custom',
 ] as const;
 
@@ -50,4 +52,6 @@ export const PRESET_PALETTE_BASE: Record<
   indigo: { primary: '#4338CA', secondary: '#6366F1', accent: '#A5B4FC' },
   amber: { primary: '#B45309', secondary: '#F59E0B', accent: '#FCD34D' },
   slate: { primary: '#334155', secondary: '#64748B', accent: '#38BDF8' },
+  red: { primary: '#B91C1C', secondary: '#DC2626', accent: '#F87171' },
+  yellow: { primary: '#CA8A04', secondary: '#EAB308', accent: '#FDE047' },
 };

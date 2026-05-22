@@ -185,12 +185,12 @@ export class PartnerTenantsService {
     };
   }
 
+  /** Portal partner: solo panel; sin wizard ni formularios públicos fuera de /panel. */
+  private partnerEnabledSurfaces(): PartnerTenantSurface[] {
+    return ['panel'];
+  }
+
   private toPublicDto(row: PartnerTenant): PublicTenantDto {
-    const surfaces = Array.isArray(row.enabledSurfaces)
-      ? row.enabledSurfaces.filter((s): s is PartnerTenantSurface =>
-          s === 'panel' || s === 'wizard',
-        )
-      : (['panel', 'wizard'] as PartnerTenantSurface[]);
     return this.enrichPublicDto({
       slug: row.slug,
       kind: 'partner',
@@ -206,7 +206,7 @@ export class PartnerTenantsService {
       accentColor: row.accentColor,
       brandPalette: row.brandPalette,
       shellAppearance: row.shellAppearance,
-      enabledSurfaces: surfaces.length ? surfaces : ['panel', 'wizard'],
+      enabledSurfaces: this.partnerEnabledSurfaces(),
     });
   }
 
@@ -416,9 +416,7 @@ export class PartnerTenantsService {
         primaryColor: colors.primaryColor,
         secondaryColor: colors.secondaryColor,
         accentColor: colors.accentColor,
-        enabledSurfaces: dto.enabledSurfaces?.length
-          ? dto.enabledSurfaces
-          : (['panel', 'wizard'] as PartnerTenantSurface[]),
+        enabledSurfaces: this.partnerEnabledSurfaces(),
         isActive: options?.allowAdminFields ? dto.isActive ?? true : true,
       });
       const saved = await this.tenantRepo.save(row);
@@ -482,11 +480,7 @@ export class PartnerTenantsService {
     row.secondaryColor = resolvedColors.secondaryColor;
     row.accentColor = resolvedColors.accentColor;
 
-    if (dto.enabledSurfaces != null) {
-      row.enabledSurfaces = dto.enabledSurfaces.length
-        ? dto.enabledSurfaces
-        : (['panel', 'wizard'] as PartnerTenantSurface[]);
-    }
+    row.enabledSurfaces = this.partnerEnabledSurfaces();
     if (options?.allowAdminFields && dto.isActive !== undefined) {
       row.isActive = dto.isActive;
     }

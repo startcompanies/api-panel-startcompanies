@@ -78,6 +78,8 @@ export function normalizeBrandPalette(raw?: string | null): BrandPaletteId {
     v === 'indigo' ||
     v === 'amber' ||
     v === 'slate' ||
+    v === 'red' ||
+    v === 'yellow' ||
     v === 'custom'
   ) {
     return v;

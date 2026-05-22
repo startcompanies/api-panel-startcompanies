@@ -72,10 +72,10 @@ export class UpdatePartnerTenantDto {
   @ApiProperty({
     required: false,
     example: 'blue',
-    enum: ['blue', 'teal', 'green', 'indigo', 'amber', 'slate', 'custom'],
+    enum: ['blue', 'teal', 'green', 'indigo', 'amber', 'slate', 'red', 'yellow', 'custom'],
   })
   @IsOptional()
-  @IsIn(['blue', 'teal', 'green', 'indigo', 'amber', 'slate', 'custom'])
+  @IsIn(['blue', 'teal', 'green', 'indigo', 'amber', 'slate', 'red', 'yellow', 'custom'])
   brandPalette?: string;
 
   @ApiProperty({ required: false, example: 'dark', enum: ['light', 'dark'] })
@@ -83,11 +83,12 @@ export class UpdatePartnerTenantDto {
   @IsIn(['light', 'dark'])
   shellAppearance?: string;
 
-  @ApiProperty({ required: false, type: [String], example: ['panel', 'wizard'] })
+  @ApiProperty({ required: false, type: [String], example: ['panel'], deprecated: true })
   @IsOptional()
   @IsArray()
-  @IsIn(['panel', 'wizard'], { each: true })
-  enabledSurfaces?: ('panel' | 'wizard')[];
+  @IsIn(['panel'], { each: true })
+  /** Ignorado en servidor: los partners solo exponen el panel. */
+  enabledSurfaces?: ('panel')[];
 
   @ApiProperty({ required: false, description: 'Solo admin' })
   @IsOptional()
