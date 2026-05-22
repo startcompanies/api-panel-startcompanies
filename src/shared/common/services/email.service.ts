@@ -81,7 +81,6 @@ export class EmailService {
     const b = this.mergeBranding(params.branding);
     const year = new Date().getFullYear();
     const headerLogo = this.escapeHtmlAttr(b.logoUrl || BRAND.logoWhite);
-    const footerLogo = this.escapeHtmlAttr(b.logoDarkUrl || BRAND.logoDark);
     const brandAlt = this.escapeHtmlAttr(b.brandDisplayName);
     const buttonHtml = button
       ? `<div style="text-align: center; margin: 24px 0;">
@@ -109,9 +108,8 @@ export class EmailService {
     .content { padding: 32px 28px; }
     .content p { margin: 0 0 16px; color: ${BRAND.text}; }
     .content a { color: ${b.secondaryColor}; }
-    .footer { padding: 20px 28px; text-align: center; border-top: 1px solid #e5e7eb; background: ${BRAND.bgLight}; }
-    .footer img { height: 28px; opacity: 0.85; }
-    .footer p { margin: 12px 0 0; font-size: 12px; color: #6b7280; }
+    .footer { padding: 16px 28px; text-align: center; border-top: 1px solid #e5e7eb; background: ${BRAND.bgLight}; }
+    .footer p { margin: 0; font-size: 12px; color: #6b7280; }
   </style>
 </head>
 <body>
@@ -128,7 +126,6 @@ export class EmailService {
       </div>
     </div>
     <div class="footer">
-      <img src="${footerLogo}" alt="${brandAlt}" width="112" height="28" />
       <p>© ${year} ${brandAlt}. Todos los derechos reservados.</p>
     </div>
   </div>
@@ -216,10 +213,6 @@ export class EmailService {
           <h1 style="margin: 0; color: #ffffff; font-size: 22px; font-weight: 600;">${safeTitleText}</h1>
         </div>`;
 
-    const footerImg = logo
-      ? `<img src="${logo}" alt="" width="112" height="36" style="max-height: 36px; width: auto; display: block; margin: 0 auto 8px; object-fit: contain;" />`
-      : `<img src="${BRAND.logoDark}" alt="" width="112" height="28" style="height: 28px; opacity: 0.85; display: block; margin: 0 auto;" />`;
-
     return `
 <!DOCTYPE html>
 <html>
@@ -233,8 +226,8 @@ export class EmailService {
     .content { padding: 32px 28px; }
     .content p { margin: 0 0 16px; color: ${BRAND.text}; }
     .content a { color: ${BRAND.secondary}; }
-    .footer { padding: 20px 28px; text-align: center; border-top: 1px solid #e5e7eb; background: ${BRAND.bgLight}; }
-    .footer p { margin: 12px 0 0; font-size: 12px; color: #6b7280; }
+    .footer { padding: 16px 28px; text-align: center; border-top: 1px solid #e5e7eb; background: ${BRAND.bgLight}; }
+    .footer p { margin: 0; font-size: 12px; color: #6b7280; }
   </style>
 </head>
 <body>
@@ -246,7 +239,6 @@ export class EmailService {
       </div>
     </div>
     <div class="footer">
-      ${footerImg}
       <p>© ${year} ${safeNameText}</p>
     </div>
   </div>
