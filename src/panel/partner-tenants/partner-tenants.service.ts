@@ -15,6 +15,17 @@ import { PartnerTenantPanelDto } from './dtos/partner-tenant-panel.dto';
 import { UpdatePartnerTenantDto } from './dtos/update-partner-tenant.dto';
 import { UploadFileService } from '../../shared/upload-file/upload-file.service';
 import { User } from '../../shared/user/entities/user.entity';
+import {
+  DEFAULT_BRAND_PALETTE,
+  DEFAULT_SHELL_APPEARANCE,
+} from './constants/brand-palette.constants';
+import {
+  assertCustomPaletteColors,
+  normalizeBrandPalette,
+  normalizeShellAppearance,
+  resolveTenantThemeTokens,
+  resolvedPublicColors,
+} from './tenant-theme.util';
 
 const DEFAULT_PLATFORM_BRAND = {
   slug: 'startcompanies',
@@ -98,7 +109,70 @@ export class PartnerTenantsService {
       faviconUrl: null,
       primaryColor: DEFAULT_PLATFORM_BRAND.primaryColor,
       secondaryColor: DEFAULT_PLATFORM_BRAND.secondaryColor,
+      accentColor: '#01C9E2',
+      brandPalette: DEFAULT_BRAND_PALETTE,
+      shellAppearance: DEFAULT_SHELL_APPEARANCE,
+      themeTokens: resolveTenantThemeTokens({
+        brandPalette: DEFAULT_BRAND_PALETTE,
+        shellAppearance: DEFAULT_SHELL_APPEARANCE,
+        primaryColor: DEFAULT_PLATFORM_BRAND.primaryColor,
+        secondaryColor: DEFAULT_PLATFORM_BRAND.secondaryColor,
+        accentColor: '#01C9E2',
+      }),
       enabledSurfaces: ['panel', 'wizard'],
+    };
+  }
+
+  private themeInputFromRow(row: PartnerTenant) {
+    return {
+      brandPalette: row.brandPalette,
+      shellAppearance: row.shellAppearance,
+      primaryColor: row.primaryColor,
+      secondaryColor: row.secondaryColor,
+      accentColor: row.accentColor,
+    };
+  }
+
+  private enrichPublicDto(
+    base: Omit<
+      PublicTenantDto,
+      'brandPalette' | 'shellAppearance' | 'accentColor' | 'themeTokens' | 'primaryColor' | 'secondaryColor'
+    > & {
+      primaryColor: string | null;
+      secondaryColor: string | null;
+      accentColor?: string | null;
+      brandPalette?: string | null;
+      shellAppearance?: string | null;
+    },
+  ): PublicTenantDto {
+    const brandPalette = normalizeBrandPalette(
+      base.brandPalette ?? DEFAULT_BRAND_PALETTE,
+    );
+    const shellAppearance = normalizeShellAppearance(
+      base.shellAppearance ?? DEFAULT_SHELL_APPEARANCE,
+    );
+    const resolved = resolvedPublicColors({
+      brandPalette,
+      shellAppearance,
+      primaryColor: base.primaryColor,
+      secondaryColor: base.secondaryColor,
+      accentColor: base.accentColor,
+    });
+    return {
+      ...base,
+      brandPalette,
+      shellAppearance,
+      primaryColor: resolved.primaryColor,
+      secondaryColor: resolved.secondaryColor,
+      accentColor: resolved.accentColor,
+      themeTokens: resolveTenantThemeTokens({
+        brandPalette,
+        shellAppearance,
+        primaryColor: base.primaryColor,
+        secondaryColor: base.secondaryColor,
+        accentColor: base.accentColor,
+      }),
+      enabledSurfaces: base.enabledSurfaces,
     };
   }
 
@@ -117,7 +191,7 @@ export class PartnerTenantsService {
           s === 'panel' || s === 'wizard',
         )
       : (['panel', 'wizard'] as PartnerTenantSurface[]);
-    return {
+    return this.enrichPublicDto({
       slug: row.slug,
       kind: 'partner',
       partnerId: row.partnerId,
@@ -129,8 +203,11 @@ export class PartnerTenantsService {
       faviconUrl: row.faviconUrl,
       primaryColor: row.primaryColor,
       secondaryColor: row.secondaryColor,
+      accentColor: row.accentColor,
+      brandPalette: row.brandPalette,
+      shellAppearance: row.shellAppearance,
       enabledSurfaces: surfaces.length ? surfaces : ['panel', 'wizard'],
-    };
+    });
   }
 
   /** Marca y URL del panel para un partner (tenant activo o plataforma por defecto). */
@@ -307,6 +384,24 @@ export class PartnerTenantsService {
         : this.deriveFrontendBaseUrl(host);
       const slugBase = dto.slug?.trim() || this.slugifyBase(displayName);
       const slug = await this.ensureUniqueSlug(slugBase);
+      const brandPalette = normalizeBrandPalette(
+        dto.brandPalette ?? DEFAULT_BRAND_PALETTE,
+      );
+      try {
+        assertCustomPaletteColors(brandPalette, dto.primaryColor);
+      } catch {
+        throw new BadRequestException(
+          'Indica un color primario válido (#RRGGBB) para la paleta personalizada',
+        );
+      }
+      const shellAppearance = normalizeShellAppearance(dto.shellAppearance);
+      const colors = resolvedPublicColors({
+        brandPalette,
+        shellAppearance,
+        primaryColor: dto.primaryColor,
+        secondaryColor: dto.secondaryColor,
+        accentColor: dto.accentColor,
+      });
       row = this.tenantRepo.create({
         partnerId,
         slug,
@@ -316,8 +411,11 @@ export class PartnerTenantsService {
         logoUrl: dto.logoUrl ?? null,
         logoDarkUrl: dto.logoDarkUrl ?? null,
         faviconUrl: dto.faviconUrl ?? null,
-        primaryColor: dto.primaryColor ?? '#0068BD',
-        secondaryColor: dto.secondaryColor ?? '#006AFE',
+        brandPalette,
+        shellAppearance,
+        primaryColor: colors.primaryColor,
+        secondaryColor: colors.secondaryColor,
+        accentColor: colors.accentColor,
         enabledSurfaces: dto.enabledSurfaces?.length
           ? dto.enabledSurfaces
           : (['panel', 'wizard'] as PartnerTenantSurface[]),
@@ -355,12 +453,35 @@ export class PartnerTenantsService {
     if (dto.faviconUrl !== undefined && dto.faviconUrl !== null) {
       row.faviconUrl = dto.faviconUrl;
     }
+    if (dto.brandPalette !== undefined) {
+      row.brandPalette = normalizeBrandPalette(dto.brandPalette);
+    }
+    if (dto.shellAppearance !== undefined) {
+      row.shellAppearance = normalizeShellAppearance(dto.shellAppearance);
+    }
     if (dto.primaryColor !== undefined) {
       row.primaryColor = dto.primaryColor;
     }
     if (dto.secondaryColor !== undefined) {
       row.secondaryColor = dto.secondaryColor;
     }
+    if (dto.accentColor !== undefined) {
+      row.accentColor = dto.accentColor;
+    }
+
+    const paletteAfter = normalizeBrandPalette(row.brandPalette);
+    try {
+      assertCustomPaletteColors(paletteAfter, row.primaryColor);
+    } catch {
+      throw new BadRequestException(
+        'Indica un color primario válido (#RRGGBB) para la paleta personalizada',
+      );
+    }
+    const resolvedColors = resolvedPublicColors(this.themeInputFromRow(row));
+    row.primaryColor = resolvedColors.primaryColor;
+    row.secondaryColor = resolvedColors.secondaryColor;
+    row.accentColor = resolvedColors.accentColor;
+
     if (dto.enabledSurfaces != null) {
       row.enabledSurfaces = dto.enabledSurfaces.length
         ? dto.enabledSurfaces

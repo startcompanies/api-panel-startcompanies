@@ -52,6 +52,15 @@ export class PartnerTenant {
   @Column({ name: 'secondary_color', type: 'varchar', length: 20, nullable: true })
   secondaryColor: string | null;
 
+  @Column({ name: 'accent_color', type: 'varchar', length: 20, nullable: true })
+  accentColor: string | null;
+
+  @Column({ name: 'brand_palette', type: 'varchar', length: 20, default: 'blue' })
+  brandPalette: string;
+
+  @Column({ name: 'shell_appearance', type: 'varchar', length: 10, default: 'dark' })
+  shellAppearance: string;
+
   @Column({
     name: 'enabled_surfaces',
     type: 'jsonb',

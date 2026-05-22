@@ -64,6 +64,25 @@ export class UpdatePartnerTenantDto {
   @Matches(HEX_COLOR)
   secondaryColor?: string | null;
 
+  @ApiProperty({ required: false, example: '#01C9E2' })
+  @IsOptional()
+  @Matches(HEX_COLOR)
+  accentColor?: string | null;
+
+  @ApiProperty({
+    required: false,
+    example: 'blue',
+    enum: ['blue', 'teal', 'green', 'indigo', 'amber', 'slate', 'custom'],
+  })
+  @IsOptional()
+  @IsIn(['blue', 'teal', 'green', 'indigo', 'amber', 'slate', 'custom'])
+  brandPalette?: string;
+
+  @ApiProperty({ required: false, example: 'dark', enum: ['light', 'dark'] })
+  @IsOptional()
+  @IsIn(['light', 'dark'])
+  shellAppearance?: string;
+
   @ApiProperty({ required: false, type: [String], example: ['panel', 'wizard'] })
   @IsOptional()
   @IsArray()
