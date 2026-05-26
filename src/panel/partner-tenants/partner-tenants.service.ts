@@ -113,6 +113,8 @@ export class PartnerTenantsService {
       accentColor: '#01C9E2',
       brandPalette: DEFAULT_BRAND_PALETTE,
       shellAppearance: DEFAULT_SHELL_APPEARANCE,
+      seoTitle: null,
+      seoDescription: null,
       themeTokens: resolveTenantThemeTokens({
         brandPalette: DEFAULT_BRAND_PALETTE,
         shellAppearance: DEFAULT_SHELL_APPEARANCE,
@@ -207,6 +209,8 @@ export class PartnerTenantsService {
       accentColor: row.accentColor,
       brandPalette: row.brandPalette,
       shellAppearance: row.shellAppearance,
+      seoTitle: row.seoTitle,
+      seoDescription: row.seoDescription,
       enabledSurfaces: this.partnerEnabledSurfaces(),
     });
   }
@@ -436,6 +440,8 @@ export class PartnerTenantsService {
         primaryColor: colors.primaryColor,
         secondaryColor: colors.secondaryColor,
         accentColor: colors.accentColor,
+        seoTitle: dto.seoTitle?.trim() || null,
+        seoDescription: dto.seoDescription?.trim() || null,
         enabledSurfaces: this.partnerEnabledSurfaces(),
         isActive: options?.allowAdminFields ? dto.isActive ?? true : true,
       });
@@ -485,6 +491,12 @@ export class PartnerTenantsService {
     }
     if (dto.accentColor !== undefined) {
       row.accentColor = dto.accentColor;
+    }
+    if (dto.seoTitle !== undefined) {
+      row.seoTitle = dto.seoTitle?.trim() || null;
+    }
+    if (dto.seoDescription !== undefined) {
+      row.seoDescription = dto.seoDescription?.trim() || null;
     }
 
     const paletteAfter = normalizeBrandPalette(row.brandPalette);

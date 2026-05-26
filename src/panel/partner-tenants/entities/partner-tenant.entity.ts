@@ -68,6 +68,12 @@ export class PartnerTenant {
   })
   enabledSurfaces: PartnerTenantSurface[];
 
+  @Column({ name: 'seo_title', type: 'varchar', length: 120, nullable: true })
+  seoTitle: string | null;
+
+  @Column({ name: 'seo_description', type: 'varchar', length: 300, nullable: true })
+  seoDescription: string | null;
+
   @Column({ name: 'is_active', type: 'boolean', default: true })
   isActive: boolean;
 

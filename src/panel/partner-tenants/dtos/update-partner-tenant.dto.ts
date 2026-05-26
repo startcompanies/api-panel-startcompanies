@@ -90,6 +90,18 @@ export class UpdatePartnerTenantDto {
   /** Ignorado en servidor: los partners solo exponen el panel. */
   enabledSurfaces?: ('panel')[];
 
+  @ApiProperty({ required: false, example: 'Mi Portal - Servicios LLC' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  seoTitle?: string | null;
+
+  @ApiProperty({ required: false, example: 'Accede a tu panel y gestiona tus servicios.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  seoDescription?: string | null;
+
   @ApiProperty({ required: false, description: 'Solo admin' })
   @IsOptional()
   @IsBoolean()

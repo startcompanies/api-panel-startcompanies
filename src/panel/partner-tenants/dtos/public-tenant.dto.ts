@@ -48,6 +48,12 @@ export class PublicTenantDto {
   @ApiProperty({ example: 'dark', enum: ['light', 'dark'] })
   shellAppearance: string;
 
+  @ApiProperty({ nullable: true, example: 'Mi Portal - Servicios LLC' })
+  seoTitle: string | null;
+
+  @ApiProperty({ nullable: true, example: 'Accede a tu panel y gestiona tus servicios en línea.' })
+  seoDescription: string | null;
+
   @ApiProperty({ type: TenantThemeTokensDto })
   themeTokens: TenantThemeTokensDto;
 

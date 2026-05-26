@@ -59,8 +59,10 @@ export function buildSharePreviewMeta(tenant: PublicTenantDto): {
 
   const name = tenant.displayName?.trim() || 'Portal';
   return {
-    title: name,
-    description: `Portal de ${name}. Accede a tu panel y gestiona tus servicios en línea.`,
+    title: tenant.seoTitle?.trim() || name,
+    description:
+      tenant.seoDescription?.trim() ||
+      `Portal de ${name}. Accede a tu panel y gestiona tus servicios en línea.`,
     canonicalUrl,
     ogImage,
   };
