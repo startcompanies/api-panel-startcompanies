@@ -1859,15 +1859,18 @@ export class RequestsService {
         request.status = request.status || 'pendiente';
       }
 
-      // Partner: último paso sin pago en este update → solicitud-recibida si aún está pendiente
+      // Partner: si se solicita 'solicitud-recibida' explícitamente o es último paso → aplicar
       if (
         request.partnerId != null &&
-        updateRequestDto.currentStepNumber !== undefined &&
-        updateRequestDto.currentStepNumber ===
-          this.maxWizardStepForType(request.type) &&
         request.status === 'pendiente'
       ) {
-        request.status = 'solicitud-recibida';
+        const isExplicitConfirm = updateRequestDto.status === 'solicitud-recibida';
+        const isLastStep =
+          updateRequestDto.currentStepNumber !== undefined &&
+          updateRequestDto.currentStepNumber === this.maxWizardStepForType(request.type);
+        if (isExplicitConfirm || isLastStep) {
+          request.status = 'solicitud-recibida';
+        }
       }
 
       this.logger.log(`[Update Request ${id}] Datos de pago a guardar:`, {
