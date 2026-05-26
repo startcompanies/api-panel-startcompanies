@@ -37,7 +37,8 @@ WORKDIR /app
 
 # Crear usuario no-root para seguridad
 RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nestjs -u 1001
+    adduser -S nestjs -u 1001 && \
+    mkdir -p /app/logs && chown nestjs:nodejs /app/logs
 
 # Copiar solo los archivos necesarios desde el builder
 COPY --from=builder --chown=nestjs:nodejs /app/dist ./dist
@@ -57,6 +58,9 @@ USER nestjs
 
 # Exponer el puerto (Dokploy puede configurar esto)
 EXPOSE 3002
+
+# Declarar volumen de logs (persistencia entre rebuilds)
+VOLUME ["/app/logs"]
 
 # Variables de entorno por defecto
 ENV NODE_ENV=production

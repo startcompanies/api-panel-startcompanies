@@ -26,6 +26,7 @@ import {
   resolveTenantThemeTokens,
   resolvedPublicColors,
 } from './tenant-theme.util';
+import { renderTenantSharePreviewHtml } from './tenant-share-preview.util';
 
 const DEFAULT_PLATFORM_BRAND = {
   slug: 'startcompanies',
@@ -242,6 +243,25 @@ export class PartnerTenantsService {
     }
 
     return this.toPublicDto(row);
+  }
+
+  /**
+   * HTML con meta Open Graph / Twitter para crawlers (WhatsApp, Facebook, etc.).
+   * Si el dominio no está registrado, usa marca plataforma para no devolver 404 al bot.
+   */
+  async resolveSharePreviewHtml(hostInput: string): Promise<string> {
+    let tenant: PublicTenantDto;
+    try {
+      tenant = await this.resolveByHost(hostInput);
+    } catch (err) {
+      if (err instanceof NotFoundException) {
+        const host = this.normalizeHost(hostInput) || 'localhost';
+        tenant = this.defaultPlatformTenant(host);
+      } else {
+        throw err;
+      }
+    }
+    return renderTenantSharePreviewHtml(tenant);
   }
 
   /** Para CORS: URLs base de tenants activos (sin protocolo duplicado). */
