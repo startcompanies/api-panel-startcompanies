@@ -10,11 +10,13 @@ import { SettingsService } from './settings.service';
 import { SettingsController } from './settings.controller';
 import { UserSecretEncryptionService } from '../../shared/common/services/user-secret-encryption.service';
 import { UserAiCredentialsService } from './user-ai-credentials.service';
+import { AccountTeamModule } from '../account-team/account-team.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([User, UserPreferences, ClientCompanyProfile, UserAiCredential]),
     UploadFileModule,
+    AccountTeamModule,
   ],
   controllers: [SettingsController],
   providers: [SettingsService, UserSecretEncryptionService, UserAiCredentialsService, RolesGuard],

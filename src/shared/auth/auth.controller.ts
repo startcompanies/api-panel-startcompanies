@@ -269,6 +269,7 @@ export class AuthController {
           Number(id),
           extractTenantHostFromRequest(req),
         );
+        return this.authService.buildSessionPayloadForUserId(Number(id));
       }
       return payload;
     } catch (e) {

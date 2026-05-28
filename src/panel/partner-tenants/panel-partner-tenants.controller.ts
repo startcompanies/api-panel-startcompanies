@@ -27,6 +27,10 @@ import { Roles } from '../../shared/auth/roles.decorator';
 import { PartnerTenantsService } from './partner-tenants.service';
 import { UpdatePartnerTenantDto } from './dtos/update-partner-tenant.dto';
 import { PartnerTenantPanelDto } from './dtos/partner-tenant-panel.dto';
+import {
+  TeamContextService,
+  type SessionUserPayload,
+} from '../account-team/team-context.service';
 
 type LogoAssetKind = 'logo' | 'logo-dark' | 'favicon';
 
@@ -35,13 +39,21 @@ type LogoAssetKind = 'logo' | 'logo-dark' | 'favicon';
 @Controller('panel/partner-tenants')
 @UseGuards(AuthGuard, RolesGuard)
 export class PanelPartnerTenantsController {
-  constructor(private readonly partnerTenantsService: PartnerTenantsService) {}
+  constructor(
+    private readonly partnerTenantsService: PartnerTenantsService,
+    private readonly teamContext: TeamContextService,
+  ) {}
+
+  private ownerId(req: { user: SessionUserPayload }): number {
+    return this.teamContext.getEffectiveOwnerId(req.user);
+  }
 
   @Get('me')
   @Roles('partner')
   @ApiOperation({ summary: 'Configuración de marca del partner autenticado' })
-  getMyTenant(@Req() req: { user: { id: number } }): Promise<PartnerTenantPanelDto | null> {
-    return this.partnerTenantsService.getPanelByPartnerId(req.user.id);
+  getMyTenant(@Req() req: { user: SessionUserPayload }): Promise<PartnerTenantPanelDto | null> {
+    this.teamContext.requirePermission(req.user, 'brandView');
+    return this.partnerTenantsService.getPanelByPartnerId(this.ownerId(req));
   }
 
   @Put('me')
@@ -51,10 +63,11 @@ export class PanelPartnerTenantsController {
     description: 'Primera vez crea la fila en partner_tenants.',
   })
   upsertMyTenant(
-    @Req() req: { user: { id: number } },
+    @Req() req: { user: SessionUserPayload },
     @Body() dto: UpdatePartnerTenantDto,
   ): Promise<PartnerTenantPanelDto> {
-    return this.partnerTenantsService.upsertForPartner(req.user.id, dto);
+    this.teamContext.requirePermission(req.user, 'brandEdit');
+    return this.partnerTenantsService.upsertForPartner(this.ownerId(req), dto);
   }
 
   @Post('me/assets/:kind')
@@ -70,15 +83,16 @@ export class PanelPartnerTenantsController {
     },
   })
   uploadMyAsset(
-    @Req() req: { user: { id: number } },
+    @Req() req: { user: SessionUserPayload },
     @Param('kind') kind: string,
     @UploadedFile() file: Express.Multer.File,
   ): Promise<PartnerTenantPanelDto> {
+    this.teamContext.requirePermission(req.user, 'brandEdit');
     if (!file) {
       throw new BadRequestException('Campo file requerido (multipart/form-data)');
     }
     return this.partnerTenantsService.uploadBrandAsset(
-      req.user.id,
+      this.ownerId(req),
       this.parseAssetKind(kind),
       file,
     );

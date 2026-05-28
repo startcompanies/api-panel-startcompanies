@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { PartnerTenant } from './entities/partner-tenant.entity';
@@ -11,12 +11,14 @@ import { Client } from '../clients/entities/client.entity';
 import { User } from '../../shared/user/entities/user.entity';
 import { UploadFileModule } from '../../shared/upload-file/upload-file.module';
 import { RolesGuard } from '../../shared/auth/roles.guard';
+import { AccountTeamModule } from '../account-team/account-team.module';
 
 @Module({
   imports: [
     ConfigModule,
     TypeOrmModule.forFeature([PartnerTenant, Client, User]),
     UploadFileModule,
+    forwardRef(() => AccountTeamModule),
   ],
   controllers: [PartnerTenantsController, PanelPartnerTenantsController],
   providers: [

@@ -22,6 +22,10 @@ import { AuthGuard } from '../../shared/auth/auth.guard';
 import { RolesGuard } from '../../shared/auth/roles.guard';
 import { Roles } from '../../shared/auth/roles.decorator';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  TeamContextService,
+  type SessionUserPayload,
+} from '../account-team/team-context.service';
 
 @ApiTags('Panel - Settings')
 @ApiBearerAuth('JWT-auth')
@@ -31,21 +35,28 @@ export class SettingsController {
   constructor(
     private readonly settingsService: SettingsService,
     private readonly userAiCredentials: UserAiCredentialsService,
+    private readonly teamContext: TeamContextService,
   ) {}
+
+  private ownerId(req: { user: SessionUserPayload }): number {
+    return this.teamContext.getEffectiveOwnerId(req.user);
+  }
 
   @Get('preferences')
   @ApiOperation({ summary: 'Obtener preferencias del usuario (idioma, tema, etc.)' })
-  getPreferences(@Req() req: { user: { id: number } }) {
-    return this.settingsService.getPreferences(req.user.id);
+  getPreferences(@Req() req: { user: SessionUserPayload }) {
+    this.teamContext.requirePermission(req.user, 'preferencesView');
+    return this.settingsService.getPreferences(this.ownerId(req));
   }
 
   @Patch('preferences')
   @ApiOperation({ summary: 'Actualizar preferencias del usuario (idioma, tema, etc.)' })
   updatePreferences(
-    @Req() req: { user: { id: number } },
+    @Req() req: { user: SessionUserPayload },
     @Body() dto: UpdateUserPreferencesDto,
   ) {
-    return this.settingsService.updatePreferences(req.user.id, dto);
+    this.teamContext.requirePermission(req.user, 'preferencesEdit');
+    return this.settingsService.updatePreferences(this.ownerId(req), dto);
   }
 
   @Get('ai-credentials')
@@ -53,20 +64,26 @@ export class SettingsController {
     summary: 'Estado de credenciales IA (Anthropic/OpenAI) para contabilidad',
     description: 'No devuelve la API key; solo proveedor, si hay clave guardada y últimos 4 caracteres.',
   })
-  getAiCredentials(@Req() req: { user: { id: number } }) {
-    return this.userAiCredentials.getStatus(req.user.id);
+  getAiCredentials(@Req() req: { user: SessionUserPayload }) {
+    this.teamContext.requirePermission(req.user, 'aiView');
+    return this.userAiCredentials.getStatus(this.ownerId(req));
   }
 
   @Put('ai-credentials')
   @ApiOperation({ summary: 'Guardar o actualizar API key de Anthropic u OpenAI (cifrada en servidor)' })
-  putAiCredentials(@Req() req: { user: { id: number } }, @Body() dto: PutUserAiCredentialsDto) {
-    return this.userAiCredentials.upsert(req.user.id, dto.provider, dto.apiKey);
+  putAiCredentials(
+    @Req() req: { user: SessionUserPayload },
+    @Body() dto: PutUserAiCredentialsDto,
+  ) {
+    this.teamContext.requirePermission(req.user, 'aiEdit');
+    return this.userAiCredentials.upsert(this.ownerId(req), dto.provider, dto.apiKey);
   }
 
   @Delete('ai-credentials')
   @ApiOperation({ summary: 'Eliminar credenciales IA guardadas' })
-  async deleteAiCredentials(@Req() req: { user: { id: number } }) {
-    await this.userAiCredentials.remove(req.user.id);
+  async deleteAiCredentials(@Req() req: { user: SessionUserPayload }) {
+    this.teamContext.requirePermission(req.user, 'aiEdit');
+    await this.userAiCredentials.remove(this.ownerId(req));
     return { ok: true };
   }
 
@@ -74,8 +91,9 @@ export class SettingsController {
   @UseGuards(RolesGuard)
   @Roles('client')
   @ApiOperation({ summary: 'Perfil de empresa del cliente (emisor en facturas)' })
-  getCompany(@Req() req: { user: { id: number } }) {
-    return this.settingsService.getCompanyProfile(req.user.id);
+  getCompany(@Req() req: { user: SessionUserPayload }) {
+    this.teamContext.requirePermission(req.user, 'companyView');
+    return this.settingsService.getCompanyProfile(this.ownerId(req));
   }
 
   @Patch('company')
@@ -83,10 +101,11 @@ export class SettingsController {
   @Roles('client')
   @ApiOperation({ summary: 'Actualizar perfil de empresa del cliente' })
   updateCompany(
-    @Req() req: { user: { id: number } },
+    @Req() req: { user: SessionUserPayload },
     @Body() dto: UpdateClientCompanyProfileDto,
   ) {
-    return this.settingsService.updateCompanyProfile(req.user.id, dto);
+    this.teamContext.requirePermission(req.user, 'companyEdit');
+    return this.settingsService.updateCompanyProfile(this.ownerId(req), dto);
   }
 
   @Post('company/logo')
@@ -106,21 +125,22 @@ export class SettingsController {
     description: 'Sube una imagen y actualiza el logo del perfil de empresa.',
   })
   uploadCompanyLogo(
-    @Req() req: { user: { id: number } },
+    @Req() req: { user: SessionUserPayload },
     @UploadedFile() file: Express.Multer.File,
   ) {
+    this.teamContext.requirePermission(req.user, 'companyEdit');
     if (!file) {
       throw new BadRequestException('Campo file requerido (multipart/form-data)');
     }
-    return this.settingsService.uploadCompanyLogo(req.user.id, file);
+    return this.settingsService.uploadCompanyLogo(this.ownerId(req), file);
   }
 
   @Delete('company/logo')
   @UseGuards(RolesGuard)
   @Roles('client')
   @ApiOperation({ summary: 'Quitar logo de empresa' })
-  removeCompanyLogo(@Req() req: { user: { id: number } }) {
-    return this.settingsService.clearCompanyLogo(req.user.id);
+  removeCompanyLogo(@Req() req: { user: SessionUserPayload }) {
+    this.teamContext.requirePermission(req.user, 'companyEdit');
+    return this.settingsService.clearCompanyLogo(this.ownerId(req));
   }
 }
-

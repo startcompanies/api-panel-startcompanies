@@ -15,42 +15,55 @@ import {
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '../../shared/auth/auth.guard';
 import { BillingService } from './billing.service';
+import {
+  TeamContextService,
+  type SessionUserPayload,
+} from '../account-team/team-context.service';
 
 @ApiTags('Panel - Billing')
 @Controller('billing')
 export class BillingController {
-  constructor(private readonly billingService: BillingService) {}
+  constructor(
+    private readonly billingService: BillingService,
+    private readonly teamContext: TeamContextService,
+  ) {}
+
+  private ownerId(req: { user?: SessionUserPayload }): number {
+    const u = req.user;
+    if (!u?.id) throw new UnauthorizedException();
+    return this.teamContext.getEffectiveOwnerId(u);
+  }
 
   @Get('access')
   @UseGuards(AuthGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Estado de acceso por trial/suscripción' })
   async getAccess(
-    @Req() req: { user?: { id?: number } },
+    @Req() req: { user?: SessionUserPayload },
   ) {
-    const userId = req.user?.id;
-    if (!userId) throw new UnauthorizedException();
-    return this.billingService.getAccessSnapshot(Number(userId));
+    if (!req.user?.id) throw new UnauthorizedException();
+    this.teamContext.requirePermission(req.user, 'subscriptionView');
+    return this.billingService.getAccessSnapshot(this.ownerId(req));
   }
 
   @Post('subscription/checkout-session')
   @UseGuards(AuthGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Crear sesión de checkout Stripe para suscripción mensual' })
-  async createCheckoutSession(@Req() req: { user?: { id?: number } }) {
-    const userId = req.user?.id;
-    if (!userId) throw new UnauthorizedException();
-    return this.billingService.createCheckoutSession(Number(userId));
+  async createCheckoutSession(@Req() req: { user?: SessionUserPayload }) {
+    if (!req.user?.id) throw new UnauthorizedException();
+    this.teamContext.requirePermission(req.user, 'subscriptionManage');
+    return this.billingService.createCheckoutSession(this.ownerId(req));
   }
 
   @Post('subscription/portal-session')
   @UseGuards(AuthGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Crear sesión de Stripe Customer Portal para administrar suscripción' })
-  async createPortalSession(@Req() req: { user?: { id?: number } }) {
-    const userId = req.user?.id;
-    if (!userId) throw new UnauthorizedException();
-    return this.billingService.createCustomerPortalSession(Number(userId));
+  async createPortalSession(@Req() req: { user?: SessionUserPayload }) {
+    if (!req.user?.id) throw new UnauthorizedException();
+    this.teamContext.requirePermission(req.user, 'subscriptionManage');
+    return this.billingService.createCustomerPortalSession(this.ownerId(req));
   }
 
   @Post('users/:userId/platform-access')

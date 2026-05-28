@@ -430,18 +430,24 @@ export class EmailService {
   /**
    * Código de un solo uso para el segundo factor del login al panel.
    */
+  /**
+   * @returns true si Resend aceptó el envío; false si falta RESEND_API_KEY (no llama a la API).
+   */
   async sendPanelLoginOtpEmail(
     email: string,
     name: string,
     code: string,
     branding?: Partial<EmailBranding>,
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (!this.resend) {
-      this.logger.warn(`Email de login 2FA no enviado a ${email} (Resend no configurado)`);
-      return;
+      this.logger.warn(
+        `OTP no enviado a ${email}: RESEND_API_KEY no está en .env (no aparecerá en los logs de Resend).`,
+      );
+      return false;
     }
 
     const b = this.mergeBranding(branding);
+    const from = this.formatResendFrom(b);
     const bodyHtml = `
       <p>Hola ${name},</p>
       <p>Alguien está intentando iniciar sesión en el panel de <strong>${b.brandDisplayName}</strong> con tu cuenta.</p>
@@ -449,8 +455,8 @@ export class EmailService {
       <p>Si no fuiste tú, ignora este mensaje y tu contraseña sigue siendo necesaria para entrar.</p>
     `;
     try {
-      await this.resend.emails.send({
-        from: this.formatResendFrom(b),
+      const { data, error } = await this.resend.emails.send({
+        from,
         to: email,
         subject: `Código de acceso al panel - ${b.brandDisplayName}`,
         html: this.getEmailHtml({
@@ -461,9 +467,20 @@ export class EmailService {
         }),
       });
 
-      this.logger.log(`Email de login 2FA enviado a ${email}`);
+      if (error) {
+        this.logger.error(
+          `Resend rechazó OTP a ${email} (from=${from}): ${error.message}`,
+          error,
+        );
+        throw error;
+      }
+
+      this.logger.log(
+        `OTP enviado a ${email} vía Resend (id=${data?.id ?? 'sin-id'})`,
+      );
+      return true;
     } catch (error) {
-      this.logger.error(`Error al enviar email de login 2FA a ${email}:`, error);
+      this.logger.error(`Error al enviar OTP a ${email}:`, error);
       throw error;
     }
   }

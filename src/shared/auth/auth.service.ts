@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { SignUpDto } from './dtos/signup.dto';
@@ -27,6 +28,7 @@ import { normalizeAuthEmail } from 'src/shared/common/utils/normalize-auth-email
 import { PANEL_LOGIN_FAILED_MESSAGE } from './constants/auth-login.constants';
 import { TenantAccessService } from '../../panel/partner-tenants/tenant-access.service';
 import { EmailTenantBrandingService } from '../../panel/partner-tenants/email-tenant-branding.service';
+import { AccountTeamService } from '../../panel/account-team/account-team.service';
 
 export interface LoginTrustRequestContext {
   deviceCookie?: string;
@@ -38,8 +40,13 @@ const OTP_TTL_MS = 10 * 60 * 1000;
 const MAX_OTP_ATTEMPTS = 5;
 const MAX_OTP_RESENDS = 5;
 
+const isAuthDevMode =
+  process.env.MODE === 'DEV' || process.env.NODE_ENV === 'development';
+
 @Injectable()
 export class authService {
+  private readonly logger = new Logger(authService.name);
+
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
@@ -52,6 +59,7 @@ export class authService {
     private emailService: EmailService,
     private readonly tenantAccessService: TenantAccessService,
     private readonly emailTenantBranding: EmailTenantBrandingService,
+    private readonly accountTeamService: AccountTeamService,
   ) {}
 
   private async enforceTenantAccess(
@@ -96,18 +104,74 @@ export class authService {
     return Math.floor(100000 + Math.random() * 900000).toString();
   }
 
-  private buildInfoUser(user: User) {
+  /**
+   * Envía OTP por Resend. En desarrollo, si no hay API o falla el envío, deja el código en logs
+   * y permite seguir el flujo (challenge válido).
+   */
+  private async deliverLoginOtpEmail(
+    user: User,
+    displayName: string,
+    code: string,
+    challengeId: string,
+    tenantHost?: string,
+  ): Promise<boolean> {
+    try {
+      const branding = await this.emailTenantBranding.resolveForUser(
+        user,
+        tenantHost,
+      );
+      const sent = await this.emailService.sendPanelLoginOtpEmail(
+        user.email,
+        displayName,
+        code,
+        branding,
+      );
+      if (sent) {
+        return true;
+      }
+      if (isAuthDevMode) {
+        this.logger.warn(
+          `[DEV] RESEND_API_KEY ausente. OTP ${user.email} → ${code} (challengeId=${challengeId})`,
+        );
+        return true;
+      }
+      return false;
+    } catch (e) {
+      this.logger.error(`Fallo al enviar OTP a ${user.email}:`, e);
+      if (isAuthDevMode) {
+        this.logger.warn(
+          `[DEV] OTP ${user.email} → ${code} (challengeId=${challengeId})`,
+        );
+        return true;
+      }
+      return false;
+    }
+  }
+
+  async buildSessionPayload(user: User) {
+    const extras = await this.accountTeamService.buildSessionExtras(user);
     return {
       id: user.id,
       userName: user.username,
       username: user.username,
       email: user.email,
       status: user.status,
-      type: user.type,
+      type: extras.type,
       first_name: user.first_name ?? undefined,
       last_name: user.last_name ?? undefined,
       createdAt: user.createdAt?.toISOString?.() ?? undefined,
+      accountOwnerId: extras.accountOwnerId,
+      isAccountOwner: extras.isAccountOwner,
+      permissions: extras.permissions,
     };
+  }
+
+  async buildSessionPayloadForUserId(userId: number) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user || !user.status) {
+      throw new UnauthorizedException('Usuario no encontrado o inactivo');
+    }
+    return this.buildSessionPayload(user);
   }
 
   private hashDeviceSecret(secretHex: string): string {
@@ -273,21 +337,17 @@ export class authService {
 
     const displayName =
       `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username;
-    try {
-      const branding = await this.emailTenantBranding.resolveForUser(
-        user,
-        tenantHost,
-      );
-      await this.emailService.sendPanelLoginOtpEmail(
-        user.email,
-        displayName,
-        code,
-        branding,
-      );
-    } catch (e) {
+    const otpSent = await this.deliverLoginOtpEmail(
+      user,
+      displayName,
+      code,
+      saved.id,
+      tenantHost,
+    );
+    if (!otpSent) {
       await this.loginOtpRepository.delete({ id: saved.id });
       throw new BadRequestException(
-        'No pudimos enviar el código a tu correo. Revisa la configuración o inténtalo más tarde.',
+        'No pudimos enviar el código a tu correo. Revisa RESEND_API_KEY y RESEND_FROM_EMAIL en el servidor.',
       );
     }
 
@@ -393,26 +453,24 @@ export class authService {
 
     const displayName =
       `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username;
-    try {
-      const branding = await this.emailTenantBranding.resolveForUser(
-        user,
-        tenantHost,
+    const otpSent = await this.deliverLoginOtpEmail(
+      user,
+      displayName,
+      code,
+      challenge.id,
+      tenantHost,
+    );
+    if (!otpSent) {
+      throw new BadRequestException(
+        'No pudimos reenviar el correo. Revisa RESEND_API_KEY y RESEND_FROM_EMAIL en el servidor.',
       );
-      await this.emailService.sendPanelLoginOtpEmail(
-        user.email,
-        displayName,
-        code,
-        branding,
-      );
-    } catch {
-      throw new BadRequestException('No pudimos reenviar el correo. Inténtalo más tarde.');
     }
 
     return { ok: true, message: 'Código reenviado.' };
   }
 
   private async issueSessionTokens(user: User, rememberMe: boolean) {
-    const infoUser = this.buildInfoUser(user);
+    const infoUser = await this.buildSessionPayload(user);
     const refreshExpires = rememberMe ? '30d' : '5d';
     const token = await this.jwtService.signAsync(infoUser);
     const refreshToken = await this.jwtService.signAsync(
@@ -562,17 +620,7 @@ export class authService {
 
       await this.enforceTenantAccess(user, tenantHost);
 
-      const newPayload = {
-        id: user.id,
-        userName: user.username,
-        username: user.username,
-        email: user.email,
-        status: user.status,
-        type: user.type,
-        first_name: user.first_name ?? undefined,
-        last_name: user.last_name ?? undefined,
-        createdAt: user.createdAt?.toISOString?.() ?? undefined,
-      };
+      const newPayload = await this.buildSessionPayload(user);
       const token = await this.jwtService.signAsync(newPayload);
 
       return { token };
