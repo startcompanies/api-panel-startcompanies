@@ -6,8 +6,6 @@ export type AccountTeamPermissions = {
   brandEdit: boolean;
   preferencesView: boolean;
   preferencesEdit: boolean;
-  aiView: boolean;
-  aiEdit: boolean;
   subscriptionView: boolean;
   subscriptionManage: boolean;
   operationsDashboard: boolean;
@@ -33,8 +31,6 @@ export const ACCOUNT_TEAM_PERMISSION_KEYS: AccountTeamPermissionKey[] = [
   'brandEdit',
   'preferencesView',
   'preferencesEdit',
-  'aiView',
-  'aiEdit',
   'subscriptionView',
   'subscriptionManage',
   'operationsDashboard',
@@ -59,8 +55,6 @@ export const DEFAULT_TEAMMATE_PERMISSIONS: AccountTeamPermissions = {
   brandEdit: false,
   preferencesView: true,
   preferencesEdit: false,
-  aiView: false,
-  aiEdit: false,
   subscriptionView: false,
   subscriptionManage: false,
   operationsDashboard: true,

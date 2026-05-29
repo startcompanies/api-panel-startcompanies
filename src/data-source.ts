@@ -19,7 +19,6 @@ import { Member } from './panel/requests/entities/member.entity';
 // Document ya no se usa - URLs se guardan directamente en campos de request
 import { Notification } from './panel/notifications/entities/notification.entity';
 import { UserPreferences } from './panel/settings/entities/user-preferences.entity';
-import { UserAiCredential } from './panel/settings/entities/user-ai-credential.entity';
 import { ClientCompanyProfile } from './panel/settings/entities/client-company-profile.entity';
 import { ProcessConfig } from './panel/settings/entities/process-config.entity';
 import { Client } from './panel/clients/entities/client.entity';
@@ -87,7 +86,6 @@ export const dataSourceOptions: DataSourceOptions = {
     ZohoConfig,
     StripeWebhookEvent,
     ClientCompanyProfile,
-    UserAiCredential,
     Invoice,
     InvoiceItem,
     InvoicePayment,

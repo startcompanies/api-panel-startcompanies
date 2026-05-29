@@ -18,7 +18,7 @@ import {
 } from './accounting-classification.service';
 import { normalizePayeeKey } from './accounting-canonical.types';
 import type { CanonicalTx } from './accounting-canonical.types';
-import { UserAiCredentialsService } from '../settings/user-ai-credentials.service';
+import { PlatformAiService } from '../settings/platform-ai.service';
 import { ConfigService } from '@nestjs/config';
 import { UserClassificationRule } from './entities/user-classification-rule.entity';
 
@@ -45,7 +45,7 @@ export class AccountingService {
     private readonly invoicesRepo: Repository<Invoice>,
     @InjectRepository(UserClassificationRule)
     private readonly rulesRepo: Repository<UserClassificationRule>,
-    private readonly userAiCredentials: UserAiCredentialsService,
+    private readonly platformAi: PlatformAiService,
     private readonly classification: AccountingClassificationService,
     private readonly config: ConfigService,
   ) {}
@@ -607,14 +607,11 @@ export class AccountingService {
       rulesByOwner.set(oid, merged);
     }
 
-    const cred =
+    const apiKey =
       useAiRequested && user.type === 'client'
-        ? await this.userAiCredentials.getDecryptedForUser(user.id)
+        ? await this.platformAi.getApiKeyForUser(user)
         : null;
-    const ai =
-      cred && (cred.provider === 'anthropic' || cred.provider === 'openai')
-        ? { provider: cred.provider, apiKey: cred.apiKey }
-        : null;
+    const ai = apiKey ? { apiKey } : null;
     const useAi = !!ai;
     const maxAi = parseInt(this.config.get<string>('AI_BULK_MAX_PER_REQUEST') || '20', 10);
     let remainingAi = maxAi;
@@ -764,11 +761,8 @@ export class AccountingService {
       payeeNormalized: normalizePayeeKey(description.split(/[|·]/)[0]?.trim() || description),
       source: 'generic',
     };
-    const cred = await this.userAiCredentials.getDecryptedForUser(user.id);
-    const ai =
-      cred && (cred.provider === 'anthropic' || cred.provider === 'openai')
-        ? { provider: cred.provider, apiKey: cred.apiKey }
-        : null;
+    const apiKey = await this.platformAi.getApiKeyForUser(user);
+    const ai = apiKey ? { apiKey } : null;
     const res = await this.classification.classifyFull({
       tx: canonical,
       catalog,

@@ -14,8 +14,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { SettingsService } from './settings.service';
-import { UserAiCredentialsService } from './user-ai-credentials.service';
-import { PutUserAiCredentialsDto } from './dtos/put-user-ai-credentials.dto';
+import { PlatformAiService } from './platform-ai.service';
 import { UpdateUserPreferencesDto } from './dtos/update-user-preferences.dto';
 import { UpdateClientCompanyProfileDto } from './dtos/update-client-company-profile.dto';
 import { AuthGuard } from '../../shared/auth/auth.guard';
@@ -34,7 +33,7 @@ import {
 export class SettingsController {
   constructor(
     private readonly settingsService: SettingsService,
-    private readonly userAiCredentials: UserAiCredentialsService,
+    private readonly platformAi: PlatformAiService,
     private readonly teamContext: TeamContextService,
   ) {}
 
@@ -61,30 +60,12 @@ export class SettingsController {
 
   @Get('ai-credentials')
   @ApiOperation({
-    summary: 'Estado de credenciales IA (Anthropic/OpenAI) para contabilidad',
-    description: 'No devuelve la API key; solo proveedor, si hay clave guardada y últimos 4 caracteres.',
+    summary: 'Estado de IA (Gemini) para contabilidad',
+    description:
+      'Indica si el servidor tiene configurada la API key (GEMINI_API_KEY_PLATFORM o GEMINI_API_KEY_TENANT). No expone secretos.',
   })
   getAiCredentials(@Req() req: { user: SessionUserPayload }) {
-    this.teamContext.requirePermission(req.user, 'aiView');
-    return this.userAiCredentials.getStatus(this.ownerId(req));
-  }
-
-  @Put('ai-credentials')
-  @ApiOperation({ summary: 'Guardar o actualizar API key de Anthropic u OpenAI (cifrada en servidor)' })
-  putAiCredentials(
-    @Req() req: { user: SessionUserPayload },
-    @Body() dto: PutUserAiCredentialsDto,
-  ) {
-    this.teamContext.requirePermission(req.user, 'aiEdit');
-    return this.userAiCredentials.upsert(this.ownerId(req), dto.provider, dto.apiKey);
-  }
-
-  @Delete('ai-credentials')
-  @ApiOperation({ summary: 'Eliminar credenciales IA guardadas' })
-  async deleteAiCredentials(@Req() req: { user: SessionUserPayload }) {
-    this.teamContext.requirePermission(req.user, 'aiEdit');
-    await this.userAiCredentials.remove(this.ownerId(req));
-    return { ok: true };
+    return this.platformAi.getStatus(req.user);
   }
 
   @Get('company')
