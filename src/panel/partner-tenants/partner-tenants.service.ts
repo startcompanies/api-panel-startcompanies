@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -37,8 +38,12 @@ const DEFAULT_PLATFORM_BRAND = {
   secondaryColor: '#006AFE',
 } as const;
 
+const WHATSAPP_NUMBER_PATTERN = /^\+?[0-9]{7,15}$/;
+
 @Injectable()
 export class PartnerTenantsService {
+  private readonly logger = new Logger(PartnerTenantsService.name);
+
   constructor(
     @InjectRepository(PartnerTenant)
     private readonly tenantRepo: Repository<PartnerTenant>,
@@ -123,6 +128,8 @@ export class PartnerTenantsService {
         accentColor: '#01C9E2',
       }),
       enabledSurfaces: ['panel', 'wizard'],
+      whatsappNumber: null,
+      websiteUrl: null,
     };
   }
 
@@ -193,6 +200,53 @@ export class PartnerTenantsService {
     return ['panel'];
   }
 
+  private normalizeWhatsappNumber(raw?: string | null): string | null {
+    if (raw == null || raw === '') {
+      return null;
+    }
+    const trimmed = raw.trim().replace(/\s/g, '');
+    if (!WHATSAPP_NUMBER_PATTERN.test(trimmed)) {
+      throw new BadRequestException(
+        'WhatsApp: solo dígitos y + opcional al inicio (7-15 dígitos)',
+      );
+    }
+    return trimmed;
+  }
+
+  private applyContactFields(
+    row: PartnerTenant,
+    dto: UpdatePartnerTenantDto,
+  ): void {
+    if (dto.whatsappNumber !== undefined) {
+      row.whatsappNumber = this.normalizeWhatsappNumber(dto.whatsappNumber);
+    }
+    if (dto.websiteUrl !== undefined) {
+      row.websiteUrl = dto.websiteUrl?.trim() || null;
+    }
+  }
+
+  private assertPartnerWhatsappRequired(
+    row: PartnerTenant,
+    allowAdminFields?: boolean,
+  ): void {
+    if (allowAdminFields) {
+      return;
+    }
+    if (row.isActive && !row.whatsappNumber?.trim()) {
+      throw new BadRequestException(
+        'Indica un número de WhatsApp de soporte para tu portal',
+      );
+    }
+  }
+
+  private warnIfActiveWithoutWhatsapp(row: PartnerTenant): void {
+    if (row.isActive && !row.whatsappNumber?.trim()) {
+      this.logger.warn(
+        `Partner tenant partnerId=${row.partnerId} slug=${row.slug} está activo sin whatsapp_number`,
+      );
+    }
+  }
+
   private toPublicDto(row: PartnerTenant): PublicTenantDto {
     return this.enrichPublicDto({
       slug: row.slug,
@@ -212,6 +266,8 @@ export class PartnerTenantsService {
       seoTitle: row.seoTitle,
       seoDescription: row.seoDescription,
       enabledSurfaces: this.partnerEnabledSurfaces(),
+      whatsappNumber: row.whatsappNumber,
+      websiteUrl: row.websiteUrl,
     });
   }
 
@@ -444,8 +500,13 @@ export class PartnerTenantsService {
         seoDescription: dto.seoDescription?.trim() || null,
         enabledSurfaces: this.partnerEnabledSurfaces(),
         isActive: options?.allowAdminFields ? dto.isActive ?? true : true,
+        whatsappNumber: null,
+        websiteUrl: null,
       });
+      this.applyContactFields(row, dto);
+      this.assertPartnerWhatsappRequired(row, options?.allowAdminFields);
       const saved = await this.tenantRepo.save(row);
+      this.warnIfActiveWithoutWhatsapp(saved);
       return this.toPanelDto(saved);
     }
 
@@ -517,7 +578,11 @@ export class PartnerTenantsService {
       row.isActive = dto.isActive;
     }
 
+    this.applyContactFields(row, dto);
+    this.assertPartnerWhatsappRequired(row, options?.allowAdminFields);
+
     const saved = await this.tenantRepo.save(row);
+    this.warnIfActiveWithoutWhatsapp(saved);
     return this.toPanelDto(saved);
   }
 

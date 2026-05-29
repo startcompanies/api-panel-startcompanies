@@ -59,4 +59,10 @@ export class PublicTenantDto {
 
   @ApiProperty({ type: [String], example: ['panel'] })
   enabledSurfaces: PartnerTenantSurface[];
+
+  @ApiProperty({ nullable: true, example: '+17869354213' })
+  whatsappNumber: string | null;
+
+  @ApiProperty({ nullable: true, example: 'https://www.mi-marca.com' })
+  websiteUrl: string | null;
 }

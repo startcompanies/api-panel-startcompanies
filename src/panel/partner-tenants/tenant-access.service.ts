@@ -6,6 +6,7 @@ import { PartnerTenantsService } from './partner-tenants.service';
 import { PublicTenantDto } from './dtos/public-tenant.dto';
 import { Client } from '../clients/entities/client.entity';
 import { User } from '../../shared/user/entities/user.entity';
+import { AccountTeamMember } from '../account-team/entities/account-team-member.entity';
 import {
   TENANT_ACCESS_DENIED_MESSAGE,
   TENANT_DOMAIN_NOT_CONFIGURED_MESSAGE,
@@ -20,6 +21,10 @@ export class TenantAccessService {
     private readonly tenantRepo: Repository<PartnerTenant>,
     @InjectRepository(Client)
     private readonly clientRepository: Repository<Client>,
+    @InjectRepository(AccountTeamMember)
+    private readonly teamRepo: Repository<AccountTeamMember>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
   ) {}
 
   /**
@@ -59,14 +64,48 @@ export class TenantAccessService {
     throw new ForbiddenException(TENANT_ACCESS_DENIED_MESSAGE);
   }
 
+  /**
+   * Usuario titular para comprobar pertenencia al tenant (teammates heredan el owner).
+   */
+  private async resolveSubjectUser(user: User): Promise<{
+    subject: User;
+    isScStaff: boolean;
+  }> {
+    if (user.type === 'admin') {
+      return { subject: user, isScStaff: false };
+    }
+    if (user.type !== 'user') {
+      return { subject: user, isScStaff: false };
+    }
+    const membership = await this.teamRepo.findOne({
+      where: { memberUserId: user.id, status: 'active' },
+      relations: ['owner'],
+    });
+    if (!membership) {
+      return { subject: user, isScStaff: true };
+    }
+    const owner =
+      membership.owner ??
+      (await this.userRepo.findOne({ where: { id: membership.ownerUserId } }));
+    if (!owner?.status) {
+      throw new ForbiddenException(TENANT_ACCESS_DENIED_MESSAGE);
+    }
+    return { subject: owner, isScStaff: false };
+  }
+
   private async assertUserMayAccessPlatform(user: User): Promise<void> {
-    if (user.type === 'admin' || user.type === 'user') {
+    if (user.type === 'admin') {
       return;
     }
 
-    if (user.type === 'partner') {
+    const { subject, isScStaff } = await this.resolveSubjectUser(user);
+    if (isScStaff) {
+      return;
+    }
+
+    if (subject.type === 'partner') {
       const hasBrand = await this.tenantRepo.exists({
-        where: { partnerId: user.id, isActive: true },
+        where: { partnerId: subject.id, isActive: true },
       });
       if (hasBrand) {
         throw new ForbiddenException(TENANT_PARTNER_USE_BRAND_PORTAL_MESSAGE);
@@ -74,8 +113,8 @@ export class TenantAccessService {
       return;
     }
 
-    if (user.type === 'client') {
-      const client = await this.findLinkedClient(user);
+    if (subject.type === 'client') {
+      const client = await this.findLinkedClient(subject);
       if (client?.partnerId) {
         throw new ForbiddenException(TENANT_ACCESS_DENIED_MESSAGE);
       }
@@ -89,19 +128,24 @@ export class TenantAccessService {
     user: User,
     partnerId: number,
   ): Promise<void> {
-    if (user.type === 'admin' || user.type === 'user') {
+    if (user.type === 'admin') {
       return;
     }
 
-    if (user.type === 'partner') {
-      if (user.id !== partnerId) {
+    const { subject, isScStaff } = await this.resolveSubjectUser(user);
+    if (isScStaff) {
+      throw new ForbiddenException(TENANT_ACCESS_DENIED_MESSAGE);
+    }
+
+    if (subject.type === 'partner') {
+      if (subject.id !== partnerId) {
         throw new ForbiddenException(TENANT_ACCESS_DENIED_MESSAGE);
       }
       return;
     }
 
-    if (user.type === 'client') {
-      const client = await this.findLinkedClient(user);
+    if (subject.type === 'client') {
+      const client = await this.findLinkedClient(subject);
       if (!client?.partnerId || client.partnerId !== partnerId) {
         throw new ForbiddenException(TENANT_ACCESS_DENIED_MESSAGE);
       }

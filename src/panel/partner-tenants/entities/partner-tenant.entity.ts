@@ -74,6 +74,12 @@ export class PartnerTenant {
   @Column({ name: 'seo_description', type: 'varchar', length: 300, nullable: true })
   seoDescription: string | null;
 
+  @Column({ name: 'whatsapp_number', type: 'varchar', length: 20, nullable: true })
+  whatsappNumber: string | null;
+
+  @Column({ name: 'website_url', type: 'varchar', length: 255, nullable: true })
+  websiteUrl: string | null;
+
   @Column({ name: 'is_active', type: 'boolean', default: true })
   isActive: boolean;
 

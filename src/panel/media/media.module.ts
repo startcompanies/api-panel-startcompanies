@@ -8,9 +8,15 @@ import { LlcGuide } from './entities/llc-guide.entity';
 import { PremiumVideo } from './entities/premium-video.entity';
 import { MediaController } from './media.controller';
 import { MediaService } from './media.service';
+import { PartnerTenantsModule } from '../partner-tenants/partner-tenants.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([PremiumVideo, LlcGuide, ContentAccessLog]), BillingModule, UploadFileModule],
+  imports: [
+    TypeOrmModule.forFeature([PremiumVideo, LlcGuide, ContentAccessLog]),
+    BillingModule,
+    UploadFileModule,
+    PartnerTenantsModule,
+  ],
   controllers: [MediaController],
   providers: [MediaService, RolesGuard],
 })

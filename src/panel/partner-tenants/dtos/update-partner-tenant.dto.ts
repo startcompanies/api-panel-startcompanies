@@ -12,6 +12,7 @@ import {
 } from 'class-validator';
 
 const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
+const WHATSAPP_NUMBER = /^\+?[0-9]{7,15}$/;
 
 export class UpdatePartnerTenantDto {
   @ApiProperty({ required: false, example: 'Tax Solution' })
@@ -106,4 +107,18 @@ export class UpdatePartnerTenantDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @ApiProperty({ required: false, example: '+17869354213' })
+  @IsOptional()
+  @IsString()
+  @Matches(WHATSAPP_NUMBER, {
+    message: 'WhatsApp: solo dígitos y + opcional al inicio (7-15 dígitos)',
+  })
+  whatsappNumber?: string | null;
+
+  @ApiProperty({ required: false, example: 'https://www.mi-marca.com' })
+  @IsOptional()
+  @IsUrl({ require_protocol: true, protocols: ['http', 'https'] })
+  @MaxLength(255)
+  websiteUrl?: string | null;
 }

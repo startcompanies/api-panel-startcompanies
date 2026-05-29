@@ -12,11 +12,12 @@ import { User } from '../../shared/user/entities/user.entity';
 import { UploadFileModule } from '../../shared/upload-file/upload-file.module';
 import { RolesGuard } from '../../shared/auth/roles.guard';
 import { AccountTeamModule } from '../account-team/account-team.module';
+import { AccountTeamMember } from '../account-team/entities/account-team-member.entity';
 
 @Module({
   imports: [
     ConfigModule,
-    TypeOrmModule.forFeature([PartnerTenant, Client, User]),
+    TypeOrmModule.forFeature([PartnerTenant, Client, User, AccountTeamMember]),
     UploadFileModule,
     forwardRef(() => AccountTeamModule),
   ],
