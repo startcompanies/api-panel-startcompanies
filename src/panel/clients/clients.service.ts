@@ -16,6 +16,7 @@ import { ZohoContactService } from '../../zoho-config/zoho-contact.service';
 import { EmailService } from '../../shared/common/services/email.service';
 import { PartnerTenantsService } from '../partner-tenants/partner-tenants.service';
 import { EmailTenantBrandingService } from '../partner-tenants/email-tenant-branding.service';
+import { BillingService } from '../billing/billing.service';
 import { encodePassword } from '../../shared/common/utils/bcrypt';
 
 @Injectable()
@@ -31,6 +32,7 @@ export class ClientsService {
     private readonly emailService: EmailService,
     private readonly partnerTenantsService: PartnerTenantsService,
     private readonly emailTenantBranding: EmailTenantBrandingService,
+    private readonly billingService: BillingService,
     private readonly jwtService: JwtService,
   ) {}
 
@@ -832,6 +834,8 @@ export class ClientsService {
       client.userId = user.id;
       await this.clientRepository.save(client);
     }
+
+    await this.billingService.ensurePartnerClientAccess(user);
 
     const resetToken = await this.jwtService.signAsync(
       { id: user.id, email: user.email, type: 'password-setup' },

@@ -9,6 +9,7 @@ import { RolesGuard } from '../../shared/auth/roles.guard';
 import { ZohoConfigModule } from '../../zoho-config/zoho-config.module';
 import { CommonModule } from '../../shared/common/common.module';
 import { PartnerTenantsModule } from '../partner-tenants/partner-tenants.module';
+import { BillingModule } from '../billing/billing.module';
 
 @Module({
   controllers: [ClientsController],
@@ -18,6 +19,7 @@ import { PartnerTenantsModule } from '../partner-tenants/partner-tenants.module'
     ZohoConfigModule,
     CommonModule,
     PartnerTenantsModule,
+    BillingModule,
   ],
   exports: [ClientsService],
 })

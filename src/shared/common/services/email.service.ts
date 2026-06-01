@@ -833,6 +833,8 @@ export class EmailService {
     issuerLegalName?: string | null;
     issuerLogoUrl?: string | null;
     issuerEmail?: string | null;
+    /** Marca de plataforma/tenant (p. ej. partner); si no se envía, usa EMAIL_PLATFORM_NAME. */
+    platformDisplayName?: string | null;
   }): Promise<void> {
     if (!this.resend) {
       this.logger.error(`Factura ${params.invoiceNumber}: RESEND_API_KEY no configurada`);
@@ -844,9 +846,12 @@ export class EmailService {
       this.configService.get<string>('RESEND_FROM_EMAIL') ||
       'Start Companies <noreply@startcompanies.us>';
     const fromEmail = this.extractFromEmailAddress(configuredFrom);
-    const platformName = this.configService.get<string>('EMAIL_PLATFORM_NAME')?.trim() || 'Start Companies';
+    const platformName =
+      params.platformDisplayName?.trim() ||
+      this.configService.get<string>('EMAIL_PLATFORM_NAME')?.trim() ||
+      'Start Companies';
     const legalIssuer = params.issuerLegalName?.trim() || '';
-    /** Misma razón social que el PDF (perfil empresa); si falta, no usar "Start Companies" como emisor ficticio. */
+    /** Razón social del emisor (perfil empresa); si falta, nombre de marca tenant/plataforma. */
     const issuerNameForDisplay = legalIssuer || platformName;
     const from = legalIssuer
       ? this.formatOnBehalfOfFrom(legalIssuer, platformName, fromEmail)
