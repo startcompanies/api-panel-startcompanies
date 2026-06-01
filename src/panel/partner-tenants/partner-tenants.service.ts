@@ -85,9 +85,18 @@ export class PartnerTenantsService {
       'startcompanies.io',
       'staging.startcompanies.io',
       'www.startcompanies.io',
+      /** Portal SC (no confundir con staging.startcompanies.io = marketing) */
+      'panel.startcompanies.io',
+      'panel-staging.startcompanies.io',
       'localhost',
       '127.0.0.1',
     ]);
+    const fromFrontend = this.normalizeHost(
+      this.configService.get<string>('FRONTEND_URL'),
+    );
+    if (fromFrontend) {
+      hosts.add(fromFrontend);
+    }
     if (fromEnv) {
       for (const h of fromEnv.split(',')) {
         const n = this.normalizeHost(h);

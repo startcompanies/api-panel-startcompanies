@@ -4,7 +4,7 @@ Checklist tras desplegar migraciones `1777600000000` y `1777700000000`.
 
 ## Variables de entorno
 
-- `PLATFORM_HOSTS`: hosts del portal Start Companies (coma-separados), además de los defaults (`startcompanies.io`, `localhost`, …).
+- `PLATFORM_HOSTS`: hosts extra del portal SC (coma-separados). Por defecto: `panel.startcompanies.io`, `panel-staging.startcompanies.io`, marketing (`startcompanies.io`, `staging.startcompanies.io`), `localhost` y el host de `FRONTEND_URL`.
 - `FRONTEND_URL`: URL del portal SC para correos y fallback.
 - Partners: `GEMINI_API_KEY_TENANT` / `GEMINI_API_KEY_PLATFORM` si aplica contabilidad IA.
 
