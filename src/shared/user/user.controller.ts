@@ -19,6 +19,7 @@ import { AuthGuard } from 'src/shared/auth/auth.guard';
 import { RolesGuard } from 'src/shared/auth/roles.guard';
 import { Roles } from 'src/shared/auth/roles.decorator';
 import { UpdateUserDto } from './dtos/update_user.dto';
+import { UpdatePanelStaffDto } from './dtos/update-panel-staff.dto';
 import { PaginationDto } from 'src/shared/common/dtos/pagination.dto';
 
 @ApiTags('Common - Users')
@@ -185,6 +186,38 @@ export class UserController {
     return this.userService.findUserById(id);
   }
 
+  @Patch(':id/panel-staff')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('admin', 'user')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Actualizar usuario interno del panel (admin o user)',
+  })
+  @UsePipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+    }),
+  )
+  updatePanelStaff(
+    @Param('id') id: string,
+    @Body() updateDto: UpdatePanelStaffDto,
+  ) {
+    return this.userService.updatePanelStaffUser(id, updateDto);
+  }
+
+  @Post(':id/resend-invitation')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('admin', 'user')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Reenviar invitación por correo (usuario interno)',
+  })
+  resendInvitation(@Param('id') id: string) {
+    return this.userService.resendPanelStaffInvitation(id);
+  }
+
   @Patch(':id')
   @UseGuards(AuthGuard)
   @ApiBearerAuth('JWT-auth')
@@ -203,14 +236,15 @@ export class UserController {
     return this.userService.updateUserById(id, updateUserDto);
   }
 
-  @Patch('/:id/status')
+  @Patch(':id/status')
   @UseGuards(AuthGuard, RolesGuard)
   @Roles('admin', 'user')
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
     summary: 'Activar/Desactivar usuario (admin o staff user)',
   })
-  toggleUserStatus(@Param('id') id: string) {
-    return this.userService.toggleUserStatus(id);
+  toggleUserStatus(@Param('id') id: string, @Request() req) {
+    const actorId = req.user?.id != null ? Number(req.user.id) : undefined;
+    return this.userService.toggleUserStatus(id, actorId);
   }
 }

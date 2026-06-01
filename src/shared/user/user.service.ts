@@ -552,12 +552,114 @@ export class UserService {
     return updated!;
   }
 
+  private isPanelStaffType(type: string): boolean {
+    return type === 'admin' || type === 'user';
+  }
+
+  private async countOtherActiveAdmins(excludeId: number): Promise<number> {
+    return this.userRepository.count({
+      where: {
+        type: 'admin',
+        status: true,
+        id: Not(excludeId),
+      },
+    });
+  }
+
+  /**
+   * Actualiza un usuario interno del panel (admin o user).
+   */
+  async updatePanelStaffUser(
+    id: string,
+    updateData: {
+      first_name?: string;
+      last_name?: string;
+      type?: 'admin' | 'user';
+      company?: string;
+      phone?: string;
+    },
+  ): Promise<User> {
+    const user = await this.userRepository.findOne({
+      where: { id: Number(id) },
+    });
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+    if (!this.isPanelStaffType(user.type)) {
+      throw new BadRequestException(
+        'Solo se pueden editar usuarios internos (admin o user)',
+      );
+    }
+
+    if (
+      user.type === 'admin' &&
+      updateData.type === 'user'
+    ) {
+      const otherAdmins = await this.countOtherActiveAdmins(user.id);
+      if (otherAdmins < 1) {
+        throw new BadRequestException(
+          'Debe existir al menos otro administrador activo antes de cambiar el rol',
+        );
+      }
+    }
+
+    await this.userRepository.update(id, updateData);
+    const updated = await this.userRepository.findOne({
+      where: { id: Number(id) },
+    });
+    if (!updated) {
+      throw new InternalServerErrorException('Usuario no encontrado');
+    }
+    return updated;
+  }
+
+  /**
+   * Reenvía el correo de invitación para establecer contraseña (staff del panel).
+   */
+  async resendPanelStaffInvitation(id: string): Promise<{ message: string }> {
+    const user = await this.userRepository.findOne({
+      where: { id: Number(id) },
+    });
+    if (!user) {
+      throw new NotFoundException('Usuario no encontrado');
+    }
+    if (!this.isPanelStaffType(user.type)) {
+      throw new BadRequestException(
+        'Solo se puede reenviar invitación a usuarios internos',
+      );
+    }
+    if (!user.status) {
+      throw new BadRequestException(
+        'No se puede reenviar invitación a un usuario inactivo',
+      );
+    }
+
+    const resetToken = await this.jwtService.signAsync(
+      { id: user.id, email: user.email, type: 'password-setup' },
+      { expiresIn: '24h' },
+    );
+
+    const userName =
+      `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username;
+    const branding = await this.emailTenantBranding.resolveForUser(user);
+    await this.emailService.sendInvitationEmail(
+      user.email,
+      userName,
+      resetToken,
+      (user.type as 'partner' | 'client' | 'admin') || 'user',
+      branding,
+    );
+
+    return { message: 'Invitación reenviada correctamente' };
+  }
+
   /**
    * Activa o desactiva un usuario (toggle status).
    * @param id ID del usuario.
+   * @param actorId ID del usuario que realiza la acción (opcional).
    * @returns Usuario actualizado.
    */
-  async toggleUserStatus(id: string): Promise<User> {
+  async toggleUserStatus(id: string, actorId?: number): Promise<User> {
     try {
       const user = await this.userRepository.findOne({
         where: { id: Number(id) },
@@ -566,12 +668,33 @@ export class UserService {
         throw new NotFoundException('Usuario no encontrado');
       }
 
-      // Toggle del status (el campo status es boolean)
+      if (actorId != null && user.id === actorId) {
+        throw new BadRequestException(
+          'No puedes activar o desactivar tu propia cuenta',
+        );
+      }
+
+      if (
+        this.isPanelStaffType(user.type) &&
+        user.type === 'admin' &&
+        user.status === true
+      ) {
+        const otherAdmins = await this.countOtherActiveAdmins(user.id);
+        if (otherAdmins < 1) {
+          throw new BadRequestException(
+            'Debe existir al menos otro administrador activo',
+          );
+        }
+      }
+
       user.status = !user.status;
 
       return await this.userRepository.save(user);
     } catch (e) {
-      if (e instanceof NotFoundException) {
+      if (
+        e instanceof NotFoundException ||
+        e instanceof BadRequestException
+      ) {
         throw e;
       }
       console.error('Error al cambiar el estado del usuario:', e);

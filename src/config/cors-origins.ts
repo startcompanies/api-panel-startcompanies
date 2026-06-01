@@ -9,6 +9,8 @@ export function getAllowedOrigins(): string[] {
     'https://startcompanies.us',
     'https://staging.startcompanies.io',
     'https://startcompanies.io',
+    'https://panel.startcompanies.io',
+    'https://panel-staging.startcompanies.io',
   ];
 
   if (isDev) {
