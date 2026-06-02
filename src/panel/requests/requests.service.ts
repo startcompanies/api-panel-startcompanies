@@ -3036,7 +3036,7 @@ export class RequestsService {
       const ps = filters.paymentStatus.toLowerCase();
       if (ps === 'none') {
         queryBuilder.andWhere(
-          "(request.paymentStatus IS NULL OR TRIM(request.paymentStatus) = '')",
+          "(request.paymentStatus IS NULL OR TRIM(request.paymentStatus) = '' OR LOWER(request.paymentStatus) IN ('not_required', 'free'))",
         );
       } else {
         queryBuilder.andWhere('request.paymentStatus = :paymentStatus', {
