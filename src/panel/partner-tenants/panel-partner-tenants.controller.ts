@@ -108,8 +108,8 @@ export class PanelPartnerTenantsController {
   }
 
   @Put('by-partner/:partnerId')
-  @Roles('admin')
-  @ApiOperation({ summary: 'Crear o actualizar marca de un partner (admin)' })
+  @Roles('admin', 'user')
+  @ApiOperation({ summary: 'Crear o actualizar marca de un partner (admin/staff)' })
   upsertByPartnerId(
     @Param('partnerId', ParseIntPipe) partnerId: number,
     @Body() dto: UpdatePartnerTenantDto,
@@ -120,7 +120,7 @@ export class PanelPartnerTenantsController {
   }
 
   @Post('by-partner/:partnerId/assets/:kind')
-  @Roles('admin')
+  @Roles('admin', 'user')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }))
   @ApiConsumes('multipart/form-data')
   @ApiParam({ name: 'kind', enum: ['logo', 'logo-dark', 'favicon'] })
