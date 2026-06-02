@@ -8,7 +8,8 @@ import cookieParser from 'cookie-parser';
 import { ResponseSanitizerInterceptor } from './shared/common/interceptors/response-sanitizer.interceptor';
 import { ThrottlerExceptionFilter } from './shared/common/filters/throttler-exception.filter';
 import { SocketIoAdapter } from './socket-io.adapter';
-import { createCorsOriginCallback } from './config/cors-origins';
+import { createCorsOriginCallback, logAllowedCorsOrigins, setRuntimeTenantCorsOrigins } from './config/cors-origins';
+import { PartnerTenantsService } from './panel/partner-tenants/partner-tenants.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -22,8 +23,7 @@ async function bootstrap() {
   if (typeof httpServer?.disable === 'function') {
     httpServer.disable('x-powered-by');
   }
-  app.useWebSocketAdapter(new SocketIoAdapter(app));
-  
+
   // Configurar cookie parser para SSO
   app.use(cookieParser());
 
@@ -37,6 +37,25 @@ async function bootstrap() {
   app.useGlobalFilters(new ThrottlerExceptionFilter());
   app.useGlobalInterceptors(new ResponseSanitizerInterceptor());
 
+  try {
+    const tenantOrigins = await app
+      .get(PartnerTenantsService)
+      .listActiveFrontendOrigins();
+    setRuntimeTenantCorsOrigins(tenantOrigins);
+    if (tenantOrigins.length > 0) {
+      console.log(
+        `[CORS] Dominios white-label activos (BD): ${tenantOrigins.join(', ')}`,
+      );
+    }
+  } catch (err) {
+    console.warn(
+      '[CORS] No se pudieron cargar orígenes de partner_tenants:',
+      err,
+    );
+  }
+  logAllowedCorsOrigins();
+
+  app.useWebSocketAdapter(new SocketIoAdapter(app));
 
   app.enableCors({
     origin: createCorsOriginCallback(),

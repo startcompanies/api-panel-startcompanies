@@ -15,6 +15,7 @@ import { PublicTenantDto } from './dtos/public-tenant.dto';
 import { PartnerTenantPanelDto } from './dtos/partner-tenant-panel.dto';
 import { UpdatePartnerTenantDto } from './dtos/update-partner-tenant.dto';
 import { UploadFileService } from '../../shared/upload-file/upload-file.service';
+import { setRuntimeTenantCorsOrigins } from '../../config/cors-origins';
 import { User } from '../../shared/user/entities/user.entity';
 import {
   DEFAULT_BRAND_PALETTE,
@@ -592,7 +593,23 @@ export class PartnerTenantsService {
 
     const saved = await this.tenantRepo.save(row);
     this.warnIfActiveWithoutWhatsapp(saved);
+    await this.refreshRuntimeCorsOrigins();
     return this.toPanelDto(saved);
+  }
+
+  private async refreshRuntimeCorsOrigins(): Promise<void> {
+    try {
+      const origins = await this.listActiveFrontendOrigins();
+      setRuntimeTenantCorsOrigins(origins);
+      this.logger.log(
+        `[CORS] Orígenes white-label actualizados: ${origins.join(', ') || '(ninguno)'}`,
+      );
+    } catch (err) {
+      this.logger.warn(
+        '[CORS] No se pudieron actualizar orígenes white-label',
+        err,
+      );
+    }
   }
 
   async uploadBrandAsset(
