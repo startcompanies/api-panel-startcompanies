@@ -214,13 +214,18 @@ export class PartnerTenantsService {
     if (raw == null || raw === '') {
       return null;
     }
-    const trimmed = raw.trim().replace(/\s/g, '');
-    if (!WHATSAPP_NUMBER_PATTERN.test(trimmed)) {
+    const trimmed = raw
+      .replace(/[\u200B-\u200D\uFEFF\u202A-\u202E\u2066-\u2069]/g, '')
+      .trim()
+      .replace(/[\s\-().]/g, '');
+    const digits = trimmed.replace(/\D/g, '');
+    const normalized = trimmed.startsWith('+') ? `+${digits}` : digits;
+    if (!WHATSAPP_NUMBER_PATTERN.test(normalized)) {
       throw new BadRequestException(
         'WhatsApp: solo dígitos y + opcional al inicio (7-15 dígitos)',
       );
     }
-    return trimmed;
+    return normalized;
   }
 
   private applyContactFields(
