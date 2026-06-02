@@ -139,6 +139,16 @@ export class RequestsController {
   @ApiQuery({ name: 'type', required: false, description: 'Filtrar por tipo de solicitud' })
   @ApiQuery({ name: 'clientId', required: false, description: 'Filtrar por ID de cliente' })
   @ApiQuery({ name: 'partnerId', required: false, description: 'Filtrar por ID de partner' })
+  @ApiQuery({
+    name: 'paymentStatus',
+    required: false,
+    description: 'Estado de pago: succeeded, pending, failed, none',
+  })
+  @ApiQuery({
+    name: 'channel',
+    required: false,
+    description: 'Origen: partner, wizard, lead, panel',
+  })
   @ApiQuery({ name: 'search', required: false, description: 'Búsqueda de texto' })
   @ApiQuery({ name: 'page', required: false, description: 'Número de página (default: 1)' })
   @ApiQuery({ name: 'limit', required: false, description: 'Límite de resultados por página (default: 10, max: 100)' })
@@ -150,6 +160,8 @@ export class RequestsController {
     @Query('type') type?: string,
     @Query('clientId') clientId?: string,
     @Query('partnerId') partnerId?: string,
+    @Query('paymentStatus') paymentStatus?: string,
+    @Query('channel') channel?: string,
     @Query('search') search?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
@@ -159,6 +171,8 @@ export class RequestsController {
     if (type) filters.type = type;
     if (clientId) filters.clientId = parseInt(clientId, 10);
     if (partnerId) filters.partnerId = parseInt(partnerId, 10);
+    if (paymentStatus) filters.paymentStatus = paymentStatus.trim();
+    if (channel) filters.channel = channel.trim();
     if (search) filters.search = search.trim();
 
     const pageNumber = page ? parseInt(page, 10) : 1;

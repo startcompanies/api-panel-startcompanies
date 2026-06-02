@@ -3004,6 +3004,8 @@ export class RequestsService {
       type?: string;
       clientId?: number;
       partnerId?: number;
+      paymentStatus?: string;
+      channel?: string;
       search?: string;
     },
     page: number = 1,
@@ -3028,6 +3030,38 @@ export class RequestsService {
     }
     if (filters?.partnerId) {
       queryBuilder.andWhere('request.partnerId = :partnerId', { partnerId: filters.partnerId });
+    }
+
+    if (filters?.paymentStatus) {
+      const ps = filters.paymentStatus.toLowerCase();
+      if (ps === 'none') {
+        queryBuilder.andWhere(
+          "(request.paymentStatus IS NULL OR TRIM(request.paymentStatus) = '')",
+        );
+      } else {
+        queryBuilder.andWhere('request.paymentStatus = :paymentStatus', {
+          paymentStatus: ps,
+        });
+      }
+    }
+
+    if (filters?.channel) {
+      const ch = filters.channel.toLowerCase();
+      if (ch === 'partner') {
+        queryBuilder.andWhere('request.partnerId IS NOT NULL');
+      } else if (ch === 'wizard') {
+        queryBuilder
+          .andWhere('request.partnerId IS NULL')
+          .andWhere("request.createdFrom = 'wizard'");
+      } else if (ch === 'lead') {
+        queryBuilder
+          .andWhere('request.partnerId IS NULL')
+          .andWhere("request.createdFrom = 'crm-lead'");
+      } else if (ch === 'panel') {
+        queryBuilder
+          .andWhere('request.partnerId IS NULL')
+          .andWhere("request.createdFrom = 'panel'");
+      }
     }
 
     // Aplicar búsqueda en nombre, email del cliente o partner
