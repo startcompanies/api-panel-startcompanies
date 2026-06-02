@@ -6,6 +6,7 @@ import * as express from 'express';
 import cookieParser from 'cookie-parser';
 
 import { ResponseSanitizerInterceptor } from './shared/common/interceptors/response-sanitizer.interceptor';
+import { ThrottlerExceptionFilter } from './shared/common/filters/throttler-exception.filter';
 import { SocketIoAdapter } from './socket-io.adapter';
 import { createCorsOriginCallback } from './config/cors-origins';
 
@@ -33,6 +34,7 @@ async function bootstrap() {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
+  app.useGlobalFilters(new ThrottlerExceptionFilter());
   app.useGlobalInterceptors(new ResponseSanitizerInterceptor());
 
 
