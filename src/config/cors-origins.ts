@@ -30,6 +30,13 @@ function pushOrigin(bucket: string[], raw: string | undefined | null): void {
   }
 }
 
+/** Orígenes de partner_tenants activos (se cargan al arrancar y tras guardar marca). */
+let runtimeTenantOrigins: string[] = [];
+
+export function setRuntimeTenantCorsOrigins(origins: string[]): void {
+  runtimeTenantOrigins = [...origins];
+}
+
 export function getAllowedOrigins(): string[] {
   const allowedOrigins: string[] = [];
 
@@ -70,15 +77,23 @@ export function getAllowedOrigins(): string[] {
     }
   }
 
+  for (const d of runtimeTenantOrigins) {
+    pushOrigin(allowedOrigins, d);
+  }
+
   return [...new Set(allowedOrigins)];
+}
+
+export function logAllowedCorsOrigins(context = 'CORS'): void {
+  console.log(`[${context}] Orígenes permitidos: ${getAllowedOrigins().join(', ')}`);
 }
 
 export function createCorsOriginCallback(): (
   origin: string | undefined,
   callback: (err: Error | null, allow?: boolean) => void,
 ) => void {
-  const allowedOrigins = new Set(getAllowedOrigins());
   return (origin, callback) => {
+    const allowedOrigins = new Set(getAllowedOrigins());
     if (!origin) {
       callback(null, true);
       return;
