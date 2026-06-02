@@ -124,7 +124,11 @@ export class AuthController {
     status: 200,
     description: 'Segundo factor requerido, sesión por dispositivo de confianza, o error genérico',
   })
-  @ApiResponse({ status: 401, description: 'Credenciales incorrectas' })
+  @ApiResponse({
+    status: 401,
+    description:
+      'Correo no registrado, contraseña incorrecta o cuenta inactiva (mensaje específico en `message`)',
+  })
   @ApiResponse({ status: 400, description: 'Cuerpo inválido' })
   @ApiResponse({
     status: 429,

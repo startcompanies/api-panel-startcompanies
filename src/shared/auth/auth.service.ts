@@ -25,7 +25,12 @@ import { LOGIN_TRUST_MAX_AGE_MS } from './constants/login-trust.constants';
 import * as crypto from 'crypto';
 import { jwtConstants } from 'src/shared/common/constants/jwtConstants';
 import { normalizeAuthEmail } from 'src/shared/common/utils/normalize-auth-email';
-import { PANEL_LOGIN_FAILED_MESSAGE } from './constants/auth-login.constants';
+import {
+  PANEL_CHANGE_PASSWORD_INCORRECT_MESSAGE,
+  PANEL_LOGIN_ACCOUNT_INACTIVE_MESSAGE,
+  PANEL_LOGIN_EMAIL_NOT_FOUND_MESSAGE,
+  PANEL_LOGIN_PASSWORD_INCORRECT_MESSAGE,
+} from './constants/auth-login.constants';
 import { TenantAccessService } from '../../panel/partner-tenants/tenant-access.service';
 import { EmailTenantBrandingService } from '../../panel/partner-tenants/email-tenant-branding.service';
 import { AccountTeamService } from '../../panel/account-team/account-team.service';
@@ -73,7 +78,9 @@ export class authService {
       if (e instanceof ForbiddenException) {
         throw e;
       }
-      throw new ForbiddenException(PANEL_LOGIN_FAILED_MESSAGE);
+      throw new ForbiddenException(
+        'No tienes permiso para acceder desde este dominio.',
+      );
     }
   }
 
@@ -292,17 +299,17 @@ export class authService {
     });
 
     if (!user) {
-      throw new UnauthorizedException(PANEL_LOGIN_FAILED_MESSAGE);
+      throw new UnauthorizedException(PANEL_LOGIN_EMAIL_NOT_FOUND_MESSAGE);
     }
 
     if (!user.status) {
-      throw new UnauthorizedException(PANEL_LOGIN_FAILED_MESSAGE);
+      throw new UnauthorizedException(PANEL_LOGIN_ACCOUNT_INACTIVE_MESSAGE);
     }
 
     const isMatch = await comparePasswords(password, user.password ?? '');
 
     if (!isMatch) {
-      throw new UnauthorizedException(PANEL_LOGIN_FAILED_MESSAGE);
+      throw new UnauthorizedException(PANEL_LOGIN_PASSWORD_INCORRECT_MESSAGE);
     }
 
     await this.enforceTenantAccess(user, tenantHost);
@@ -489,13 +496,13 @@ export class authService {
     });
 
     if (!user) {
-      throw new UnauthorizedException(PANEL_LOGIN_FAILED_MESSAGE);
+      throw new UnauthorizedException(PANEL_LOGIN_EMAIL_NOT_FOUND_MESSAGE);
     }
 
     const isMatch = await comparePasswords(oldPassword, user.password ?? '');
 
     if (!isMatch) {
-      throw new UnauthorizedException(PANEL_LOGIN_FAILED_MESSAGE);
+      throw new UnauthorizedException(PANEL_CHANGE_PASSWORD_INCORRECT_MESSAGE);
     }
 
     const hashedNewPassword = encodePassword(newPassword);
