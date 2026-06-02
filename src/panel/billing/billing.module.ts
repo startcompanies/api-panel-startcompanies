@@ -6,9 +6,15 @@ import { BillingController } from './billing.controller';
 import { BillingService } from './billing.service';
 import { StripeWebhookEvent } from './entities/stripe-webhook-event.entity';
 import { PricingPlan } from '../pricing/entities/pricing-plan.entity';
+import { AccountTeamModule } from '../account-team/account-team.module';
+import { Client } from '../clients/entities/client.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([User, StripeWebhookEvent, PricingPlan]), PaymentsModule],
+  imports: [
+    TypeOrmModule.forFeature([User, StripeWebhookEvent, PricingPlan, Client]),
+    PaymentsModule,
+    AccountTeamModule,
+  ],
   controllers: [BillingController],
   providers: [BillingService],
   exports: [BillingService],

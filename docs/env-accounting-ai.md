@@ -1,23 +1,18 @@
-# Variables de entorno — credenciales IA por usuario (contabilidad)
+# Variables de entorno — Gemini (contabilidad)
 
-## Obligatoria para guardar API keys de usuarios
+Las claves de IA **no** se guardan en base de datos. El servidor elige la clave según el tipo de cliente:
 
-```bash
-# 32 bytes en base64 (AES-256). Generar una vez por entorno:
-node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-USER_SECRETS_ENCRYPTION_KEY=<pegar_salida>
-```
+| Variable | Uso |
+|----------|-----|
+| `GEMINI_API_KEY_PLATFORM` | Clientes del portal Start Companies (sin `partnerId`) |
+| `GEMINI_API_KEY_TENANT` | Clientes de partners con portal en dominio del tenant |
+| `GEMINI_MODEL` | Opcional (default `gemini-2.0-flash`) |
+| `AI_BULK_MAX_PER_REQUEST` | Opcional (default `20`) |
 
-Si falta o no decodifica a exactamente 32 bytes, `PUT /panel/settings/ai-credentials` responderá error y no persistirá la clave.
+## Endpoint de estado
 
-## Opcionales (modelos y tope de lote)
+`GET /panel/settings/ai-credentials` devuelve `{ provider: 'gemini', configured: boolean, scope: 'platform' | 'tenant' }` sin secretos.
 
-```bash
-ANTHROPIC_MODEL=claude-3-5-haiku-20241022
-OPENAI_MODEL=gpt-4o-mini
-AI_BULK_MAX_PER_REQUEST=20
-```
+## Plan
 
-## Rotación de `USER_SECRETS_ENCRYPTION_KEY`
-
-Cambiar la clave maestra invalida todas las credenciales cifradas existentes hasta que cada usuario vuelva a guardar su API key (operación manual o script de re-cifrado no incluido en v1).
+La feature `accountingAi` del plan del cliente debe estar activa; si no, la IA no se usa aunque existan las variables `.env`.

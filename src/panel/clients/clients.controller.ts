@@ -127,6 +127,29 @@ export class ClientsController {
     return this.clientsService.convertClientToPartner(id, body);
   }
 
+  @Post(':id/invite-portal')
+  @UseGuards(RolesGuard)
+  @Roles('partner', 'admin')
+  @ApiOperation({
+    summary: 'Invitar cliente al portal',
+    description:
+      'Crea o enlaza un usuario tipo client, asocia clients.user_id y envía email para establecer contraseña. URL y marca según partner_tenants.',
+  })
+  @ApiParam({ name: 'id', description: 'ID del cliente (tabla clients)' })
+  @ApiResponse({ status: 200, description: 'Invitación enviada' })
+  inviteClientToPortal(@Param('id', ParseIntPipe) id: number, @Request() req) {
+    const partnerScopeId =
+      req.user.type === 'partner' ? req.user.id : undefined;
+    const tenantHost =
+      typeof req.headers['x-tenant-host'] === 'string'
+        ? req.headers['x-tenant-host']
+        : undefined;
+    return this.clientsService.inviteClientToPortal(id, {
+      partnerScopeId,
+      tenantHost,
+    });
+  }
+
   @Post('by-uuid')
   @ApiOperation({
     summary: 'Obtener un cliente por UUID',

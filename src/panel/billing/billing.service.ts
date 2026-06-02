@@ -7,6 +7,11 @@ import { StripeService } from '../../shared/payments/stripe.service';
 import { User } from '../../shared/user/entities/user.entity';
 import { StripeWebhookEvent } from './entities/stripe-webhook-event.entity';
 import { PricingPlan } from '../pricing/entities/pricing-plan.entity';
+import { Client } from '../clients/entities/client.entity';
+import {
+  PARTNER_CLIENT_ACCESS_UNTIL,
+  PARTNER_CLIENT_PLATFORM_FEATURES,
+} from './partner-client-access.constants';
 
 type BillingAccessState =
   | 'trial_active'
@@ -33,8 +38,66 @@ export class BillingService {
     private readonly webhookEventsRepo: Repository<StripeWebhookEvent>,
     @InjectRepository(PricingPlan)
     private readonly pricingPlansRepo: Repository<PricingPlan>,
+    @InjectRepository(Client)
+    private readonly clientsRepo: Repository<Client>,
     private readonly stripeService: StripeService,
   ) {}
+
+  private async isPartnerPortalClient(userId: number): Promise<boolean> {
+    const row = await this.clientsRepo.findOne({
+      where: { userId },
+      select: ['id', 'partnerId'],
+    });
+    return row?.partnerId != null;
+  }
+
+  /**
+   * Clientes white-label del partner: acceso al panel sin trial ni suscripción Stripe.
+   */
+  async ensurePartnerClientAccess(user: User): Promise<User> {
+    if (user.type !== 'client') {
+      return user;
+    }
+    const isPartnerClient = await this.isPartnerPortalClient(user.id);
+    if (!isPartnerClient) {
+      return user;
+    }
+
+    let dirty = false;
+    if (user.billingSubscriptionStatus !== 'active') {
+      user.billingSubscriptionStatus = 'active';
+      dirty = true;
+    }
+    if (user.billingAccessState !== 'subscription_active') {
+      user.billingAccessState = 'subscription_active';
+      dirty = true;
+    }
+    if (user.billingTrialStartAt) {
+      user.billingTrialStartAt = null;
+      dirty = true;
+    }
+    if (user.billingTrialEndAt) {
+      user.billingTrialEndAt = null;
+      dirty = true;
+    }
+    if (
+      !user.platformAccessEndsAt ||
+      user.platformAccessEndsAt.getTime() < Date.now()
+    ) {
+      user.platformAccessEndsAt = PARTNER_CLIENT_ACCESS_UNTIL;
+      dirty = true;
+    }
+    if (!user.platformFeatures) {
+      user.platformFeatures = { ...PARTNER_CLIENT_PLATFORM_FEATURES };
+      dirty = true;
+    }
+    if (!user.platformPlanCode) {
+      user.platformPlanCode = 'partner-portal';
+      dirty = true;
+    }
+
+    return dirty ? this.usersRepo.save(user) : user;
+  }
 
   private get stripeClient(): Stripe {
     const client = this.stripeService.getClient();
@@ -119,10 +182,13 @@ export class BillingService {
     return null;
   }
 
-  private deriveAccessState(user: User): BillingAccessState {
+  private deriveAccessState(user: User, partnerPortalClient = false): BillingAccessState {
     if (user.type !== 'client') {
       // El trial comercial solo aplica a clientes finales.
       // Staff/admin/partners mantienen acceso al panel sin depender de suscripción.
+      return 'subscription_active';
+    }
+    if (partnerPortalClient) {
       return 'subscription_active';
     }
     const s = (user.billingSubscriptionStatus || '').toLowerCase();
@@ -196,6 +262,9 @@ export class BillingService {
       user.billingAccessState = this.deriveAccessState(user);
       return this.usersRepo.save(user);
     }
+    if (await this.isPartnerPortalClient(user.id)) {
+      return this.ensurePartnerClientAccess(user);
+    }
     if (user.billingTrialStartAt && user.billingTrialEndAt) return user;
     const trialMonths = this.isExistingAccount(user.createdAt) ? this.trialMonthsExisting : this.trialMonthsNew;
     user.billingTrialStartAt = user.createdAt;
@@ -211,16 +280,26 @@ export class BillingService {
       throw new BadRequestException('Usuario no encontrado');
     }
     let hydrated = await this.ensureTrialWindow(user);
-    hydrated = await this.reconcileBillingFromStripe(hydrated);
-    const accessState = this.deriveAccessState(hydrated);
+    const partnerPortalClient = await this.isPartnerPortalClient(hydrated.id);
+    if (!partnerPortalClient) {
+      hydrated = await this.reconcileBillingFromStripe(hydrated);
+    }
+    const accessState = this.deriveAccessState(hydrated, partnerPortalClient);
+    if (partnerPortalClient) {
+      hydrated.billingAccessState = accessState;
+    }
     const canAccessPanel = accessState === 'trial_active' || accessState === 'subscription_active';
     const daysPastDue = this.computeDaysPastDue(accessState, hydrated);
     const trialEndAt =
-      hydrated.type === 'client' && hydrated.billingTrialEndAt
+      !partnerPortalClient &&
+      hydrated.type === 'client' &&
+      hydrated.billingTrialEndAt
         ? hydrated.billingTrialEndAt.toISOString()
         : null;
     const trialStartAt =
-      hydrated.type === 'client' && hydrated.billingTrialStartAt
+      !partnerPortalClient &&
+      hydrated.type === 'client' &&
+      hydrated.billingTrialStartAt
         ? hydrated.billingTrialStartAt.toISOString()
         : null;
     return {

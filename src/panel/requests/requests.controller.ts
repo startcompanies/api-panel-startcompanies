@@ -11,6 +11,7 @@ import {
   Req,
   UseGuards,
   BadRequestException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { RequestsService } from './requests.service';
@@ -86,10 +87,16 @@ export class RequestsController {
   @ApiResponse({ status: 200, description: 'Lista de solicitudes del usuario' })
   @ApiResponse({ status: 401, description: 'No autorizado' })
   findMyRequests(@Req() req: any, @Query('role') role?: 'client' | 'partner') {
-    const user = req.user; // asume AuthGuard que inyecta user
+    const user = req.user;
     const effectiveRole =
       (role as 'client' | 'partner') || (user?.type ?? 'client');
-    return this.requestsService.findAllByUser(user.id, effectiveRole);
+    const ownerId = user.accountOwnerId ?? user.id;
+    if (user.permissions && user.isAccountOwner === false) {
+      if (!user.permissions.operationsRequests) {
+        throw new ForbiddenException('No tienes permiso para ver solicitudes');
+      }
+    }
+    return this.requestsService.findAllByUser(ownerId, effectiveRole);
   }
 
   @Get('service-history')

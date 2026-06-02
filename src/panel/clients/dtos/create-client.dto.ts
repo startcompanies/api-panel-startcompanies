@@ -85,5 +85,15 @@ export class CreateClientDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @ApiProperty({
+    required: false,
+    default: false,
+    description:
+      'Si true y el cliente pertenece a un partner, crea usuario portal y envía invitación por email',
+  })
+  @IsOptional()
+  @IsBoolean()
+  inviteToPortal?: boolean;
 }
 

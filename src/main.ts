@@ -6,6 +6,7 @@ import * as express from 'express';
 import cookieParser from 'cookie-parser';
 
 import { ResponseSanitizerInterceptor } from './shared/common/interceptors/response-sanitizer.interceptor';
+import { ThrottlerExceptionFilter } from './shared/common/filters/throttler-exception.filter';
 import { SocketIoAdapter } from './socket-io.adapter';
 import { createCorsOriginCallback } from './config/cors-origins';
 
@@ -33,13 +34,21 @@ async function bootstrap() {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
+  app.useGlobalFilters(new ThrottlerExceptionFilter());
   app.useGlobalInterceptors(new ResponseSanitizerInterceptor());
 
 
   app.enableCors({
     origin: createCorsOriginCallback(),
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'Accept',
+      'Origin',
+      'X-Requested-With',
+      'X-Tenant-Host',
+    ],
     exposedHeaders: ['Content-Type', 'Authorization', 'X-Session-Refresh'],
     credentials: true,
     preflightContinue: false,

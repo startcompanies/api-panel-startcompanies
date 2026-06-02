@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import type { CanonicalTx } from './accounting-canonical.types';
 import type { AccountCatalog } from './entities/account-catalog.entity';
 import type { UserClassificationRule } from './entities/user-classification-rule.entity';
-import { AccountingAiSuggestService, type AiSuggestSource } from './accounting-ai-suggest.service';
+import { AccountingAiSuggestService } from './accounting-ai-suggest.service';
 
 export type ClassificationLayerSource = 'exact' | 'fuzzy' | 'ai';
 
@@ -351,7 +351,6 @@ export class AccountingClassificationService {
   async classifyWithAi(
     tx: CanonicalTx,
     catalog: AccountCatalog[],
-    provider: AiSuggestSource,
     apiKey: string,
   ): Promise<LayerClassificationResult | null> {
     const allowedList = catalog.filter((r) => r.active);
@@ -362,7 +361,6 @@ export class AccountingClassificationService {
       tx.description || '',
       allowedList.map((r) => r.code.toUpperCase()),
       labels,
-      provider,
       apiKey,
       {
         amountUsd: tx.amount,
@@ -402,7 +400,7 @@ export class AccountingClassificationService {
     tx: CanonicalTx;
     catalog: AccountCatalog[];
     userRules: UserClassificationRule[];
-    ai?: { provider: AiSuggestSource; apiKey: string } | null;
+    ai?: { apiKey: string } | null;
   }): Promise<LayerClassificationResult> {
     const det = this.classifyDeterministic(params.tx, params.catalog, params.userRules);
 
@@ -414,12 +412,7 @@ export class AccountingClassificationService {
     }
 
     if (params.ai) {
-      const aiRes = await this.classifyWithAi(
-        params.tx,
-        params.catalog,
-        params.ai.provider,
-        params.ai.apiKey,
-      );
+      const aiRes = await this.classifyWithAi(params.tx, params.catalog, params.ai.apiKey);
       if (aiRes?.aiErrorStatus) {
         return aiRes;
       }

@@ -11,10 +11,14 @@ import { InvoiceEvent } from './entities/invoice-event.entity';
 import { InvoiceItem } from './entities/invoice-item.entity';
 import { InvoicePayment } from './entities/invoice-payment.entity';
 import { InvoiceBillingClient } from './entities/invoice-billing-client.entity';
+import { PartnerTenantsModule } from '../partner-tenants/partner-tenants.module';
+import { Client } from '../clients/entities/client.entity';
+import { User } from '../../shared/user/entities/user.entity';
 
 @Module({
   imports: [
     CommonModule,
+    PartnerTenantsModule,
     TypeOrmModule.forFeature([
       Invoice,
       InvoiceItem,
@@ -22,6 +26,8 @@ import { InvoiceBillingClient } from './entities/invoice-billing-client.entity';
       InvoiceEvent,
       ClientCompanyProfile,
       InvoiceBillingClient,
+      Client,
+      User,
     ]),
   ],
   controllers: [InvoicingController],

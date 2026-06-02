@@ -1,11 +1,17 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { BillingService } from '../billing/billing.service';
 import { User } from '../../shared/user/entities/user.entity';
 import { ContentAccessLog } from './entities/content-access-log.entity';
 import { LlcGuide } from './entities/llc-guide.entity';
 import { PremiumVideo } from './entities/premium-video.entity';
+import { TenantAccessService } from '../partner-tenants/tenant-access.service';
+import {
+  normalizeContentVisibility,
+  visibilitiesForTenantKind,
+  type ContentVisibility,
+} from './content-visibility';
 
 @Injectable()
 export class MediaService {
@@ -17,11 +23,11 @@ export class MediaService {
     @InjectRepository(ContentAccessLog)
     private readonly logsRepo: Repository<ContentAccessLog>,
     private readonly billingService: BillingService,
+    private readonly tenantAccess: TenantAccessService,
   ) {}
 
   /**
    * Mismo criterio que el acceso al panel: trial activo o suscripción activa.
-   * No se aplica un “premium” por sección aparte del billing global.
    */
   async assertClientMediaAccess(user: User) {
     if (user.type !== 'client') {
@@ -35,33 +41,93 @@ export class MediaService {
     }
   }
 
-  async listVideos(user: User) {
-    await this.assertClientMediaAccess(user);
-    return this.videosRepo.find({ where: { isPublished: true }, order: { createdAt: 'DESC' } });
+  private async tenantKindFromHost(
+    tenantHost?: string,
+  ): Promise<'platform' | 'partner'> {
+    try {
+      const tenant = await this.tenantAccess.resolveForAuth(tenantHost);
+      return tenant.kind;
+    } catch {
+      return 'platform';
+    }
   }
 
-  async listGuides(user: User) {
-    await this.assertClientMediaAccess(user);
-    return this.guidesRepo.find({ where: { isPublished: true }, order: { createdAt: 'DESC' } });
+  private async publishedVisibilityFilter(
+    tenantHost?: string,
+  ): Promise<{ visibility: ReturnType<typeof In> }> {
+    const kind = await this.tenantKindFromHost(tenantHost);
+    const allowed = visibilitiesForTenantKind(kind);
+    return { visibility: In(allowed) };
   }
 
-  async getVideoDetail(id: number, user: User) {
+  async listVideos(user: User, tenantHost?: string) {
     await this.assertClientMediaAccess(user);
-    await this.logsRepo.save(this.logsRepo.create({ userId: user.id, contentType: 'video', contentId: id }));
-    return this.videosRepo.findOne({ where: { id, isPublished: true } });
+    return this.videosRepo.find({
+      where: { isPublished: true, ...(await this.publishedVisibilityFilter(tenantHost)) },
+      order: { createdAt: 'DESC' },
+    });
   }
 
-  async getGuideDetail(id: number, user: User) {
+  async listGuides(user: User, tenantHost?: string) {
     await this.assertClientMediaAccess(user);
-    await this.logsRepo.save(this.logsRepo.create({ userId: user.id, contentType: 'guide', contentId: id }));
-    return this.guidesRepo.findOne({ where: { id, isPublished: true } });
+    return this.guidesRepo.find({
+      where: { isPublished: true, ...(await this.publishedVisibilityFilter(tenantHost)) },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  async getVideoDetail(id: number, user: User, tenantHost?: string) {
+    await this.assertClientMediaAccess(user);
+    const kind = await this.tenantKindFromHost(tenantHost);
+    const allowed = visibilitiesForTenantKind(kind);
+    const video = await this.videosRepo.findOne({
+      where: {
+        id,
+        isPublished: true,
+        visibility: In(allowed),
+      },
+    });
+    if (!video) {
+      return null;
+    }
+    await this.logsRepo.save(
+      this.logsRepo.create({ userId: user.id, contentType: 'video', contentId: id }),
+    );
+    return video;
+  }
+
+  async getGuideDetail(id: number, user: User, tenantHost?: string) {
+    await this.assertClientMediaAccess(user);
+    const kind = await this.tenantKindFromHost(tenantHost);
+    const allowed = visibilitiesForTenantKind(kind);
+    const guide = await this.guidesRepo.findOne({
+      where: {
+        id,
+        isPublished: true,
+        visibility: In(allowed),
+      },
+    });
+    if (!guide) {
+      return null;
+    }
+    await this.logsRepo.save(
+      this.logsRepo.create({ userId: user.id, contentType: 'guide', contentId: id }),
+    );
+    return guide;
   }
 
   adminListVideos() {
     return this.videosRepo.find({ order: { createdAt: 'DESC' } });
   }
 
-  adminCreateVideo(body: { title: string; description: string; videoUrl: string; thumbnailUrl?: string | null; isPublished?: boolean }) {
+  adminCreateVideo(body: {
+    title: string;
+    description: string;
+    videoUrl: string;
+    thumbnailUrl?: string | null;
+    isPublished?: boolean;
+    visibility?: ContentVisibility;
+  }) {
     return this.videosRepo.save(
       this.videosRepo.create({
         title: body.title.trim(),
@@ -69,13 +135,21 @@ export class MediaService {
         videoUrl: body.videoUrl.trim(),
         thumbnailUrl: body.thumbnailUrl ?? null,
         isPublished: body.isPublished ?? true,
+        visibility: normalizeContentVisibility(body.visibility),
       }),
     );
   }
 
   async adminUpdateVideo(
     id: number,
-    body: { title?: string; description?: string; videoUrl?: string; thumbnailUrl?: string | null; isPublished?: boolean },
+    body: {
+      title?: string;
+      description?: string;
+      videoUrl?: string;
+      thumbnailUrl?: string | null;
+      isPublished?: boolean;
+      visibility?: ContentVisibility;
+    },
   ) {
     await this.videosRepo.update(
       { id },
@@ -85,6 +159,9 @@ export class MediaService {
         ...(body.videoUrl !== undefined ? { videoUrl: body.videoUrl.trim() } : {}),
         ...(body.thumbnailUrl !== undefined ? { thumbnailUrl: body.thumbnailUrl } : {}),
         ...(body.isPublished !== undefined ? { isPublished: body.isPublished } : {}),
+        ...(body.visibility !== undefined
+          ? { visibility: normalizeContentVisibility(body.visibility) }
+          : {}),
       },
     );
     return this.videosRepo.findOne({ where: { id } });
@@ -107,6 +184,7 @@ export class MediaService {
     attachmentMime?: string | null;
     thumbnailUrl?: string | null;
     isPublished?: boolean;
+    visibility?: ContentVisibility;
   }) {
     return this.guidesRepo.save(
       this.guidesRepo.create({
@@ -117,6 +195,7 @@ export class MediaService {
         attachmentMime: body.attachmentMime ?? null,
         thumbnailUrl: body.thumbnailUrl ?? null,
         isPublished: body.isPublished ?? true,
+        visibility: normalizeContentVisibility(body.visibility),
       }),
     );
   }
@@ -131,6 +210,7 @@ export class MediaService {
       attachmentMime?: string | null;
       thumbnailUrl?: string | null;
       isPublished?: boolean;
+      visibility?: ContentVisibility;
     },
   ) {
     await this.guidesRepo.update(
@@ -143,6 +223,9 @@ export class MediaService {
         ...(body.attachmentMime !== undefined ? { attachmentMime: body.attachmentMime } : {}),
         ...(body.thumbnailUrl !== undefined ? { thumbnailUrl: body.thumbnailUrl } : {}),
         ...(body.isPublished !== undefined ? { isPublished: body.isPublished } : {}),
+        ...(body.visibility !== undefined
+          ? { visibility: normalizeContentVisibility(body.visibility) }
+          : {}),
       },
     );
     return this.guidesRepo.findOne({ where: { id } });
@@ -153,4 +236,3 @@ export class MediaService {
     return { ok: true };
   }
 }
-

@@ -22,6 +22,11 @@ const PAGE_W = 595;
 const MARGIN = 40;
 const CONTENT_W = PAGE_W - MARGIN * 2;
 
+export type InvoicePdfBranding = {
+  brandName: string;
+  brandSiteLabel: string;
+};
+
 @Injectable()
 export class InvoicePdfService {
   private readonly logger = new Logger(InvoicePdfService.name);
@@ -29,6 +34,7 @@ export class InvoicePdfService {
   async buildInvoicePdf(
     invoice: Invoice & { items?: InvoiceItem[] },
     company: ClientCompanyProfile | null,
+    branding?: InvoicePdfBranding,
   ): Promise<Buffer> {
     const items = invoice.items ?? [];
     const logoBuf = await this.fetchLogoBuffer(company?.logoUrl);
@@ -405,11 +411,13 @@ export class InvoicePdfService {
       doc.fillColor(NAVY).rect(0, footerY, PAGE_W, footerH).fill();
       doc.fillColor(BLUE_MID).rect(0, footerY, PAGE_W, 3).fill();
       doc.restore();
+      const brandName = branding?.brandName?.trim() || 'Start Companies';
+      const brandSite = branding?.brandSiteLabel?.trim() || 'startcompanies.io';
       doc
         .fillColor(HEADER_ACCENT_TEXT)
         .font('Helvetica')
         .fontSize(9)
-        .text('Powered by Start Companies · startcompanies.io', 0, footerY + 13, {
+        .text(`Documento emitido por ${brandName} · ${brandSite}`, 0, footerY + 13, {
           width: PAGE_W,
           align: 'center',
         });

@@ -19,7 +19,6 @@ import { Member } from './panel/requests/entities/member.entity';
 // Document ya no se usa - URLs se guardan directamente en campos de request
 import { Notification } from './panel/notifications/entities/notification.entity';
 import { UserPreferences } from './panel/settings/entities/user-preferences.entity';
-import { UserAiCredential } from './panel/settings/entities/user-ai-credential.entity';
 import { ClientCompanyProfile } from './panel/settings/entities/client-company-profile.entity';
 import { ProcessConfig } from './panel/settings/entities/process-config.entity';
 import { Client } from './panel/clients/entities/client.entity';
@@ -52,6 +51,7 @@ import { PricingPlanFeature } from './panel/pricing/entities/pricing-plan-featur
 import { PricingRenewal } from './panel/pricing/entities/pricing-renewal.entity';
 import { PricingOverride } from './panel/pricing/entities/pricing-override.entity';
 import { PricingMisc } from './panel/pricing/entities/pricing-misc.entity';
+import { PartnerTenant } from './panel/partner-tenants/entities/partner-tenant.entity';
 
 // Validar que existan las variables de entorno requeridas
 const requiredEnvVars = ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'];
@@ -86,7 +86,6 @@ export const dataSourceOptions: DataSourceOptions = {
     ZohoConfig,
     StripeWebhookEvent,
     ClientCompanyProfile,
-    UserAiCredential,
     Invoice,
     InvoiceItem,
     InvoicePayment,
@@ -113,6 +112,7 @@ export const dataSourceOptions: DataSourceOptions = {
     PricingRenewal,
     PricingOverride,
     PricingMisc,
+    PartnerTenant,
   ],
   migrations: [
     // Compiladas junto a src → dist/src/migrations (npm run migration:run / migration:run:prod)

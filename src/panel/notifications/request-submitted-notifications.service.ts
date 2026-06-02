@@ -7,6 +7,7 @@ import { Request as RequestEntity } from '../requests/entities/request.entity';
 import { NotificationsService } from './notifications.service';
 import { EmailService } from '../../shared/common/services/email.service';
 import { SettingsService } from '../settings/settings.service';
+import { EmailTenantBrandingService } from '../partner-tenants/email-tenant-branding.service';
 
 const TYPE_LABELS: Record<string, string> = {
   'apertura-llc': 'Apertura LLC',
@@ -33,6 +34,7 @@ export class RequestSubmittedNotificationsService {
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
     private readonly settingsService: SettingsService,
+    private readonly emailTenantBranding: EmailTenantBrandingService,
   ) {}
 
   /**
@@ -139,12 +141,16 @@ export class RequestSubmittedNotificationsService {
               actorUser.username ||
               actorUser.email;
             try {
+              const branding = await this.emailTenantBranding.resolveForUser(
+                actorUser as User,
+              );
               await this.emailService.sendPanelRequestSubmittedToActor({
                 email: actorUser.email,
                 displayName,
                 requestId: request.id,
                 requestType: request.type,
                 actorType: t,
+                branding,
               });
             } catch (emailErr) {
               this.logger.error(

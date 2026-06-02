@@ -26,6 +26,9 @@ export class LlcGuide {
   @Column({ name: 'is_published', type: 'boolean', default: true })
   isPublished: boolean;
 
+  @Column({ type: 'varchar', length: 20, default: 'startcompanies' })
+  visibility: string;
+
   @CreateDateColumn({
     name: 'created_at',
     type: 'timestamp with time zone',

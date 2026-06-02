@@ -16,6 +16,10 @@ import { EmailService } from '../../shared/common/services/email.service';
 import { InvoiceBillingClient } from './entities/invoice-billing-client.entity';
 import { CreateBillingClientDto } from './dtos/create-billing-client.dto';
 import { UpdateBillingClientDto } from './dtos/update-billing-client.dto';
+import { PartnerTenantsService } from '../partner-tenants/partner-tenants.service';
+import { Client } from '../clients/entities/client.entity';
+import { User } from '../../shared/user/entities/user.entity';
+import type { InvoicePdfBranding } from './invoice-pdf.service';
 
 export type InvoiceLineInput = {
   productName?: string;
@@ -43,7 +47,71 @@ export class InvoicingService {
     private readonly billingClientsRepo: Repository<InvoiceBillingClient>,
     private readonly invoicePdfService: InvoicePdfService,
     private readonly emailService: EmailService,
+    private readonly partnerTenantsService: PartnerTenantsService,
+    @InjectRepository(Client)
+    private readonly clientsRepo: Repository<Client>,
+    @InjectRepository(User)
+    private readonly usersRepo: Repository<User>,
   ) {}
+
+  private async resolveInvoicePdfBranding(userId: number): Promise<InvoicePdfBranding> {
+    const fallbackName = 'Start Companies';
+    const fallbackSite = 'startcompanies.io';
+
+    const user = await this.usersRepo.findOne({
+      where: { id: userId },
+      select: ['id', 'type'],
+    });
+    if (!user) {
+      return { brandName: fallbackName, brandSiteLabel: fallbackSite };
+    }
+
+    let partnerId: number | null = null;
+    if (user.type === 'partner') {
+      partnerId = user.id;
+    } else {
+      const client = await this.clientsRepo.findOne({
+        where: { userId },
+        select: ['partnerId'],
+      });
+      partnerId = client?.partnerId ?? null;
+    }
+
+    if (partnerId == null) {
+      return { brandName: fallbackName, brandSiteLabel: fallbackSite };
+    }
+
+    try {
+      const tenant = await this.partnerTenantsService.resolveByPartnerId(partnerId);
+      if (tenant.kind !== 'partner') {
+        return { brandName: fallbackName, brandSiteLabel: fallbackSite };
+      }
+      const brandName = tenant.displayName?.trim() || fallbackName;
+      const website = tenant.websiteUrl?.trim();
+      if (website) {
+        try {
+          const host = new URL(
+            website.startsWith('http') ? website : `https://${website}`,
+          ).host;
+          return { brandName, brandSiteLabel: host || fallbackSite };
+        } catch {
+          return { brandName, brandSiteLabel: website.replace(/^https?:\/\//, '') };
+        }
+      }
+      const domain = tenant.customDomain?.trim().replace(/^https?:\/\//, '');
+      if (domain) {
+        return { brandName, brandSiteLabel: domain };
+      }
+      try {
+        const host = new URL(tenant.frontendBaseUrl).host;
+        return { brandName, brandSiteLabel: host || fallbackSite };
+      } catch {
+        return { brandName, brandSiteLabel: fallbackSite };
+      }
+    } catch {
+      return { brandName: fallbackName, brandSiteLabel: fallbackSite };
+    }
+  }
 
   private lineTotal(qty: number, unitPrice: number, discountPercent: number): number {
     const base = Number(qty) * Number(unitPrice);
@@ -412,7 +480,8 @@ export class InvoicingService {
       throw new BadRequestException('Añade el correo del cliente en «Facturar a» para enviar la factura.');
     }
     const company = await this.companyRepo.findOne({ where: { userId } });
-    const pdfBuffer = await this.invoicePdfService.buildInvoicePdf(inv, company);
+    const branding = await this.resolveInvoicePdfBranding(userId);
+    const pdfBuffer = await this.invoicePdfService.buildInvoicePdf(inv, company, branding);
     const replyTo = company?.billingEmail?.trim() || undefined;
     await this.emailService.sendInvoiceToClient({
       to,
@@ -425,6 +494,7 @@ export class InvoicingService {
       issuerLegalName: company?.legalName ?? null,
       issuerLogoUrl: company?.logoUrl ?? null,
       issuerEmail: company?.billingEmail ?? null,
+      platformDisplayName: branding.brandName,
     });
     inv.sentAt = new Date();
     await this.invoicesRepo.save(inv);
@@ -435,7 +505,8 @@ export class InvoicingService {
   async getPdfBuffer(id: number, userId: number): Promise<Buffer> {
     const invoice = await this.assertInvoiceOwner(id, userId);
     const company = await this.companyRepo.findOne({ where: { userId } });
-    return this.invoicePdfService.buildInvoicePdf(invoice, company);
+    const branding = await this.resolveInvoicePdfBranding(userId);
+    return this.invoicePdfService.buildInvoicePdf(invoice, company, branding);
   }
 
   /** Clientes de facturación (Bill-to reutilizables). */

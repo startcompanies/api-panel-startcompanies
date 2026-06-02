@@ -1,6 +1,8 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { SignUpDto } from './dtos/signup.dto';
@@ -23,7 +25,15 @@ import { LOGIN_TRUST_MAX_AGE_MS } from './constants/login-trust.constants';
 import * as crypto from 'crypto';
 import { jwtConstants } from 'src/shared/common/constants/jwtConstants';
 import { normalizeAuthEmail } from 'src/shared/common/utils/normalize-auth-email';
-import { PANEL_LOGIN_FAILED_MESSAGE } from './constants/auth-login.constants';
+import {
+  PANEL_CHANGE_PASSWORD_INCORRECT_MESSAGE,
+  PANEL_LOGIN_ACCOUNT_INACTIVE_MESSAGE,
+  PANEL_LOGIN_EMAIL_NOT_FOUND_MESSAGE,
+  PANEL_LOGIN_PASSWORD_INCORRECT_MESSAGE,
+} from './constants/auth-login.constants';
+import { TenantAccessService } from '../../panel/partner-tenants/tenant-access.service';
+import { EmailTenantBrandingService } from '../../panel/partner-tenants/email-tenant-branding.service';
+import { AccountTeamService } from '../../panel/account-team/account-team.service';
 
 export interface LoginTrustRequestContext {
   deviceCookie?: string;
@@ -35,8 +45,13 @@ const OTP_TTL_MS = 10 * 60 * 1000;
 const MAX_OTP_ATTEMPTS = 5;
 const MAX_OTP_RESENDS = 5;
 
+const isAuthDevMode =
+  process.env.MODE === 'DEV' || process.env.NODE_ENV === 'development';
+
 @Injectable()
 export class authService {
+  private readonly logger = new Logger(authService.name);
+
   constructor(
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
@@ -47,7 +62,27 @@ export class authService {
     private handleExceptionService: HandleExceptionsService,
     private jwtService: JwtService,
     private emailService: EmailService,
+    private readonly tenantAccessService: TenantAccessService,
+    private readonly emailTenantBranding: EmailTenantBrandingService,
+    private readonly accountTeamService: AccountTeamService,
   ) {}
+
+  private async enforceTenantAccess(
+    user: User,
+    tenantHost?: string,
+  ): Promise<void> {
+    try {
+      const tenant = await this.tenantAccessService.resolveForAuth(tenantHost);
+      await this.tenantAccessService.assertUserMayAccessTenant(user, tenant);
+    } catch (e) {
+      if (e instanceof ForbiddenException) {
+        throw e;
+      }
+      throw new ForbiddenException(
+        'No tienes permiso para acceder desde este dominio.',
+      );
+    }
+  }
 
   async signUp(signUpDto: SignUpDto) {
     const password = encodePassword(signUpDto.password);
@@ -76,18 +111,74 @@ export class authService {
     return Math.floor(100000 + Math.random() * 900000).toString();
   }
 
-  private buildInfoUser(user: User) {
+  /**
+   * Envía OTP por Resend. En desarrollo, si no hay API o falla el envío, deja el código en logs
+   * y permite seguir el flujo (challenge válido).
+   */
+  private async deliverLoginOtpEmail(
+    user: User,
+    displayName: string,
+    code: string,
+    challengeId: string,
+    tenantHost?: string,
+  ): Promise<boolean> {
+    try {
+      const branding = await this.emailTenantBranding.resolveForUser(
+        user,
+        tenantHost,
+      );
+      const sent = await this.emailService.sendPanelLoginOtpEmail(
+        user.email,
+        displayName,
+        code,
+        branding,
+      );
+      if (sent) {
+        return true;
+      }
+      if (isAuthDevMode) {
+        this.logger.warn(
+          `[DEV] RESEND_API_KEY ausente. OTP ${user.email} → ${code} (challengeId=${challengeId})`,
+        );
+        return true;
+      }
+      return false;
+    } catch (e) {
+      this.logger.error(`Fallo al enviar OTP a ${user.email}:`, e);
+      if (isAuthDevMode) {
+        this.logger.warn(
+          `[DEV] OTP ${user.email} → ${code} (challengeId=${challengeId})`,
+        );
+        return true;
+      }
+      return false;
+    }
+  }
+
+  async buildSessionPayload(user: User) {
+    const extras = await this.accountTeamService.buildSessionExtras(user);
     return {
       id: user.id,
       userName: user.username,
       username: user.username,
       email: user.email,
       status: user.status,
-      type: user.type,
+      type: extras.type,
       first_name: user.first_name ?? undefined,
       last_name: user.last_name ?? undefined,
       createdAt: user.createdAt?.toISOString?.() ?? undefined,
+      accountOwnerId: extras.accountOwnerId,
+      isAccountOwner: extras.isAccountOwner,
+      permissions: extras.permissions,
     };
+  }
+
+  async buildSessionPayloadForUserId(userId: number) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user || !user.status) {
+      throw new UnauthorizedException('Usuario no encontrado o inactivo');
+    }
+    return this.buildSessionPayload(user);
   }
 
   private hashDeviceSecret(secretHex: string): string {
@@ -195,7 +286,11 @@ export class authService {
    * Paso 1 del login: valida credenciales; si hay dispositivo confiable válido emite sesión (sin OTP).
    * Si no, envía OTP por correo. No emite cookies aquí salvo bypass (el controlador las setea).
    */
-  async signIn(signInDto: SignInDto, trustCtx?: LoginTrustRequestContext) {
+  async signIn(
+    signInDto: SignInDto,
+    trustCtx?: LoginTrustRequestContext,
+    tenantHost?: string,
+  ) {
     const { password, rememberMe } = signInDto;
     const email = normalizeAuthEmail(signInDto.email);
 
@@ -204,18 +299,20 @@ export class authService {
     });
 
     if (!user) {
-      throw new UnauthorizedException(PANEL_LOGIN_FAILED_MESSAGE);
+      throw new UnauthorizedException(PANEL_LOGIN_EMAIL_NOT_FOUND_MESSAGE);
     }
 
     if (!user.status) {
-      throw new UnauthorizedException(PANEL_LOGIN_FAILED_MESSAGE);
+      throw new UnauthorizedException(PANEL_LOGIN_ACCOUNT_INACTIVE_MESSAGE);
     }
 
     const isMatch = await comparePasswords(password, user.password ?? '');
 
     if (!isMatch) {
-      throw new UnauthorizedException(PANEL_LOGIN_FAILED_MESSAGE);
+      throw new UnauthorizedException(PANEL_LOGIN_PASSWORD_INCORRECT_MESSAGE);
     }
+
+    await this.enforceTenantAccess(user, tenantHost);
 
     if (trustCtx && (await this.consumeTrustedDeviceIfValid(user, trustCtx))) {
       const session = await this.issueSessionTokens(user, Boolean(rememberMe));
@@ -247,12 +344,17 @@ export class authService {
 
     const displayName =
       `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username;
-    try {
-      await this.emailService.sendPanelLoginOtpEmail(user.email, displayName, code);
-    } catch (e) {
+    const otpSent = await this.deliverLoginOtpEmail(
+      user,
+      displayName,
+      code,
+      saved.id,
+      tenantHost,
+    );
+    if (!otpSent) {
       await this.loginOtpRepository.delete({ id: saved.id });
       throw new BadRequestException(
-        'No pudimos enviar el código a tu correo. Revisa la configuración o inténtalo más tarde.',
+        'No pudimos enviar el código a tu correo. Revisa RESEND_API_KEY y RESEND_FROM_EMAIL en el servidor.',
       );
     }
 
@@ -263,7 +365,7 @@ export class authService {
     };
   }
 
-  async signInVerify(signInVerifyDto: SignInVerifyDto) {
+  async signInVerify(signInVerifyDto: SignInVerifyDto, tenantHost?: string) {
     const { challengeId, code } = signInVerifyDto;
 
     const challenge = await this.loginOtpRepository.findOne({
@@ -312,6 +414,8 @@ export class authService {
       throw new UnauthorizedException('Usuario no encontrado o inactivo');
     }
 
+    await this.enforceTenantAccess(user, tenantHost);
+
     if (!user.emailVerified) {
       user.emailVerified = true;
       user.emailVerificationToken = null;
@@ -322,7 +426,7 @@ export class authService {
     return { ...session, rememberMe: challenge.rememberMe };
   }
 
-  async signInResendOtp(dto: SignInResendOtpDto) {
+  async signInResendOtp(dto: SignInResendOtpDto, tenantHost?: string) {
     const challenge = await this.loginOtpRepository.findOne({
       where: { id: dto.challengeId },
     });
@@ -356,17 +460,24 @@ export class authService {
 
     const displayName =
       `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username;
-    try {
-      await this.emailService.sendPanelLoginOtpEmail(user.email, displayName, code);
-    } catch {
-      throw new BadRequestException('No pudimos reenviar el correo. Inténtalo más tarde.');
+    const otpSent = await this.deliverLoginOtpEmail(
+      user,
+      displayName,
+      code,
+      challenge.id,
+      tenantHost,
+    );
+    if (!otpSent) {
+      throw new BadRequestException(
+        'No pudimos reenviar el correo. Revisa RESEND_API_KEY y RESEND_FROM_EMAIL en el servidor.',
+      );
     }
 
     return { ok: true, message: 'Código reenviado.' };
   }
 
   private async issueSessionTokens(user: User, rememberMe: boolean) {
-    const infoUser = this.buildInfoUser(user);
+    const infoUser = await this.buildSessionPayload(user);
     const refreshExpires = rememberMe ? '30d' : '5d';
     const token = await this.jwtService.signAsync(infoUser);
     const refreshToken = await this.jwtService.signAsync(
@@ -385,13 +496,13 @@ export class authService {
     });
 
     if (!user) {
-      throw new UnauthorizedException(PANEL_LOGIN_FAILED_MESSAGE);
+      throw new UnauthorizedException(PANEL_LOGIN_EMAIL_NOT_FOUND_MESSAGE);
     }
 
     const isMatch = await comparePasswords(oldPassword, user.password ?? '');
 
     if (!isMatch) {
-      throw new UnauthorizedException(PANEL_LOGIN_FAILED_MESSAGE);
+      throw new UnauthorizedException(PANEL_CHANGE_PASSWORD_INCORRECT_MESSAGE);
     }
 
     const hashedNewPassword = encodePassword(newPassword);
@@ -409,7 +520,7 @@ export class authService {
     }
   }
 
-  async forgotPassword(forgotPasswordDto: ForgotPasswordDto) {
+  async forgotPassword(forgotPasswordDto: ForgotPasswordDto, tenantHost?: string) {
     const email = normalizeAuthEmail(forgotPasswordDto.email);
 
     const user = await this.userRepository.findOneBy({
@@ -431,7 +542,16 @@ export class authService {
 
     const userName = `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username;
     try {
-      await this.emailService.sendPasswordResetEmail(user.email, userName, resetToken);
+      const branding = await this.emailTenantBranding.resolveForUser(
+        user,
+        tenantHost,
+      );
+      await this.emailService.sendPasswordResetEmail(
+        user.email,
+        userName,
+        resetToken,
+        branding,
+      );
     } catch (emailError) {
       console.error('Error al enviar email de reset:', emailError);
     }
@@ -486,7 +606,7 @@ export class authService {
     }
   }
 
-  async refresh(refreshToken: string | undefined) {
+  async refresh(refreshToken: string | undefined, tenantHost?: string) {
     if (!refreshToken) {
       throw new UnauthorizedException('Refresh token requerido');
     }
@@ -505,22 +625,31 @@ export class authService {
         throw new UnauthorizedException('Usuario no encontrado o inactivo');
       }
 
-      const newPayload = {
-        id: user.id,
-        userName: user.username,
-        username: user.username,
-        email: user.email,
-        status: user.status,
-        type: user.type,
-        first_name: user.first_name ?? undefined,
-        last_name: user.last_name ?? undefined,
-        createdAt: user.createdAt?.toISOString?.() ?? undefined,
-      };
+      await this.enforceTenantAccess(user, tenantHost);
+
+      const newPayload = await this.buildSessionPayload(user);
       const token = await this.jwtService.signAsync(newPayload);
 
       return { token };
     } catch (error) {
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
       throw new UnauthorizedException('Token inválido o expirado');
     }
+  }
+
+  /**
+   * Valida que la sesión siga siendo válida para el dominio actual (GET /auth/me).
+   */
+  async resolveMeForTenant(
+    userId: number,
+    tenantHost?: string,
+  ): Promise<void> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user || !user.status) {
+      throw new UnauthorizedException('Usuario no encontrado o inactivo');
+    }
+    await this.enforceTenantAccess(user, tenantHost);
   }
 }

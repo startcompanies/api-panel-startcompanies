@@ -11,6 +11,8 @@ import { jwtConstants } from 'src/shared/common/constants/jwtConstants';
 import { RolesGuard } from './roles.guard';
 import { AuthGuard } from './auth.guard';
 import { CommonModule } from '../common/common.module';
+import { PartnerTenantsModule } from '../../panel/partner-tenants/partner-tenants.module';
+import { AccountTeamModule } from '../../panel/account-team/account-team.module';
 
 @Module({
   controllers: [AuthController],
@@ -19,6 +21,8 @@ import { CommonModule } from '../common/common.module';
   imports: [
     TypeOrmModule.forFeature([User, LoginOtpChallenge, TrustedLoginDevice]),
     CommonModule,
+    PartnerTenantsModule,
+    AccountTeamModule,
     JwtModule.register({
       global: true,
       secret: jwtConstants.secret,

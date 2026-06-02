@@ -9,6 +9,8 @@ export function getAllowedOrigins(): string[] {
     'https://startcompanies.us',
     'https://staging.startcompanies.io',
     'https://startcompanies.io',
+    'https://panel.startcompanies.io',
+    'https://panel-staging.startcompanies.io',
   ];
 
   if (isDev) {
@@ -18,6 +20,13 @@ export function getAllowedOrigins(): string[] {
   if (process.env.ZOHO_CRM_DOMAINS) {
     const zohoDomains = process.env.ZOHO_CRM_DOMAINS.split(',').map((d) => d.trim());
     allowedOrigins.push(...zohoDomains);
+  }
+
+  if (process.env.TENANT_CORS_ORIGINS) {
+    const tenantOrigins = process.env.TENANT_CORS_ORIGINS.split(',')
+      .map((d) => d.trim())
+      .filter(Boolean);
+    allowedOrigins.push(...tenantOrigins);
   }
 
   return allowedOrigins;

@@ -9,6 +9,7 @@ import {
   Patch,
   Post,
   Request,
+  Headers,
   UploadedFile,
   UseGuards,
   UseInterceptors,
@@ -32,23 +33,37 @@ export class MediaController {
   ) {}
 
   @Get('videos')
-  videos(@Request() req) {
-    return this.mediaService.listVideos(req.user);
+  videos(
+    @Request() req,
+    @Headers('x-tenant-host') tenantHostHeader?: string,
+  ) {
+    return this.mediaService.listVideos(req.user, tenantHostHeader);
   }
 
   @Get('videos/:id')
-  videoDetail(@Param('id', ParseIntPipe) id: number, @Request() req) {
-    return this.mediaService.getVideoDetail(id, req.user);
+  videoDetail(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req,
+    @Headers('x-tenant-host') tenantHostHeader?: string,
+  ) {
+    return this.mediaService.getVideoDetail(id, req.user, tenantHostHeader);
   }
 
   @Get('guides')
-  guides(@Request() req) {
-    return this.mediaService.listGuides(req.user);
+  guides(
+    @Request() req,
+    @Headers('x-tenant-host') tenantHostHeader?: string,
+  ) {
+    return this.mediaService.listGuides(req.user, tenantHostHeader);
   }
 
   @Get('guides/:id')
-  guideDetail(@Param('id', ParseIntPipe) id: number, @Request() req) {
-    return this.mediaService.getGuideDetail(id, req.user);
+  guideDetail(
+    @Param('id', ParseIntPipe) id: number,
+    @Request() req,
+    @Headers('x-tenant-host') tenantHostHeader?: string,
+  ) {
+    return this.mediaService.getGuideDetail(id, req.user, tenantHostHeader);
   }
 
   @Get('admin/videos')
@@ -62,7 +77,15 @@ export class MediaController {
   @UseGuards(RolesGuard)
   @Roles('admin', 'user')
   adminCreateVideo(
-    @Body() body: { title: string; description: string; videoUrl: string; thumbnailUrl?: string | null; isPublished?: boolean },
+    @Body()
+    body: {
+      title: string;
+      description: string;
+      videoUrl: string;
+      thumbnailUrl?: string | null;
+      isPublished?: boolean;
+      visibility?: 'startcompanies' | 'partners' | 'both';
+    },
   ) {
     return this.mediaService.adminCreateVideo(body);
   }
@@ -72,7 +95,15 @@ export class MediaController {
   @Roles('admin', 'user')
   adminUpdateVideo(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { title?: string; description?: string; videoUrl?: string; thumbnailUrl?: string | null; isPublished?: boolean },
+    @Body()
+    body: {
+      title?: string;
+      description?: string;
+      videoUrl?: string;
+      thumbnailUrl?: string | null;
+      isPublished?: boolean;
+      visibility?: 'startcompanies' | 'partners' | 'both';
+    },
   ) {
     return this.mediaService.adminUpdateVideo(id, body);
   }
@@ -121,6 +152,7 @@ export class MediaController {
       attachmentMime?: string | null;
       thumbnailUrl?: string | null;
       isPublished?: boolean;
+      visibility?: 'startcompanies' | 'partners' | 'both';
     },
   ) {
     return this.mediaService.adminCreateGuide(body);
@@ -140,6 +172,7 @@ export class MediaController {
       attachmentMime?: string | null;
       thumbnailUrl?: string | null;
       isPublished?: boolean;
+      visibility?: 'startcompanies' | 'partners' | 'both';
     },
   ) {
     return this.mediaService.adminUpdateGuide(id, body);

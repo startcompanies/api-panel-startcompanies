@@ -1,35 +1,27 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import Anthropic from '@anthropic-ai/sdk';
-import OpenAI from 'openai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import {
   ACCOUNT_CHART_CODES,
   ACCOUNT_CHART_LABELS,
   isAllowedAccountCode,
 } from './accounting-chart.constants';
 
-export type AiSuggestSource = 'anthropic' | 'openai';
+export type AiSuggestSource = 'gemini';
 
 export type AiSuggestResult = {
   accountCode: string | null;
   label: string | null;
   source: AiSuggestSource;
-  /** Status HTTP del proveedor si falló (p.ej. 429 cuota). */
   errorStatus?: number;
-  /** Mensaje de error del proveedor (recortado). */
   errorMessage?: string;
 };
 
 export type AiSuggestContext = {
-  /** Monto en USD del movimiento; negativo = salida (gasto probable → 5xxx). */
   amountUsd?: number;
-  /** Payee normalizado. */
   payeeHint?: string;
-  /** Si el movimiento es ingreso (true) o gasto (false). */
   isIncome?: boolean;
-  /** Fecha de la transacción (YYYY-MM-DD). */
   txDate?: string;
-  /** Fuente del banco (relay, mercury, quickbooks, etc.). */
   txSource?: string;
 };
 
@@ -41,39 +33,6 @@ export type AiCatalogSuggestResult = {
   errorStatus?: number;
   errorMessage?: string;
 };
-
-function buildPrompt(description: string, ctx?: AiSuggestContext): string {
-  const lines = ACCOUNT_CHART_CODES.map(
-    (c) => `- ${c}: ${ACCOUNT_CHART_LABELS[c]}`,
-  ).join('\n');
-  const amt =
-    ctx?.amountUsd !== undefined && Number.isFinite(ctx.amountUsd)
-      ? `\nAmount USD: ${ctx.amountUsd} (negative = money out → prefer expense codes 5xxx; positive inflow → income 4xxx).\n`
-      : '';
-  return `You classify one bank transaction for US LLC bookkeeping (cash basis).
-Allowed account codes ONLY (pick exactly one code from this list, nothing else):
-${lines}
-${amt}
-Bank transaction description (may be short or messy):
-"""
-${description.slice(0, 800)}
-"""
-
-Respond with a single JSON object and no other text, format:
-{"accountCode":"5100","confidence":0.85,"rationale":"one short phrase"}
-Use the key exactly "accountCode" (string). accountCode must be one of: ${ACCOUNT_CHART_CODES.join(',')}.
-If unsure, pick the closest expense code 5700 or income 4100.`;
-}
-
-function extractAccountCodeFromParsed(parsed: unknown): string | undefined {
-  if (typeof parsed !== 'object' || parsed === null) return undefined;
-  const o = parsed as Record<string, unknown>;
-  const raw = o.accountCode ?? o.account_code ?? o.code ?? o.AccountCode;
-  const code = String(raw ?? '')
-    .replace(/\D/g, '')
-    .slice(0, 4);
-  return code || undefined;
-}
 
 function buildCatalogPrompt(
   description: string,
@@ -149,20 +108,13 @@ function parseCatalogModelJson(
   return { accountCode, confidence };
 }
 
-function parseModelJson(text: string): { accountCode?: string } {
-  const t = text.trim();
-  const fence = /^```(?:json)?\s*([\s\S]*?)```$/m.exec(t);
-  const body = fence ? fence[1].trim() : t;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body);
-  } catch {
-    const m = body.match(/\{[\s\S]*\}/);
-    if (!m) throw new Error('No JSON object');
-    parsed = JSON.parse(m[0]);
-  }
-  const code = extractAccountCodeFromParsed(parsed);
-  return { accountCode: code };
+function extractGeminiError(e: unknown): { status?: number; message: string } {
+  const err = e as { message?: string; status?: number; statusText?: string };
+  const message = String(err?.message || err?.statusText || e || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 300);
+  return { status: err?.status, message: message || 'Error del proveedor Gemini.' };
 }
 
 @Injectable()
@@ -171,185 +123,118 @@ export class AccountingAiSuggestService {
 
   constructor(private readonly config: ConfigService) {}
 
+  geminiModel(): string {
+    return this.config.get<string>('GEMINI_MODEL') || 'gemini-2.0-flash';
+  }
+
   async suggestAccountCodeFromCatalog(
     description: string,
     catalogCodes: string[],
     labels: Record<string, string>,
-    provider: AiSuggestSource,
     apiKey: string,
     ctx?: AiSuggestContext,
   ): Promise<AiCatalogSuggestResult> {
-    const codes = [...new Set(catalogCodes.map((c) => c.toUpperCase()))].sort((a, b) => a.localeCompare(b));
+    const codes = [...new Set(catalogCodes.map((c) => c.toUpperCase()))].sort((a, b) =>
+      a.localeCompare(b),
+    );
     const allowed = new Set(codes);
     const d = (description || '').trim() || 'Sin descripción';
     try {
-      const text =
-        provider === 'anthropic'
-          ? await this.dispatchAnthropicCatalog(d, codes, labels, ctx, apiKey)
-          : await this.dispatchOpenAiCatalog(d, codes, labels, ctx, apiKey);
+      const text = await this.dispatchGeminiCatalog(d, codes, labels, ctx, apiKey);
       const parsed = parseCatalogModelJson(text, allowed);
       if (!parsed.accountCode) {
-        return { accountCode: null, label: null, source: provider, confidence: parsed.confidence };
+        return {
+          accountCode: null,
+          label: null,
+          source: 'gemini',
+          confidence: parsed.confidence,
+        };
       }
       return {
         accountCode: parsed.accountCode,
         label: labels[parsed.accountCode] || parsed.accountCode,
-        source: provider,
+        source: 'gemini',
         confidence: parsed.confidence,
       };
     } catch (e) {
-      const err = e as { message?: string; status?: number };
-      this.log.warn(`Catalog AI suggest failed (${provider}): ${err.message || e}`);
+      const err = extractGeminiError(e);
+      this.log.warn(`Catalog AI suggest failed (gemini): ${err.message}`);
       return {
         accountCode: null,
         label: null,
-        source: provider,
+        source: 'gemini',
         confidence: 0,
         errorStatus: err.status,
-        errorMessage: (err.message || '').slice(0, 300) || undefined,
+        errorMessage: err.message,
       };
     }
   }
 
-  private async dispatchAnthropicCatalog(
+  private async dispatchGeminiCatalog(
     description: string,
     codes: string[],
     labels: Record<string, string>,
     ctx: AiSuggestContext | undefined,
     apiKey: string,
   ): Promise<string> {
-    const client = new Anthropic({ apiKey });
-    const msg = await client.messages.create({
-      model: this.anthropicModel(),
-      max_tokens: 256,
-      messages: [{ role: 'user', content: buildCatalogPrompt(description, codes, labels, ctx) }],
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: this.geminiModel(),
+      generationConfig: {
+        responseMimeType: 'application/json',
+        maxOutputTokens: 256,
+        temperature: 0.2,
+      },
     });
-    const block = msg.content.find((b) => b.type === 'text');
-    return block && block.type === 'text' ? block.text : '';
+    const result = await model.generateContent(buildCatalogPrompt(description, codes, labels, ctx));
+    return result.response.text();
   }
 
-  private async dispatchOpenAiCatalog(
-    description: string,
-    codes: string[],
-    labels: Record<string, string>,
-    ctx: AiSuggestContext | undefined,
-    apiKey: string,
-  ): Promise<string> {
-    const client = new OpenAI({ apiKey });
-    const res = await client.chat.completions.create({
-      model: this.openaiModel(),
-      max_tokens: 220,
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'user',
-          content: buildCatalogPrompt(description, codes, labels, ctx),
-        },
-      ],
-    });
-    return res.choices[0]?.message?.content || '';
-  }
-
+  /** Legacy chart codes (4 dígitos); mantenido por compatibilidad interna. */
   async suggestAccountCode(
     description: string,
-    provider: AiSuggestSource,
     apiKey: string,
     ctx?: AiSuggestContext,
   ): Promise<AiSuggestResult> {
-    const d = (description || '').trim() || 'Sin descripción';
-    if (provider === 'anthropic') {
-      return this.suggestAnthropic(d, apiKey, ctx);
-    }
-    return this.suggestOpenAi(d, apiKey, ctx);
-  }
-
-  private anthropicModel(): string {
-    return this.config.get<string>('ANTHROPIC_MODEL') || 'claude-haiku-4-5-20251001';
-  }
-
-  private openaiModel(): string {
-    return this.config.get<string>('OPENAI_MODEL') || 'gpt-4o-mini';
-  }
-
-  private async suggestAnthropic(
-    description: string,
-    apiKey: string,
-    ctx?: AiSuggestContext,
-  ): Promise<AiSuggestResult> {
+    const lines = ACCOUNT_CHART_CODES.map(
+      (c) => `- ${c}: ${ACCOUNT_CHART_LABELS[c]}`,
+    ).join('\n');
+    const prompt = `You classify one bank transaction for US LLC bookkeeping.
+Allowed account codes ONLY:
+${lines}
+Description: ${(description || '').slice(0, 800)}
+Respond JSON only: {"accountCode":"5100","confidence":0.85}`;
     try {
-      const client = new Anthropic({ apiKey });
-      const msg = await client.messages.create({
-        model: this.anthropicModel(),
-        max_tokens: 256,
-        messages: [{ role: 'user', content: buildPrompt(description, ctx) }],
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({
+        model: this.geminiModel(),
+        generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 128 },
       });
-      const block = msg.content.find((b) => b.type === 'text');
-      const text = block && block.type === 'text' ? block.text : '';
-      return this.normalizeResult(text, 'anthropic');
-    } catch (e) {
-      const err = e as { message?: string; status?: number };
-      this.log.warn(`Anthropic suggest failed: ${err.message || e} (status=${err.status ?? 'n/a'})`);
-      return {
-        accountCode: null,
-        label: null,
-        source: 'anthropic',
-        errorStatus: err.status,
-        errorMessage: (err.message || '').slice(0, 300) || undefined,
-      };
-    }
-  }
-
-  private async suggestOpenAi(
-    description: string,
-    apiKey: string,
-    ctx?: AiSuggestContext,
-  ): Promise<AiSuggestResult> {
-    try {
-      const client = new OpenAI({ apiKey });
-      const res = await client.chat.completions.create({
-        model: this.openaiModel(),
-        max_tokens: 200,
-        response_format: { type: 'json_object' },
-        messages: [
-          {
-            role: 'user',
-            content: buildPrompt(description, ctx),
-          },
-        ],
-      });
-      const text = res.choices[0]?.message?.content || '';
-      return this.normalizeResult(text, 'openai');
-    } catch (e) {
-      const err = e as { message?: string; status?: number };
-      this.log.warn(`OpenAI suggest failed: ${err.message || e} (status=${err.status ?? 'n/a'})`);
-      return {
-        accountCode: null,
-        label: null,
-        source: 'openai',
-        errorStatus: err.status,
-        errorMessage: (err.message || '').slice(0, 300) || undefined,
-      };
-    }
-  }
-
-  private normalizeResult(text: string, source: AiSuggestSource): AiSuggestResult {
-    try {
-      const { accountCode: raw } = parseModelJson(text);
-      if (!raw || !isAllowedAccountCode(raw)) {
-        if (text?.trim()) {
-          this.log.debug(`AI response not mapped to chart (source=${source}): ${text.slice(0, 200)}`);
-        }
-        return { accountCode: null, label: null, source };
+      const text = (await model.generateContent(prompt)).response.text();
+      const fence = /^```(?:json)?\s*([\s\S]*?)```$/m.exec(text.trim());
+      const body = fence ? fence[1].trim() : text.trim();
+      const parsed = JSON.parse(body) as Record<string, unknown>;
+      const raw = parsed.accountCode ?? parsed.account_code ?? parsed.code;
+      const digits = String(raw ?? '')
+        .replace(/\D/g, '')
+        .slice(0, 4);
+      if (!digits || !isAllowedAccountCode(digits)) {
+        return { accountCode: null, label: null, source: 'gemini' };
       }
-      const digits = String(raw).replace(/\D/g, '').slice(0, 4);
       return {
         accountCode: digits,
         label: ACCOUNT_CHART_LABELS[digits] || null,
-        source,
+        source: 'gemini',
       };
     } catch (e) {
-      this.log.warn(`AI JSON parse failed (${source}): ${(e as Error).message}`);
-      return { accountCode: null, label: null, source };
+      const err = extractGeminiError(e);
+      return {
+        accountCode: null,
+        label: null,
+        source: 'gemini',
+        errorStatus: err.status,
+        errorMessage: err.message,
+      };
     }
   }
 }
