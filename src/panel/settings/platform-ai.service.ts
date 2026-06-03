@@ -74,7 +74,7 @@ export class PlatformAiService {
   }
 
   geminiModel(): string {
-    return this.config.get<string>('GEMINI_MODEL') || 'gemini-2.0-flash';
+    return this.config.get<string>('GEMINI_MODEL') || 'gemini-3.5-flash';
   }
 
   async getStatus(user: { id: number; accountOwnerId?: number }): Promise<PlatformAiStatus> {

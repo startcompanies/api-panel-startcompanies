@@ -6,7 +6,7 @@ Las claves de IA **no** se guardan en base de datos. El servidor elige la clave 
 |----------|-----|
 | `GEMINI_API_KEY_PLATFORM` | Clientes del portal Start Companies (sin `partnerId`) |
 | `GEMINI_API_KEY_TENANT` | Clientes de partners con portal en dominio del tenant |
-| `GEMINI_MODEL` | Opcional (default `gemini-2.0-flash`) |
+| `GEMINI_MODEL` | Opcional (default `gemini-3.5-flash`) |
 | `AI_BULK_MAX_PER_REQUEST` | Opcional (default `20`) |
 
 ## Endpoint de estado

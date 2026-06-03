@@ -371,14 +371,14 @@ export class AccountingClassificationService {
       },
     );
     if (!ai.accountCode || !allowedSet.has(ai.accountCode)) {
-      if (ai.errorStatus) {
+      if (ai.errorStatus || ai.errorMessage) {
         return {
           accountCode: null,
           confidence: 0,
           source: 'ai',
           needsReview: true,
           label: null,
-          aiErrorStatus: ai.errorStatus,
+          aiErrorStatus: ai.errorStatus ?? 422,
         };
       }
       return null;
