@@ -102,7 +102,7 @@ export class Request {
     length: 20,
     default: 'panel',
   })
-  createdFrom: 'panel' | 'wizard' | 'crm-lead';
+  createdFrom: 'panel' | 'wizard' | 'crm-lead' | 'import';
 
   // Plan del servicio (ej. apertura-llc: Entrepreneur, Elite, Premium) para validaciones al recargar
   @Column({ type: 'varchar', length: 50, nullable: true })

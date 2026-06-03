@@ -2,8 +2,10 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ClientsController } from './clients.controller';
 import { ClientsService } from './clients.service';
+import { PartnerClientsImportService } from './partner-clients-import.service';
 import { Client } from './entities/client.entity';
 import { Request } from '../requests/entities/request.entity';
+import { AperturaLlcRequest } from '../requests/entities/apertura-llc-request.entity';
 import { User } from '../../shared/user/entities/user.entity';
 import { RolesGuard } from '../../shared/auth/roles.guard';
 import { ZohoConfigModule } from '../../zoho-config/zoho-config.module';
@@ -13,9 +15,9 @@ import { BillingModule } from '../billing/billing.module';
 
 @Module({
   controllers: [ClientsController],
-  providers: [ClientsService, RolesGuard],
+  providers: [ClientsService, PartnerClientsImportService, RolesGuard],
   imports: [
-    TypeOrmModule.forFeature([Client, Request, User]),
+    TypeOrmModule.forFeature([Client, Request, AperturaLlcRequest, User]),
     ZohoConfigModule,
     CommonModule,
     PartnerTenantsModule,

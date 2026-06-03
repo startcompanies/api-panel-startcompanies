@@ -10,6 +10,9 @@ import {
   UseGuards,
   Request,
   ParseIntPipe,
+  Res,
+  UploadedFiles,
+  UseInterceptors,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -19,8 +22,12 @@ import {
   ApiBody,
   ApiResponse,
   ApiParam,
+  ApiConsumes,
 } from '@nestjs/swagger';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { ClientsService } from './clients.service';
+import { PartnerClientsImportService } from './partner-clients-import.service';
 import { CreateClientDto } from './dtos/create-client.dto';
 import { UpdateClientDto } from './dtos/update-client.dto';
 import { GetClientByUuidDto } from './dtos/get-client-by-uuid.dto';
@@ -34,7 +41,10 @@ import { Roles } from '../../shared/auth/roles.decorator';
 @UseGuards(AuthGuard)
 @ApiBearerAuth('JWT-auth')
 export class ClientsController {
-  constructor(private readonly clientsService: ClientsService) {}
+  constructor(
+    private readonly clientsService: ClientsService,
+    private readonly partnerClientsImportService: PartnerClientsImportService,
+  ) {}
 
   @Get('my-clients')
   @UseGuards(RolesGuard)
@@ -46,6 +56,125 @@ export class ClientsController {
   getMyClients(@Request() req) {
     const partnerId = req.user.id;
     return this.clientsService.getMyClients(partnerId);
+  }
+
+  @Get('import/sample')
+  @UseGuards(RolesGuard)
+  @Roles('partner')
+  @ApiOperation({
+    summary: 'Descargar plantilla CSV de importación de clientes',
+  })
+  downloadImportSample(@Res() res: Response) {
+    const sample = this.partnerClientsImportService.getSampleCsv();
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${sample.filename}"`,
+    );
+    res.send(sample.content);
+  }
+
+  @Post('import/preview')
+  @UseGuards(RolesGuard)
+  @Roles('partner')
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'file', maxCount: 1 },
+        { name: 'documentsZip', maxCount: 1 },
+      ],
+      {
+        limits: {
+          fileSize: 200 * 1024 * 1024,
+        },
+      },
+    ),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', format: 'binary' },
+        documentsZip: {
+          type: 'string',
+          format: 'binary',
+          description: 'ZIP opcional con carpetas por LLC y documentos',
+        },
+      },
+      required: ['file'],
+    },
+  })
+  @ApiOperation({
+    summary: 'Vista previa de importación CSV de clientes partner',
+  })
+  previewImport(
+    @UploadedFiles()
+    files: { file?: Express.Multer.File[]; documentsZip?: Express.Multer.File[] },
+    @Request() req,
+  ) {
+    const content = this.partnerClientsImportService.assertCsvFile(files?.file?.[0]);
+    const documentsZip = this.partnerClientsImportService.parseOptionalDocumentsZip(
+      files?.documentsZip?.[0],
+    );
+    return this.partnerClientsImportService.preview(
+      content,
+      req.user.id,
+      documentsZip,
+    );
+  }
+
+  @Post('import')
+  @UseGuards(RolesGuard)
+  @Roles('partner')
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'file', maxCount: 1 },
+        { name: 'documentsZip', maxCount: 1 },
+      ],
+      {
+        limits: {
+          fileSize: 200 * 1024 * 1024,
+        },
+      },
+    ),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', format: 'binary' },
+        documentsZip: {
+          type: 'string',
+          format: 'binary',
+          description: 'ZIP opcional con carpetas por LLC y documentos',
+        },
+      },
+      required: ['file'],
+    },
+  })
+  @ApiOperation({
+    summary: 'Ejecutar importación CSV de clientes partner',
+  })
+  executeImport(
+    @UploadedFiles()
+    files: { file?: Express.Multer.File[]; documentsZip?: Express.Multer.File[] },
+    @Request() req,
+  ) {
+    const content = this.partnerClientsImportService.assertCsvFile(files?.file?.[0]);
+    const documentsZip = this.partnerClientsImportService.parseOptionalDocumentsZip(
+      files?.documentsZip?.[0],
+    );
+    const tenantHost =
+      typeof req.headers['x-tenant-host'] === 'string'
+        ? req.headers['x-tenant-host']
+        : undefined;
+    return this.partnerClientsImportService.execute(content, req.user.id, {
+      tenantHost,
+      documentsZipBuffer: documentsZip,
+    });
   }
 
   @Get('self')

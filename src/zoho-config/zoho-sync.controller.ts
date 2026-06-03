@@ -175,7 +175,8 @@ export class ZohoSyncController {
       'Webhook: Zoho CRM → actualizar Request (stage, status, workDrive) desde Deals + Account',
     description:
       'Sin JWT. Autenticación con header X-Zoho-Sync-Secret igual a ZOHOCRM_REQUEST_SYNC_WEBHOOK_SECRET. ' +
-      'Configurar en Zoho un workflow (p. ej. al editar Deal) que POSTee JSON con zohoAccountId del Account.',
+      'Configurar en Zoho un workflow (p. ej. al editar Deal) que POSTee JSON con zohoAccountId del Account. ' +
+      'Actualiza stage, status, WorkDrive y campos de apertura (N_mero_de_EIN, Domicilio_Principal) desde CRM.',
   })
   @ApiHeader({
     name: ZOHO_SYNC_SECRET_HEADER,
