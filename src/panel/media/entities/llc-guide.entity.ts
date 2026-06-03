@@ -5,6 +5,10 @@ export class LlcGuide {
   @PrimaryGeneratedColumn()
   id: number;
 
+  /** NULL = contenido de Start Companies; valor = contenido exclusivo del partner. */
+  @Column({ name: 'partner_id', type: 'int', nullable: true })
+  partnerId: number | null;
+
   @Column({ type: 'varchar', length: 180 })
   title: string;
 
