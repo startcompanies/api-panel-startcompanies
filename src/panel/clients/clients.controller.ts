@@ -103,25 +103,21 @@ export class ClientsController {
           description: 'ZIP opcional con carpetas por LLC y documentos',
         },
       },
-      required: ['file'],
     },
   })
   @ApiOperation({
-    summary: 'Vista previa de importación CSV de clientes partner',
+    summary:
+      'Vista previa: solo CSV, solo ZIP (documentos a LLCs existentes) o CSV + ZIP',
   })
   previewImport(
     @UploadedFiles()
     files: { file?: Express.Multer.File[]; documentsZip?: Express.Multer.File[] },
     @Request() req,
   ) {
-    const content = this.partnerClientsImportService.assertCsvFile(files?.file?.[0]);
-    const documentsZip = this.partnerClientsImportService.parseOptionalDocumentsZip(
-      files?.documentsZip?.[0],
-    );
-    return this.partnerClientsImportService.preview(
-      content,
+    return this.partnerClientsImportService.previewImport(
       req.user.id,
-      documentsZip,
+      files?.file?.[0],
+      files?.documentsZip?.[0],
     );
   }
 
@@ -153,29 +149,27 @@ export class ClientsController {
           description: 'ZIP opcional con carpetas por LLC y documentos',
         },
       },
-      required: ['file'],
     },
   })
   @ApiOperation({
-    summary: 'Ejecutar importación CSV de clientes partner',
+    summary:
+      'Ejecutar importación: solo CSV, solo ZIP (documentos) o CSV + ZIP',
   })
   executeImport(
     @UploadedFiles()
     files: { file?: Express.Multer.File[]; documentsZip?: Express.Multer.File[] },
     @Request() req,
   ) {
-    const content = this.partnerClientsImportService.assertCsvFile(files?.file?.[0]);
-    const documentsZip = this.partnerClientsImportService.parseOptionalDocumentsZip(
-      files?.documentsZip?.[0],
-    );
     const tenantHost =
       typeof req.headers['x-tenant-host'] === 'string'
         ? req.headers['x-tenant-host']
         : undefined;
-    return this.partnerClientsImportService.execute(content, req.user.id, {
-      tenantHost,
-      documentsZipBuffer: documentsZip,
-    });
+    return this.partnerClientsImportService.executeImport(
+      req.user.id,
+      files?.file?.[0],
+      files?.documentsZip?.[0],
+      { tenantHost },
+    );
   }
 
   @Get('self')

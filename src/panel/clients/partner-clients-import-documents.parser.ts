@@ -134,6 +134,51 @@ export function parsePartnerClientsDocumentsZip(
   };
 }
 
+export interface PartnerLlcWorkDriveTarget {
+  requestId: number;
+  clientId: number;
+  llcName: string;
+  workDriveId: string | null;
+  clientEmail: string;
+}
+
+/** Empareja carpetas del ZIP con LLCs ya importadas del partner (modo solo ZIP). */
+export function summarizeDocumentsZipAgainstPartnerLlcs(
+  zipIndex: PartnerDocumentsZipIndex,
+  partnerLlcs: PartnerLlcWorkDriveTarget[],
+): PartnerDocumentsZipMatchSummary {
+  const panelLlcKeys = new Map(
+    partnerLlcs.map((r) => [normalizeLlcFolderKey(r.llcName), r]),
+  );
+  const zipKeys = new Set(zipIndex.foldersByLlcKey.keys());
+
+  const unmatchedFolders = zipIndex.folderNames.filter(
+    (name) => !panelLlcKeys.has(normalizeLlcFolderKey(name)),
+  );
+
+  const rowsWithoutFolder = partnerLlcs
+    .filter((r) => !zipKeys.has(normalizeLlcFolderKey(r.llcName)))
+    .map((r, index) => ({
+      lineNumber: index + 1,
+      aperturaLlcName: r.llcName,
+    }));
+
+  let matchedFolders = 0;
+  for (const key of zipKeys) {
+    if (panelLlcKeys.has(key)) {
+      matchedFolders++;
+    }
+  }
+
+  return {
+    llcFolderCount: zipIndex.folderNames.length,
+    totalFiles: zipIndex.totalFiles,
+    matchedFolders,
+    unmatchedFolders,
+    rowsWithoutFolder,
+  };
+}
+
 export function summarizeDocumentsZipMatch(
   zipIndex: PartnerDocumentsZipIndex,
   validRows: Array<{ lineNumber: number; aperturaLlcName: string }>,

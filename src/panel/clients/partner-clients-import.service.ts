@@ -23,8 +23,12 @@ import {
   normalizeLlcFolderKey,
   parsePartnerClientsDocumentsZip,
   PartnerDocumentsZipMatchSummary,
+  PartnerLlcWorkDriveTarget,
+  summarizeDocumentsZipAgainstPartnerLlcs,
   summarizeDocumentsZipMatch,
 } from './partner-clients-import-documents.parser';
+
+export type PartnerClientImportMode = 'csv' | 'zip' | 'csv_zip';
 
 export type PartnerClientImportRowStatus =
   | 'valid'
@@ -40,9 +44,13 @@ export interface PartnerClientImportPreviewRow {
   clientFullName?: string;
   aperturaLlcName?: string;
   clientInviteToPortal?: boolean;
+  requestId?: number;
+  workDriveId?: string;
+  fileCount?: number;
 }
 
 export interface PartnerClientImportPreviewResult {
+  mode: PartnerClientImportMode;
   totalRows: number;
   validCount: number;
   invalidCount: number;
@@ -102,6 +110,283 @@ export class PartnerClientsImportService {
     };
   }
 
+  assertImportInputs(
+    csvFile?: Express.Multer.File,
+    documentsZipFile?: Express.Multer.File,
+  ): {
+    mode: PartnerClientImportMode;
+    csvContent?: string;
+    documentsZipBuffer?: Buffer;
+  } {
+    const csvContent = csvFile?.buffer
+      ? this.assertCsvFile(csvFile)
+      : undefined;
+    const documentsZipBuffer = this.parseOptionalDocumentsZip(documentsZipFile);
+
+    if (!csvContent && !documentsZipBuffer) {
+      throw new BadRequestException(
+        'Sube un archivo CSV, un ZIP de documentos, o ambos',
+      );
+    }
+
+    const mode: PartnerClientImportMode =
+      csvContent && documentsZipBuffer
+        ? 'csv_zip'
+        : csvContent
+          ? 'csv'
+          : 'zip';
+
+    return { mode, csvContent, documentsZipBuffer };
+  }
+
+  async previewImport(
+    partnerId: number,
+    csvFile?: Express.Multer.File,
+    documentsZipFile?: Express.Multer.File,
+  ): Promise<PartnerClientImportPreviewResult> {
+    const { mode, csvContent, documentsZipBuffer } = this.assertImportInputs(
+      csvFile,
+      documentsZipFile,
+    );
+
+    if (mode === 'zip') {
+      return this.previewZipOnly(partnerId, documentsZipBuffer!);
+    }
+
+    const result = await this.preview(
+      csvContent!,
+      partnerId,
+      documentsZipBuffer,
+    );
+    return { ...result, mode };
+  }
+
+  async executeImport(
+    partnerId: number,
+    csvFile?: Express.Multer.File,
+    documentsZipFile?: Express.Multer.File,
+    options?: { tenantHost?: string },
+  ): Promise<PartnerClientImportExecuteResult> {
+    const { mode, csvContent, documentsZipBuffer } = this.assertImportInputs(
+      csvFile,
+      documentsZipFile,
+    );
+
+    if (mode === 'zip') {
+      return this.executeZipOnly(partnerId, documentsZipBuffer!);
+    }
+
+    return this.execute(csvContent!, partnerId, {
+      tenantHost: options?.tenantHost,
+      documentsZipBuffer,
+    });
+  }
+
+  async previewZipOnly(
+    partnerId: number,
+    documentsZipBuffer: Buffer,
+  ): Promise<PartnerClientImportPreviewResult> {
+    const zipIndex = parsePartnerClientsDocumentsZip(documentsZipBuffer);
+    if (zipIndex.folderNames.length === 0) {
+      return {
+        mode: 'zip',
+        totalRows: 0,
+        validCount: 0,
+        invalidCount: 0,
+        duplicateCount: 0,
+        headerErrors: [
+          'El ZIP no contiene carpetas LLC con archivos (una carpeta por LLC, nombre = apertura_llc_name)',
+        ],
+        rows: [],
+      };
+    }
+
+    const partnerLlcs = await this.loadPartnerLlcTargets(partnerId);
+    const targetByKey = new Map(
+      partnerLlcs.map((t) => [normalizeLlcFolderKey(t.llcName), t]),
+    );
+
+    const rows: PartnerClientImportPreviewRow[] = [];
+    let lineNumber = 0;
+
+    for (const folderName of zipIndex.folderNames) {
+      lineNumber++;
+      const key = normalizeLlcFolderKey(folderName);
+      const target = targetByKey.get(key);
+      const fileCount = zipIndex.foldersByLlcKey.get(key)?.length ?? 0;
+
+      if (!target) {
+        rows.push({
+          lineNumber,
+          status: 'invalid',
+          errors: ['LLC no encontrada en el panel para este partner'],
+          aperturaLlcName: folderName,
+          fileCount,
+        });
+        continue;
+      }
+
+      if (!target.workDriveId?.trim()) {
+        rows.push({
+          lineNumber,
+          status: 'invalid',
+          errors: [
+            'Sin carpeta WorkDrive; importe el CSV primero o sincronice la solicitud con CRM',
+          ],
+          aperturaLlcName: folderName,
+          clientEmail: target.clientEmail,
+          requestId: target.requestId,
+          fileCount,
+        });
+        continue;
+      }
+
+      rows.push({
+        lineNumber,
+        status: 'valid',
+        errors: [],
+        aperturaLlcName: folderName,
+        clientEmail: target.clientEmail,
+        requestId: target.requestId,
+        workDriveId: target.workDriveId,
+        fileCount,
+      });
+    }
+
+    return {
+      mode: 'zip',
+      totalRows: rows.length,
+      validCount: rows.filter((r) => r.status === 'valid').length,
+      invalidCount: rows.filter((r) => r.status === 'invalid').length,
+      duplicateCount: 0,
+      headerErrors: [],
+      rows,
+      documentsZip: summarizeDocumentsZipAgainstPartnerLlcs(
+        zipIndex,
+        partnerLlcs,
+      ),
+    };
+  }
+
+  async executeZipOnly(
+    partnerId: number,
+    documentsZipBuffer: Buffer,
+  ): Promise<PartnerClientImportExecuteResult> {
+    const preview = await this.previewZipOnly(partnerId, documentsZipBuffer);
+    if (preview.headerErrors.length > 0) {
+      return {
+        totalRows: 0,
+        importedCount: 0,
+        skippedCount: 0,
+        failedCount: 0,
+        headerErrors: preview.headerErrors,
+        rows: [],
+      };
+    }
+
+    const zipIndex = parsePartnerClientsDocumentsZip(documentsZipBuffer);
+    const resultRows: PartnerClientImportExecuteResult['rows'] = [];
+    let importedCount = 0;
+    let skippedCount = 0;
+    let failedCount = 0;
+
+    for (const row of preview.rows) {
+      if (row.status !== 'valid' || !row.aperturaLlcName) {
+        skippedCount++;
+        resultRows.push({
+          lineNumber: row.lineNumber,
+          status: 'skipped',
+          message: row.errors.join('; ') || 'Carpeta omitida',
+        });
+        continue;
+      }
+
+      let workDriveId = row.workDriveId?.trim();
+      if (!workDriveId && row.requestId) {
+        try {
+          const synced = await this.zohoSyncService.syncImportedRequestToCrm(
+            row.requestId,
+          );
+          workDriveId = synced.workDriveId;
+        } catch (syncError: any) {
+          failedCount++;
+          resultRows.push({
+            lineNumber: row.lineNumber,
+            status: 'failed',
+            message:
+              syncError?.message ||
+              'No se pudo crear carpeta WorkDrive antes de subir documentos',
+            requestId: row.requestId,
+          });
+          continue;
+        }
+      }
+
+      if (!workDriveId) {
+        failedCount++;
+        resultRows.push({
+          lineNumber: row.lineNumber,
+          status: 'failed',
+          message: 'Sin carpeta WorkDrive para subir documentos',
+          requestId: row.requestId,
+        });
+        continue;
+      }
+
+      const llcKey = normalizeLlcFolderKey(row.aperturaLlcName);
+      const docFiles = zipIndex.foldersByLlcKey.get(llcKey);
+      if (!docFiles?.length) {
+        skippedCount++;
+        resultRows.push({
+          lineNumber: row.lineNumber,
+          status: 'skipped',
+          message: 'Carpeta ZIP sin archivos',
+          requestId: row.requestId,
+        });
+        continue;
+      }
+
+      try {
+        const uploadResult = await this.zohoWorkDriveService.uploadDocumentTree(
+          workDriveId,
+          docFiles,
+        );
+        importedCount++;
+        let message = `${uploadResult.uploaded} documento(s) subidos a WorkDrive`;
+        if (uploadResult.failed > 0) {
+          message += `; ${uploadResult.failed} no subidos`;
+        }
+        resultRows.push({
+          lineNumber: row.lineNumber,
+          status: 'imported',
+          message,
+          requestId: row.requestId,
+          workDriveId,
+          documentsUploaded: uploadResult.uploaded,
+          documentsFailed: uploadResult.failed,
+        });
+      } catch (uploadError: any) {
+        failedCount++;
+        resultRows.push({
+          lineNumber: row.lineNumber,
+          status: 'failed',
+          message: uploadError?.message || 'Error al subir documentos',
+          requestId: row.requestId,
+          workDriveId,
+        });
+      }
+    }
+
+    return {
+      totalRows: resultRows.length,
+      importedCount,
+      skippedCount,
+      failedCount,
+      headerErrors: [],
+      rows: resultRows,
+    };
+  }
+
   async preview(
     csvContent: string,
     partnerId: number,
@@ -110,6 +395,7 @@ export class PartnerClientsImportService {
     const parsed = parsePartnerClientsCsv(csvContent);
     if (parsed.headerErrors.length > 0) {
       return {
+        mode: documentsZipBuffer ? 'csv_zip' : 'csv',
         totalRows: 0,
         validCount: 0,
         invalidCount: 0,
@@ -178,6 +464,7 @@ export class PartnerClientsImportService {
     }
 
     return {
+      mode: documentsZipBuffer ? 'csv_zip' : 'csv',
       totalRows: rows.length,
       validCount: rows.filter((r) => r.status === 'valid').length,
       invalidCount: rows.filter((r) => r.status === 'invalid').length,
@@ -395,6 +682,37 @@ export class PartnerClientsImportService {
       }
     }
     return keys;
+  }
+
+  private async loadPartnerLlcTargets(
+    partnerId: number,
+  ): Promise<PartnerLlcWorkDriveTarget[]> {
+    const rows = await this.requestRepository
+      .createQueryBuilder('r')
+      .innerJoin('r.client', 'c')
+      .innerJoin('r.aperturaLlcRequest', 'a')
+      .select('r.id', 'requestId')
+      .addSelect('c.id', 'clientId')
+      .addSelect('a.llcName', 'llcName')
+      .addSelect('r.workDriveId', 'workDriveId')
+      .addSelect('c.email', 'clientEmail')
+      .where('c.partner_id = :partnerId', { partnerId })
+      .andWhere('r.type = :type', { type: 'apertura-llc' })
+      .getRawMany<{
+        requestId: number;
+        clientId: number;
+        llcName: string;
+        workDriveId: string | null;
+        clientEmail: string;
+      }>();
+
+    return rows.map((row) => ({
+      requestId: Number(row.requestId),
+      clientId: Number(row.clientId),
+      llcName: row.llcName,
+      workDriveId: row.workDriveId,
+      clientEmail: row.clientEmail,
+    }));
   }
 
   private async importRow(
