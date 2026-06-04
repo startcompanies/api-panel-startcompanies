@@ -52,10 +52,41 @@ export class ClientsController {
   @Roles('partner')
   @ApiOperation({
     summary: 'Listar clientes del partner actual',
-    description: 'Obtiene todos los clientes asociados al partner autenticado',
+    description:
+      'Sin query params devuelve todos los clientes. Con page/limit devuelve listado paginado con estadísticas.',
   })
-  getMyClients(@Request() req) {
+  @ApiQuery({ name: 'page', required: false, description: 'Página (1-based)', example: 1 })
+  @ApiQuery({ name: 'limit', required: false, description: 'Tamaño de página (máx. 100)', example: 12 })
+  @ApiQuery({ name: 'q', required: false, description: 'Buscar en nombre, email o empresa' })
+  @ApiQuery({ name: 'status', required: false, enum: ['all', 'active', 'inactive'] })
+  getMyClients(
+    @Request() req,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('q') q?: string,
+    @Query('status') status?: string,
+  ) {
     const partnerId = req.user.id;
+    const usePagination =
+      page != null ||
+      limit != null ||
+      (q != null && q.trim() !== '') ||
+      (status != null && status !== 'all');
+
+    if (usePagination) {
+      const p = page ? parseInt(page, 10) : 1;
+      const l = limit ? parseInt(limit, 10) : 12;
+      return this.clientsService.getMyClientsPaginated(partnerId, {
+        page: Number.isFinite(p) && p > 0 ? p : 1,
+        limit: Number.isFinite(l) && l > 0 ? l : 12,
+        q: q?.trim() || undefined,
+        status:
+          status === 'active' || status === 'inactive' || status === 'all'
+            ? status
+            : 'all',
+      });
+    }
+
     return this.clientsService.getMyClients(partnerId);
   }
 

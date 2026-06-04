@@ -5,7 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, IsNull, Not } from 'typeorm';
+import { Repository, IsNull, Not, In } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import { Client } from './entities/client.entity';
 import { CreateClientDto } from './dtos/create-client.dto';
@@ -50,6 +50,132 @@ export class ClientsService {
       });
     } catch (e) {
       console.error('Error al obtener clientes del partner:', e);
+      throw new InternalServerErrorException(
+        'No se pudieron obtener los clientes',
+      );
+    }
+  }
+
+  /**
+   * Listado paginado de clientes del partner con estadísticas incluidas.
+   */
+  async getMyClientsPaginated(
+    partnerId: number,
+    options?: {
+      page?: number;
+      limit?: number;
+      q?: string;
+      status?: 'all' | 'active' | 'inactive';
+    },
+  ): Promise<{
+    data: Array<{
+      id: number;
+      uuid: string;
+      partnerId?: number;
+      userId?: number | null;
+      full_name: string;
+      email: string;
+      phone?: string | null;
+      company?: string | null;
+      status: boolean;
+      createdAt: Date;
+      updatedAt: Date;
+      totalRequests: number;
+      activeRequests: number;
+      completedRequests: number;
+      lastRequestDate: Date | null;
+    }>;
+    total: number;
+    page: number;
+    limit: number;
+    summary: {
+      total: number;
+      activeCount: number;
+      totalRequests: number;
+    };
+  }> {
+    try {
+      const page = Math.max(1, options?.page ?? 1);
+      const limit = Math.min(100, Math.max(1, options?.limit ?? 12));
+      const q = options?.q?.trim().toLowerCase();
+      const statusFilter = options?.status ?? 'all';
+
+      const baseQb = this.clientRepository
+        .createQueryBuilder('c')
+        .leftJoinAndSelect('c.user', 'user')
+        .where('c.partnerId = :partnerId', { partnerId });
+
+      if (q) {
+        baseQb.andWhere(
+          '(LOWER(c.full_name) LIKE :q OR LOWER(c.email) LIKE :q OR LOWER(c.company) LIKE :q)',
+          { q: `%${q}%` },
+        );
+      }
+
+      const filteredQb = baseQb.clone();
+      if (statusFilter === 'active') {
+        filteredQb.andWhere('c.status = true');
+      } else if (statusFilter === 'inactive') {
+        filteredQb.andWhere('c.status = false');
+      }
+
+      const total = await filteredQb.getCount();
+
+      let activeCount = total;
+      if (statusFilter === 'all') {
+        const activeQb = baseQb.clone().andWhere('c.status = true');
+        activeCount = await activeQb.getCount();
+      } else if (statusFilter === 'inactive') {
+        activeCount = 0;
+      }
+
+      const filteredIds = await filteredQb.clone().select(['c.id']).getMany();
+      const allFilteredClientIds = filteredIds.map((row) => row.id);
+      const totalRequests =
+        allFilteredClientIds.length > 0
+          ? await this.requestRepository.count({
+              where: { partnerId, clientId: In(allFilteredClientIds) },
+            })
+          : 0;
+
+      const skip = (page - 1) * limit;
+      const pageClients = await filteredQb
+        .orderBy('c.createdAt', 'DESC')
+        .skip(skip)
+        .take(limit)
+        .getMany();
+
+      const pageClientIds = pageClients.map((c) => c.id);
+      const statsByClientId = await this.getRequestStatsByClientIds(
+        pageClientIds,
+        partnerId,
+      );
+
+      const data = pageClients.map((c) =>
+        this.mapMyClientWithStats(
+          c,
+          statsByClientId.get(c.id) ?? {
+            totalRequests: 0,
+            activeRequests: 0,
+            completedRequests: 0,
+            lastRequestDate: null,
+          },
+        ),
+      );
+
+      return {
+        data,
+        total,
+        page,
+        limit,
+        summary: {
+          total,
+          activeCount,
+          totalRequests,
+        },
+      };
+    } catch (e) {
+      console.error('Error al obtener clientes paginados del partner:', e);
       throw new InternalServerErrorException(
         'No se pudieron obtener los clientes',
       );
@@ -268,6 +394,102 @@ export class ClientsService {
             ? new Date(endsAt as string).toISOString()
             : null,
     };
+  }
+
+  private mapMyClientWithStats(
+    c: Client,
+    stats: {
+      totalRequests: number;
+      activeRequests: number;
+      completedRequests: number;
+      lastRequestDate: Date | null;
+    },
+  ) {
+    return {
+      id: c.id,
+      uuid: c.uuid,
+      partnerId: c.partnerId,
+      userId: c.userId ?? null,
+      full_name: c.full_name,
+      email: c.email,
+      phone: c.phone ?? null,
+      company: c.company ?? null,
+      status: c.status,
+      createdAt: c.createdAt,
+      updatedAt: c.updatedAt,
+      totalRequests: stats.totalRequests,
+      activeRequests: stats.activeRequests,
+      completedRequests: stats.completedRequests,
+      lastRequestDate: stats.lastRequestDate,
+    };
+  }
+
+  private async getRequestStatsByClientIds(
+    clientIds: number[],
+    partnerId: number,
+  ): Promise<
+    Map<
+      number,
+      {
+        totalRequests: number;
+        activeRequests: number;
+        completedRequests: number;
+        lastRequestDate: Date | null;
+      }
+    >
+  > {
+    const stats = new Map<
+      number,
+      {
+        totalRequests: number;
+        activeRequests: number;
+        completedRequests: number;
+        lastRequestDate: Date | null;
+      }
+    >();
+
+    if (!clientIds.length) {
+      return stats;
+    }
+
+    for (const id of clientIds) {
+      stats.set(id, {
+        totalRequests: 0,
+        activeRequests: 0,
+        completedRequests: 0,
+        lastRequestDate: null,
+      });
+    }
+
+    const requests = await this.requestRepository.find({
+      where: { partnerId, clientId: In(clientIds) },
+      select: ['clientId', 'status', 'createdAt'],
+    });
+
+    for (const request of requests) {
+      const row = stats.get(request.clientId);
+      if (!row) {
+        continue;
+      }
+      row.totalRequests += 1;
+      if (
+        request.status === 'en-proceso' ||
+        request.status === 'pendiente'
+      ) {
+        row.activeRequests += 1;
+      }
+      if (request.status === 'completada') {
+        row.completedRequests += 1;
+      }
+      if (
+        !row.lastRequestDate ||
+        request.createdAt > row.lastRequestDate
+      ) {
+        row.lastRequestDate = request.createdAt;
+      }
+    }
+
+    return stats;
   }
 
   /**
