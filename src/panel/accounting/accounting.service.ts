@@ -476,6 +476,58 @@ export class AccountingService {
     };
   }
 
+  /** Filas normalizadas desde Plaid (amount ya con signo contable: positivo = ingreso). */
+  async importPlaidTransactions(
+    ownerUserId: number,
+    bankAccountId: number,
+    rows: Array<{
+      transactionId: string;
+      txDate: string;
+      description: string;
+      amount: number;
+      sourceBank: string | null;
+      payeeNormalized: string | null;
+    }>,
+    importLabel: string,
+  ) {
+    const bankImport = await this.importsRepo.save(
+      this.importsRepo.create({
+        bankAccountId,
+        importedByUserId: ownerUserId,
+        fileName: importLabel,
+        rowsCount: rows.length,
+      }),
+    );
+    let inserted = 0;
+    let skippedDuplicates = 0;
+    for (const parsed of rows) {
+      const fingerprint = `plaid:${parsed.transactionId}`;
+      const exists = await this.txRepo.findOne({ where: { fingerprint } });
+      if (exists) {
+        skippedDuplicates += 1;
+        continue;
+      }
+      await this.txRepo.save(
+        this.txRepo.create({
+          bankImportId: bankImport.id,
+          txDate: parsed.txDate,
+          description: parsed.description,
+          amount: parsed.amount,
+          sourceBank: parsed.sourceBank,
+          payeeNormalized: parsed.payeeNormalized,
+          fingerprint,
+        }),
+      );
+      inserted += 1;
+    }
+    return {
+      importId: bankImport.id,
+      rowsParsed: rows.length,
+      rowsInserted: inserted,
+      rowsSkippedDuplicates: skippedDuplicates,
+    };
+  }
+
   private txScopeQuery(user: PanelUser) {
     const qb = this.txRepo
       .createQueryBuilder('tx')

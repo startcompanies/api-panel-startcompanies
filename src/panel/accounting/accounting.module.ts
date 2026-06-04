@@ -33,6 +33,7 @@ import { Invoice } from '../invoicing/entities/invoice.entity';
   ],
   controllers: [AccountingController],
   providers: [AccountingService, AccountingAiSuggestService, AccountingClassificationService, RolesGuard],
+  exports: [AccountingService],
 })
 export class AccountingModule {}
 
