@@ -32,6 +32,7 @@ import { CreateClientDto } from './dtos/create-client.dto';
 import { UpdateClientDto } from './dtos/update-client.dto';
 import { GetClientByUuidDto } from './dtos/get-client-by-uuid.dto';
 import { ConvertClientToPartnerDto } from './dtos/convert-client-to-partner.dto';
+import { InviteClientPortalDto } from './dtos/invite-client-portal.dto';
 import { AuthGuard } from '../../shared/auth/auth.guard';
 import { RolesGuard } from '../../shared/auth/roles.guard';
 import { Roles } from '../../shared/auth/roles.decorator';
@@ -260,15 +261,24 @@ export class ClientsController {
   @UseGuards(RolesGuard)
   @Roles('partner', 'admin')
   @ApiOperation({
-    summary: 'Invitar cliente al portal',
+    summary: 'Invitar o reenviar acceso al portal del cliente',
     description:
-      'Crea o enlaza un usuario tipo client, asocia clients.user_id y envía email para establecer contraseña. URL y marca según partner_tenants.',
+      'Crea o enlaza un usuario tipo client, asocia clients.user_id y envía email para establecer contraseña. Partners: marca white-label. Admin SC: clientes sin partner o fila solo usuario (listItemUserOnly).',
   })
-  @ApiParam({ name: 'id', description: 'ID del cliente (tabla clients)' })
+  @ApiParam({ name: 'id', description: 'ID del cliente (tabla clients) o users.id si listItemUserOnly' })
+  @ApiBody({ type: InviteClientPortalDto, required: false })
   @ApiResponse({ status: 200, description: 'Invitación enviada' })
-  inviteClientToPortal(@Param('id', ParseIntPipe) id: number, @Request() req) {
+  inviteClientToPortal(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: InviteClientPortalDto | undefined,
+    @Request() req,
+  ) {
+    const actor = req.user;
+    const isAdmin = actor.type === 'admin';
     const partnerScopeId =
-      req.user.type === 'partner' ? req.user.id : undefined;
+      actor.type === 'partner'
+        ? (actor.accountOwnerId ?? actor.id)
+        : undefined;
     const tenantHost =
       typeof req.headers['x-tenant-host'] === 'string'
         ? req.headers['x-tenant-host']
@@ -276,6 +286,8 @@ export class ClientsController {
     return this.clientsService.inviteClientToPortal(id, {
       partnerScopeId,
       tenantHost,
+      platformScope: isAdmin,
+      listItemUserOnly: Boolean(body?.listItemUserOnly),
     });
   }
 

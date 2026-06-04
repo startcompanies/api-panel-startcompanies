@@ -16,6 +16,7 @@ import { ZohoContactService } from '../../zoho-config/zoho-contact.service';
 import { EmailService } from '../../shared/common/services/email.service';
 import { PartnerTenantsService } from '../partner-tenants/partner-tenants.service';
 import { EmailTenantBrandingService } from '../partner-tenants/email-tenant-branding.service';
+import { EmailBranding } from '../../shared/common/types/email-branding.types';
 import { BillingService } from '../billing/billing.service';
 import { encodePassword } from '../../shared/common/utils/bcrypt';
 import { normalizeAuthEmail } from '../../shared/common/utils/normalize-auth-email';
@@ -960,17 +961,27 @@ export class ClientsService {
 
   /**
    * Crea o reutiliza un usuario `client`, enlaza `clients.user_id` y envía invitación.
-   * Solo clientes con `partner_id` (white-label).
+   * Partners: solo clientes con `partner_id`. Admin SC: clientes sin partner o fila solo usuario.
    */
   async inviteClientToPortal(
     clientId: number,
-    options?: { partnerScopeId?: number; tenantHost?: string },
+    options?: {
+      partnerScopeId?: number;
+      tenantHost?: string;
+      /** Admin en plataforma Start Companies (cliente sin partner_id). */
+      platformScope?: boolean;
+      listItemUserOnly?: boolean;
+    },
   ): Promise<{
     userId: number;
     invited: boolean;
     resent: boolean;
     message: string;
   }> {
+    if (options?.listItemUserOnly && options?.platformScope) {
+      return this.invitePlatformClientByUserId(clientId, options.tenantHost);
+    }
+
     const where: { id: number; partnerId?: number } = { id: clientId };
     if (options?.partnerScopeId) {
       where.partnerId = options.partnerScopeId;
@@ -980,7 +991,7 @@ export class ClientsService {
     if (!client) {
       throw new NotFoundException('Cliente no encontrado');
     }
-    if (!client.partnerId) {
+    if (!client.partnerId && !options?.platformScope) {
       throw new BadRequestException(
         'Solo los clientes de un partner pueden recibir acceso al portal',
       );
@@ -989,23 +1000,25 @@ export class ClientsService {
       throw new BadRequestException('El cliente debe tener un email válido');
     }
 
-    const tenant = options?.tenantHost
-      ? await this.partnerTenantsService.resolveByHost(options.tenantHost)
-      : await this.partnerTenantsService.resolveByPartnerId(client.partnerId);
+    const branding = client.partnerId
+      ? await this.resolvePartnerInviteBranding(client.partnerId, options?.tenantHost)
+      : this.emailTenantBranding.platformBranding();
 
-    if (
-      tenant.kind === 'partner' &&
-      tenant.partnerId != null &&
-      tenant.partnerId !== client.partnerId
-    ) {
-      throw new BadRequestException(
-        'El dominio del tenant no coincide con el partner del cliente',
-      );
+    if (client.partnerId) {
+      const tenant = options?.tenantHost
+        ? await this.partnerTenantsService.resolveByHost(options.tenantHost)
+        : await this.partnerTenantsService.resolveByPartnerId(client.partnerId);
+
+      if (
+        tenant.kind === 'partner' &&
+        tenant.partnerId != null &&
+        tenant.partnerId !== client.partnerId
+      ) {
+        throw new BadRequestException(
+          'El dominio del tenant no coincide con el partner del cliente',
+        );
+      }
     }
-
-    const branding = await this.emailTenantBranding.resolveByPartnerId(
-      client.partnerId,
-    );
 
     let user: User | null = null;
     let resent = false;
@@ -1047,6 +1060,15 @@ export class ClientsService {
             'Este email ya está vinculado a un cliente de otro partner',
           );
         }
+        if (
+          otherClient &&
+          !client.partnerId &&
+          otherClient.partnerId != null
+        ) {
+          throw new BadRequestException(
+            'Este email ya está vinculado a un cliente de un partner',
+          );
+        }
         user = existingByEmail;
         client.userId = user.id;
         await this.clientRepository.save(client);
@@ -1074,8 +1096,84 @@ export class ClientsService {
       await this.clientRepository.save(client);
     }
 
-    await this.billingService.ensurePartnerClientAccess(user);
+    if (client.partnerId) {
+      await this.billingService.ensurePartnerClientAccess(user);
+    } else {
+      await this.billingService.ensureTrialWindow(user);
+    }
 
+    return this.sendClientPortalInvitationEmail(user, client.full_name, branding, resent);
+  }
+
+  /** Admin SC: reenviar invitación a usuario client sin fila en `clients`. */
+  private async invitePlatformClientByUserId(
+    userId: number,
+    tenantHost?: string,
+  ): Promise<{
+    userId: number;
+    invited: boolean;
+    resent: boolean;
+    message: string;
+  }> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user || user.type !== 'client') {
+      throw new NotFoundException('Usuario cliente no encontrado');
+    }
+    if (!user.email?.trim()) {
+      throw new BadRequestException('El cliente debe tener un email válido');
+    }
+    if (!user.status) {
+      throw new BadRequestException(
+        'No se puede enviar invitación a un usuario inactivo',
+      );
+    }
+
+    const clientRow = await this.clientRepository.findOne({
+      where: { userId: user.id, partnerId: IsNull() },
+    });
+    if (clientRow && !clientRow.email?.trim()) {
+      clientRow.email = user.email.trim();
+      await this.clientRepository.save(clientRow);
+    }
+
+    await this.billingService.ensureTrialWindow(user);
+
+    const branding = tenantHost
+      ? await this.emailTenantBranding.resolveForUser(user, tenantHost)
+      : this.emailTenantBranding.platformBranding();
+
+    const displayName =
+      `${user.first_name || ''} ${user.last_name || ''}`.trim() ||
+      clientRow?.full_name ||
+      user.username;
+
+    return this.sendClientPortalInvitationEmail(user, displayName, branding, true);
+  }
+
+  private async resolvePartnerInviteBranding(
+    partnerId: number,
+    tenantHost?: string,
+  ) {
+    if (tenantHost?.trim()) {
+      const tenant = await this.partnerTenantsService.resolveByHost(tenantHost);
+      if (tenant.kind === 'partner' && tenant.partnerId === partnerId) {
+        return this.emailTenantBranding.resolveByPartnerId(partnerId);
+      }
+    }
+    return this.emailTenantBranding.resolveByPartnerId(partnerId);
+  }
+
+  private async sendClientPortalInvitationEmail(
+    user: User,
+    displayNameFallback: string | undefined,
+    branding: EmailBranding,
+    resent: boolean,
+  ): Promise<{
+    userId: number;
+    invited: boolean;
+    resent: boolean;
+    message: string;
+  }> {
     const resetToken = await this.jwtService.signAsync(
       { id: user.id, email: user.email, type: 'password-setup' },
       { expiresIn: '24h' },
@@ -1083,7 +1181,7 @@ export class ClientsService {
 
     const displayName =
       `${user.first_name || ''} ${user.last_name || ''}`.trim() ||
-      client.full_name ||
+      displayNameFallback ||
       user.username;
 
     try {
