@@ -15,6 +15,7 @@ import { WizardModule } from './wizard/wizard.module';
 import { ZohoConfigModule } from './zoho-config/zoho-config.module';
 import { LiliModule } from './lili/lili.module';
 import { LoggingInterceptor } from './shared/common/interceptors/logging.interceptor';
+import { ViewAsReadOnlyInterceptor } from './panel/view-as/view-as-read-only.interceptor';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 
 @Module({
@@ -45,6 +46,10 @@ import { APP_INTERCEPTOR } from '@nestjs/core';
     {
       provide: APP_INTERCEPTOR,
       useClass: LoggingInterceptor,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: ViewAsReadOnlyInterceptor,
     },
   ],
 })

@@ -18,6 +18,7 @@ import { PartnerTenantsService } from '../partner-tenants/partner-tenants.servic
 import { EmailTenantBrandingService } from '../partner-tenants/email-tenant-branding.service';
 import { BillingService } from '../billing/billing.service';
 import { encodePassword } from '../../shared/common/utils/bcrypt';
+import { normalizeAuthEmail } from '../../shared/common/utils/normalize-auth-email';
 
 @Injectable()
 export class ClientsService {
@@ -369,14 +370,17 @@ export class ClientsService {
       // Si es partner, asignar automáticamente su ID
       const finalPartnerId = partnerId || createClientDto.partnerId;
 
+      const emailNorm = normalizeAuthEmail(createClientDto.email);
+      if (!emailNorm) {
+        throw new BadRequestException('El email es requerido');
+      }
+
       // Validar email único por partner (si tiene partner)
       if (finalPartnerId) {
-        const existingClient = await this.clientRepository.findOne({
-          where: {
-            email: createClientDto.email,
-            partnerId: finalPartnerId,
-          },
-        });
+        const existingClient = await this.findClientByEmailInScope(
+          emailNorm,
+          finalPartnerId,
+        );
 
         if (existingClient) {
           throw new BadRequestException(
@@ -387,6 +391,7 @@ export class ClientsService {
 
       const client = this.clientRepository.create({
         ...createClientDto,
+        email: emailNorm,
         partnerId: finalPartnerId,
         status: createClientDto.status !== undefined ? createClientDto.status : true,
       });
@@ -428,43 +433,68 @@ export class ClientsService {
   }
 
   /**
-   * Actualizar un cliente
+   * Actualizar un cliente (y usuario portal vinculado si existe).
    */
   async updateClient(
     id: number,
     updateClientDto: UpdateClientDto,
     partnerId?: number,
-  ): Promise<Client> {
+  ): Promise<Client | User> {
     try {
-      const where: any = { id };
-      if (partnerId) {
-        where.partnerId = partnerId; // Partners solo pueden actualizar sus propios clientes
+      const { listItemUserOnly, ...patch } = updateClientDto;
+
+      if (listItemUserOnly && !partnerId) {
+        return this.updateAdminUserOnlyClient(id, patch);
       }
 
-      const client = await this.clientRepository.findOne({ where });
+      const where: { id: number; partnerId?: number } = { id };
+      if (partnerId) {
+        where.partnerId = partnerId;
+      }
+
+      const client = await this.clientRepository.findOne({
+        where,
+        relations: ['user'],
+      });
 
       if (!client) {
         throw new NotFoundException('Cliente no encontrado');
       }
 
-      // Validar email único si se está cambiando
-      if (updateClientDto.email && updateClientDto.email !== client.email) {
-        const existingClient = await this.clientRepository.findOne({
-          where: {
-            email: updateClientDto.email,
-            partnerId: client.partnerId || undefined,
-          },
-        });
-
-        if (existingClient && existingClient.id !== id) {
-          throw new BadRequestException(
-            'Ya existe un cliente con este email',
-          );
+      if (patch.email !== undefined) {
+        const emailNorm = normalizeAuthEmail(patch.email);
+        if (!emailNorm) {
+          throw new BadRequestException('El email es requerido');
+        }
+        const currentNorm = normalizeAuthEmail(client.email);
+        if (emailNorm !== currentNorm) {
+          await this.assertClientEmailAvailable(client, emailNorm, client.id);
+          patch.email = emailNorm;
+        } else {
+          delete patch.email;
         }
       }
 
-      Object.assign(client, updateClientDto);
-      return await this.clientRepository.save(client);
+      if (patch.full_name !== undefined) {
+        patch.full_name = patch.full_name.trim();
+        if (!patch.full_name) {
+          throw new BadRequestException('El nombre completo es requerido');
+        }
+      }
+
+      Object.assign(client, patch);
+      const savedClient = await this.clientRepository.save(client);
+
+      if (savedClient.userId) {
+        await this.syncLinkedPortalUser(savedClient, patch);
+        const refreshed = await this.clientRepository.findOne({
+          where: { id: savedClient.id },
+          relations: ['user'],
+        });
+        return refreshed ?? savedClient;
+      }
+
+      return savedClient;
     } catch (e) {
       if (e instanceof NotFoundException || e instanceof BadRequestException) {
         throw e;
@@ -472,6 +502,215 @@ export class ClientsService {
       console.error('Error al actualizar cliente:', e);
       throw new InternalServerErrorException('No se pudo actualizar el cliente');
     }
+  }
+
+  /**
+   * Listado admin: fila solo usuario portal (sin registro en clients).
+   */
+  private async updateAdminUserOnlyClient(
+    userId: number,
+    patch: Omit<UpdateClientDto, 'listItemUserOnly'>,
+  ): Promise<User> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId, type: 'client' },
+    });
+    if (!user) {
+      throw new NotFoundException('Usuario cliente no encontrado');
+    }
+
+    if (patch.email !== undefined) {
+      const emailNorm = normalizeAuthEmail(patch.email);
+      if (!emailNorm) {
+        throw new BadRequestException('El email es requerido');
+      }
+      const currentNorm = normalizeAuthEmail(user.email);
+      if (emailNorm !== currentNorm) {
+        await this.assertEmailForPortalUser(user.id, emailNorm, null);
+        user.email = emailNorm;
+      }
+    }
+
+    if (patch.full_name !== undefined) {
+      const fullName = patch.full_name.trim();
+      if (!fullName) {
+        throw new BadRequestException('El nombre completo es requerido');
+      }
+      const { first, last } = this.splitFullName(fullName);
+      user.first_name = first;
+      user.last_name = last;
+    }
+
+    if (patch.phone !== undefined) {
+      user.phone = patch.phone?.trim() ? patch.phone.trim() : (null as unknown as string);
+    }
+    if (patch.company !== undefined) {
+      user.company = patch.company?.trim() ? patch.company.trim() : (null as unknown as string);
+    }
+    if (patch.status !== undefined) {
+      user.status = patch.status;
+    }
+
+    const savedUser = await this.userRepository.save(user);
+
+    const linkedClients = await this.clientRepository.find({
+      where: { userId: savedUser.id },
+    });
+    for (const row of linkedClients) {
+      if (patch.email !== undefined) {
+        row.email = savedUser.email;
+      }
+      if (patch.full_name !== undefined) {
+        row.full_name =
+          `${savedUser.first_name || ''} ${savedUser.last_name || ''}`.trim() ||
+          savedUser.username ||
+          savedUser.email;
+      }
+      if (patch.phone !== undefined) {
+        row.phone = patch.phone;
+      }
+      if (patch.company !== undefined) {
+        row.company = patch.company;
+      }
+      if (patch.status !== undefined) {
+        row.status = patch.status;
+      }
+      await this.clientRepository.save(row);
+    }
+
+    delete (savedUser as { password?: string }).password;
+    return savedUser;
+  }
+
+  /**
+   * Misma lógica que inviteClientToPortal: unicidad por partner/tenant y rol en users.
+   */
+  private async assertClientEmailAvailable(
+    client: Client,
+    newEmailNorm: string,
+    clientId: number,
+  ): Promise<void> {
+    const duplicateClient = await this.findClientByEmailInScope(
+      newEmailNorm,
+      client.partnerId ?? null,
+      clientId,
+    );
+    if (duplicateClient) {
+      throw new BadRequestException(
+        client.partnerId
+          ? 'Ya existe un cliente con este email para este partner'
+          : 'Ya existe un cliente con este email',
+      );
+    }
+    await this.assertEmailForPortalUser(
+      client.userId ?? null,
+      newEmailNorm,
+      client.partnerId ?? null,
+    );
+  }
+
+  private async assertEmailForPortalUser(
+    currentUserId: number | null,
+    newEmailNorm: string,
+    partnerId: number | null,
+  ): Promise<void> {
+    const existingUser = await this.findUserByEmailNorm(newEmailNorm);
+    if (!existingUser) {
+      return;
+    }
+    if (currentUserId != null && existingUser.id === currentUserId) {
+      return;
+    }
+    if (existingUser.type !== 'client') {
+      throw new BadRequestException(
+        'Ya existe una cuenta con este email con otro rol en el sistema',
+      );
+    }
+    const otherClient = await this.clientRepository.findOne({
+      where: { userId: existingUser.id },
+    });
+    if (!otherClient) {
+      throw new BadRequestException('El correo ya está en uso por otra cuenta');
+    }
+    if (partnerId != null) {
+      if (
+        otherClient.partnerId != null &&
+        otherClient.partnerId !== partnerId
+      ) {
+        throw new BadRequestException(
+          'Este email ya está vinculado a un cliente de otro partner',
+        );
+      }
+    } else if (otherClient.partnerId != null) {
+      throw new BadRequestException(
+        'Este email ya está vinculado a un cliente de un partner',
+      );
+    }
+    throw new BadRequestException('El correo ya está en uso por otra cuenta');
+  }
+
+  private async findUserByEmailNorm(emailNorm: string): Promise<User | null> {
+    return this.userRepository
+      .createQueryBuilder('u')
+      .where('LOWER(TRIM(u.email)) = :email', { email: emailNorm })
+      .getOne();
+  }
+
+  private async findClientByEmailInScope(
+    emailNorm: string,
+    partnerId: number | null,
+    excludeClientId?: number,
+  ): Promise<Client | null> {
+    const qb = this.clientRepository
+      .createQueryBuilder('c')
+      .where('LOWER(TRIM(c.email)) = :email', { email: emailNorm });
+    if (partnerId != null) {
+      qb.andWhere('c.partner_id = :partnerId', { partnerId });
+    } else {
+      qb.andWhere('c.partner_id IS NULL');
+    }
+    if (excludeClientId != null) {
+      qb.andWhere('c.id != :excludeClientId', { excludeClientId });
+    }
+    return qb.getOne();
+  }
+
+  private async syncLinkedPortalUser(
+    client: Client,
+    patch: Omit<UpdateClientDto, 'listItemUserOnly'>,
+  ): Promise<void> {
+    const user = await this.userRepository.findOne({
+      where: { id: client.userId! },
+    });
+    if (!user) {
+      return;
+    }
+    if (user.type !== 'client') {
+      throw new BadRequestException(
+        'El email ya está asociado a una cuenta que no es de cliente',
+      );
+    }
+
+    if (patch.email !== undefined) {
+      user.email = client.email;
+    }
+    if (patch.full_name !== undefined) {
+      const { first, last } = this.splitFullName(client.full_name);
+      user.first_name = first;
+      user.last_name = last;
+    }
+    if (patch.phone !== undefined) {
+      user.phone = patch.phone?.trim() ? patch.phone.trim() : (null as unknown as string);
+    }
+    if (patch.company !== undefined) {
+      user.company = patch.company?.trim()
+        ? patch.company.trim()
+        : (null as unknown as string);
+    }
+    if (patch.status !== undefined) {
+      user.status = patch.status;
+    }
+
+    await this.userRepository.save(user);
   }
 
   /**

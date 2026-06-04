@@ -33,6 +33,7 @@ import {
 } from './constants/login-trust.constants';
 import type { LoginTrustRequestContext } from './auth.service';
 import { extractTenantHostFromRequest } from '../../panel/partner-tenants/utils/extract-tenant-host';
+import { VIEW_AS_ACTOR_ACCESS_COOKIE } from '../../panel/view-as/view-as.constants';
 
 const isProduction = process.env.NODE_ENV === 'production';
 // SameSite=None + Secure para que las cookies se envíen en peticiones cross-origin (frontend en otro dominio)
@@ -267,13 +268,30 @@ export class AuthController {
       const payload = await this.jwtService.verifyAsync(token, {
         secret: jwtConstants.secret,
       });
-      const id = (payload as { id?: number }).id;
+      const p = payload as {
+        id?: number;
+        viewAs?: boolean;
+        viewAsActorId?: number;
+        viewAsActorType?: string;
+        viewAsClientLabel?: string;
+      };
+      const id = p.id;
       if (id != null && Number.isFinite(Number(id))) {
         await this.authService.resolveMeForTenant(
           Number(id),
           extractTenantHostFromRequest(req),
         );
-        return this.authService.buildSessionPayloadForUserId(Number(id));
+        const base = await this.authService.buildSessionPayloadForUserId(Number(id));
+        if (p.viewAs) {
+          return {
+            ...base,
+            viewAs: true,
+            viewAsActorId: p.viewAsActorId,
+            viewAsActorType: p.viewAsActorType,
+            viewAsClientLabel: p.viewAsClientLabel,
+          };
+        }
+        return base;
       }
       return payload;
     } catch (e) {
@@ -300,6 +318,7 @@ export class AuthController {
     };
     res.clearCookie('access_token', clearOpts);
     res.clearCookie('refresh_token', clearOpts);
+    res.clearCookie(VIEW_AS_ACTOR_ACCESS_COOKIE, clearOpts);
     return { ok: true };
   }
 
@@ -317,6 +336,24 @@ export class AuthController {
     @Req() req: express.Request,
     @Res({ passthrough: true }) res: express.Response,
   ) {
+    const accessCookie = req.cookies?.access_token;
+    if (accessCookie) {
+      try {
+        const accessPayload = await this.jwtService.verifyAsync(accessCookie, {
+          secret: jwtConstants.secret,
+        });
+        if ((accessPayload as { viewAs?: boolean }).viewAs) {
+          throw new ForbiddenException(
+            'Sal del modo vista del cliente antes de renovar la sesión.',
+          );
+        }
+      } catch (e) {
+        if (e instanceof ForbiddenException) {
+          throw e;
+        }
+      }
+    }
+
     const refreshToken = dto?.refreshToken ?? req.cookies?.refresh_token;
     const result = await this.authService.refresh(
       refreshToken,

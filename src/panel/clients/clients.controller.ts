@@ -344,7 +344,10 @@ export class ClientsController {
     @Body() updateClientDto: UpdateClientDto,
     @Request() req,
   ) {
-    const partnerId = req.user.type === 'partner' ? req.user.id : undefined;
+    const partnerId =
+      req.user.type === 'partner'
+        ? (req.user.accountOwnerId ?? req.user.id)
+        : undefined;
     return this.clientsService.updateClient(
       parseInt(id, 10),
       updateClientDto,
