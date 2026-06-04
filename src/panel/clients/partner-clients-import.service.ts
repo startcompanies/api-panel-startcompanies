@@ -161,6 +161,11 @@ export class PartnerClientsImportService {
     if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
       throw new BadRequestException('Tamaño de archivo inválido');
     }
+    if (sizeBytes <= PARTNER_IMPORT_ZIP_DIRECT_UPLOAD_MAX_BYTES) {
+      throw new BadRequestException(
+        'Para ZIP de hasta 95 MB use POST /panel/clients/import/documents-zip/upload',
+      );
+    }
     if (sizeBytes > PARTNER_IMPORT_ZIP_MAX_BYTES) {
       throw new BadRequestException(
         `El ZIP no puede superar ${Math.floor(PARTNER_IMPORT_ZIP_MAX_BYTES / (1024 * 1024))} MB`,
@@ -186,6 +191,30 @@ export class PartnerClientsImportService {
       s3Key: presigned.key,
       expiresIn: presigned.expiresIn,
     };
+  }
+
+  /**
+   * Sube ZIP de importación vía API → S3 (mismo patrón que /upload-file). Hasta 95 MB.
+   */
+  async uploadDocumentsZip(
+    partnerId: number,
+    file: Express.Multer.File,
+  ): Promise<{ url: string; s3Key: string }> {
+    this.assertZipFile(file);
+    if (file.size > PARTNER_IMPORT_ZIP_DIRECT_UPLOAD_MAX_BYTES) {
+      throw new BadRequestException(
+        'Para ZIP mayores a 95 MB solicite upload-url y suba directo a S3',
+      );
+    }
+
+    const uploaded = await this.uploadFileService.uploadPartnerClientsImportZip(
+      partnerId,
+      file,
+    );
+    this.logger.log(
+      `ZIP import vía API partner=${partnerId} size=${file.size} key=${uploaded.key}`,
+    );
+    return { url: uploaded.url, s3Key: uploaded.key };
   }
 
   async previewImport(

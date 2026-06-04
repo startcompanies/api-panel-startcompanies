@@ -11,6 +11,7 @@ import {
   Request,
   ParseIntPipe,
   Res,
+  UploadedFile,
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
@@ -24,10 +25,13 @@ import {
   ApiParam,
   ApiConsumes,
 } from '@nestjs/swagger';
-import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { ClientsService } from './clients.service';
-import { PartnerClientsImportService } from './partner-clients-import.service';
+import {
+  PartnerClientsImportService,
+  PARTNER_IMPORT_ZIP_DIRECT_UPLOAD_MAX_BYTES,
+} from './partner-clients-import.service';
 import { CreateClientDto } from './dtos/create-client.dto';
 import { UpdateClientDto } from './dtos/update-client.dto';
 import { GetClientByUuidDto } from './dtos/get-client-by-uuid.dto';
@@ -104,6 +108,27 @@ export class ClientsController {
       `attachment; filename="${sample.filename}"`,
     );
     res.send(sample.content);
+  }
+
+  @Post('import/documents-zip/upload')
+  @UseGuards(RolesGuard)
+  @Roles('partner')
+  @UseInterceptors(
+    FileInterceptor('documentsZip', {
+      limits: { fileSize: PARTNER_IMPORT_ZIP_DIRECT_UPLOAD_MAX_BYTES },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Subir ZIP de documentos vía API (hasta 95 MB)',
+    description:
+      'Mismo patrón que /upload-file: la API sube a S3. Devuelve s3Key para preview/import.',
+  })
+  uploadDocumentsZip(
+    @UploadedFile() file: Express.Multer.File,
+    @Request() req,
+  ) {
+    return this.partnerClientsImportService.uploadDocumentsZip(req.user.id, file);
   }
 
   @Post('import/documents-zip/upload-url')

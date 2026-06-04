@@ -216,6 +216,21 @@ export class UploadFileService {
     return `imports/partner-clients/${partnerId}/${Date.now()}-${randomUUID()}-${safeName}`;
   }
 
+  /**
+   * Sube un ZIP de importación partner vía API (mismo patrón que POST /upload-file).
+   */
+  async uploadPartnerClientsImportZip(
+    partnerId: number,
+    file: Express.Multer.File,
+  ): Promise<{ url: string; key: string }> {
+    const folder = `imports/partner-clients/${partnerId}`;
+    const result = await this.uploadFile(file, undefined, undefined, folder);
+    if (!result?.key) {
+      throw new BadRequestException('Error al subir el ZIP a almacenamiento');
+    }
+    return result;
+  }
+
   async uploadFile(
     file: Express.Multer.File,
     servicio?: string,
