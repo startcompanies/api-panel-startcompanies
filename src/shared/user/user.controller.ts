@@ -20,6 +20,7 @@ import { RolesGuard } from 'src/shared/auth/roles.guard';
 import { Roles } from 'src/shared/auth/roles.decorator';
 import { UpdateUserDto } from './dtos/update_user.dto';
 import { UpdatePanelStaffDto } from './dtos/update-panel-staff.dto';
+import { GetPartnerByUuidDto } from './dtos/get-partner-by-uuid.dto';
 import { PaginationDto } from 'src/shared/common/dtos/pagination.dto';
 
 @ApiTags('Common - Users')
@@ -93,6 +94,18 @@ export class UserController {
   })
   getPartnerStats(@Param('id') id: string) {
     return this.userService.getPartnerStats(parseInt(id, 10));
+  }
+
+  @Post('/partners/by-uuid')
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles('admin', 'user')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Obtener un partner por UUID',
+    description: 'Obtiene un partner (usuario type partner) usando su UUID en el body.',
+  })
+  getPartnerByUuid(@Body() body: GetPartnerByUuidDto) {
+    return this.userService.getPartnerByUuid(body.uuid);
   }
 
   @Get('/partners/:id')

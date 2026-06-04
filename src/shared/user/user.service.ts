@@ -18,6 +18,7 @@ import { EmailService } from '../common/services/email.service';
 import { JwtService } from '@nestjs/jwt';
 import { ZohoContactService } from '../../zoho-config/zoho-contact.service';
 import { EmailTenantBrandingService } from '../../panel/partner-tenants/email-tenant-branding.service';
+import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
 export class UserService {
@@ -320,15 +321,27 @@ export class UserService {
   }
 
   /**
+   * Asigna UUID a usuarios existentes creados antes de la columna uuid.
+   */
+  private async ensureUserUuid(user: User): Promise<User> {
+    if (user.uuid?.trim()) {
+      return user;
+    }
+    user.uuid = uuidv4();
+    return this.userRepository.save(user);
+  }
+
+  /**
    * Obtiene todos los usuarios de tipo 'partner'.
    * @returns Lista de partners.
    */
   async getPartners(): Promise<User[]> {
     try {
-      return await this.userRepository.find({
+      const partners = await this.userRepository.find({
         where: { type: 'partner' },
         order: { createdAt: 'DESC' },
       });
+      return Promise.all(partners.map((p) => this.ensureUserUuid(p)));
     } catch (e) {
       console.error('Error al obtener los partners:', e);
       throw new InternalServerErrorException(
@@ -348,12 +361,37 @@ export class UserService {
       if (!user) {
         throw new NotFoundException('Partner no encontrado');
       }
-      return user;
+      return this.ensureUserUuid(user);
     } catch (e) {
       if (e instanceof NotFoundException) {
         throw e;
       }
       console.error('Error al obtener el partner:', e);
+      throw new InternalServerErrorException('No se pudo obtener el partner');
+    }
+  }
+
+  /**
+   * Partner por UUID (solo usuarios con type 'partner'). Admin y staff.
+   */
+  async getPartnerByUuid(uuid: string): Promise<User> {
+    const trimmed = uuid?.trim();
+    if (!trimmed) {
+      throw new NotFoundException('Partner no encontrado');
+    }
+    try {
+      const user = await this.userRepository.findOne({
+        where: { uuid: trimmed, type: 'partner' },
+      });
+      if (!user) {
+        throw new NotFoundException('Partner no encontrado');
+      }
+      return this.ensureUserUuid(user);
+    } catch (e) {
+      if (e instanceof NotFoundException) {
+        throw e;
+      }
+      console.error('Error al obtener el partner por UUID:', e);
       throw new InternalServerErrorException('No se pudo obtener el partner');
     }
   }

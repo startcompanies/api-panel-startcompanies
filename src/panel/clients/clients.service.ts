@@ -188,6 +188,7 @@ export class ClientsService {
   async getClientsForPartnerWithStats(partnerId: number): Promise<
     Array<{
       id: number;
+      uuid: string;
       full_name: string;
       email: string;
       totalRequests: number;
@@ -223,6 +224,7 @@ export class ClientsService {
           });
           return {
             id: c.id,
+            uuid: c.uuid,
             full_name: c.full_name,
             email: c.email,
             totalRequests: stats.totalRequests,
