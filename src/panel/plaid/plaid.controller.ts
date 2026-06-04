@@ -8,6 +8,7 @@ import {
   ParseIntPipe,
   Post,
   Req,
+  UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
@@ -27,6 +28,12 @@ export class PlaidController {
   @Roles('client')
   status(@Req() req: { user: { id: number } }) {
     return this.plaidService.getStatus(req.user.id);
+  }
+
+  @Get('balance')
+  @Roles('client')
+  balance(@Req() req: { user: { id: number } }) {
+    return this.plaidService.getBankBalance(req.user.id);
   }
 
   @Post('link-token')
@@ -95,7 +102,13 @@ export class PlaidWebhookController {
 
   @Post('plaid')
   @HttpCode(200)
-  async plaidWebhook(@Body() body: Record<string, unknown>) {
-    return this.plaidService.handleWebhook(body as Parameters<PlaidService['handleWebhook']>[0]);
+  async plaidWebhook(
+    @Headers('plaid-verification') verificationHeader: string | undefined,
+    @Req() req: { body: Buffer },
+  ) {
+    if (!Buffer.isBuffer(req.body)) {
+      throw new UnauthorizedException('Webhook Plaid requiere body crudo');
+    }
+    return this.plaidService.handleWebhook(req.body, verificationHeader);
   }
 }

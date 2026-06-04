@@ -14,6 +14,8 @@ export interface PlatformFeatures {
   invoicing: boolean;
   accounting: boolean;
   accountingAi: boolean;
+  /** Sync bancaria vía Plaid Link. Si falta en JSON legacy, equivale a `accounting`. */
+  accountingPlaid?: boolean;
   aiConfig: boolean;
   videos: boolean;
   guides: boolean;

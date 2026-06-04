@@ -53,6 +53,8 @@ import { PricingOverride } from './panel/pricing/entities/pricing-override.entit
 import { PricingMisc } from './panel/pricing/entities/pricing-misc.entity';
 import { PartnerTenant } from './panel/partner-tenants/entities/partner-tenant.entity';
 import { PlaidItem } from './panel/plaid/entities/plaid-item.entity';
+import { PlaidWebhookEvent } from './panel/plaid/entities/plaid-webhook-event.entity';
+import { PlaidConnectReminder } from './panel/plaid/entities/plaid-connect-reminder.entity';
 
 // Validar que existan las variables de entorno requeridas
 const requiredEnvVars = ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'];
@@ -115,6 +117,8 @@ export const dataSourceOptions: DataSourceOptions = {
     PricingMisc,
     PartnerTenant,
     PlaidItem,
+    PlaidWebhookEvent,
+    PlaidConnectReminder,
   ],
   migrations: [
     // Compiladas junto a src → dist/src/migrations (npm run migration:run / migration:run:prod)

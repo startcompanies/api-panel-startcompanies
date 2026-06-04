@@ -29,7 +29,7 @@ async function bootstrap() {
 
   // Stripe webhook necesita body crudo para validar firma.
   app.use('/billing/webhook', express.raw({ type: 'application/json' }));
-  app.use('/webhooks/plaid', express.json({ limit: '1mb' }));
+  app.use('/webhooks/plaid', express.raw({ type: 'application/json' }));
   
   // Configurar límite de tamaño de peticiones
   app.use(express.json({ limit: '10mb' }));

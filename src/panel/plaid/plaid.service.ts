@@ -1,14 +1,18 @@
 import {
   BadRequestException,
+  ForbiddenException,
+  HttpCode,
   HttpException,
   HttpStatus,
   Injectable,
   Logger,
   NotFoundException,
   ServiceUnavailableException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { createHash } from 'crypto';
 import { Repository } from 'typeorm';
 import {
   Configuration,
@@ -19,10 +23,18 @@ import {
   type Transaction,
 } from 'plaid';
 import { PlaidItem, type PlaidItemStatus } from './entities/plaid-item.entity';
+import { PlaidWebhookEvent } from './entities/plaid-webhook-event.entity';
+import { PlaidConnectReminder } from './entities/plaid-connect-reminder.entity';
 import { BankAccount } from '../accounting/entities/bank-account.entity';
+import { User } from '../../shared/user/entities/user.entity';
+import { Client } from '../clients/entities/client.entity';
 import { AccountingService } from '../accounting/accounting.service';
 import { UserSecretEncryptionService } from '../../shared/common/services/user-secret-encryption.service';
+import { EmailService } from '../../shared/common/services/email.service';
 import { PartnerTenantsService } from '../partner-tenants/partner-tenants.service';
+import { PlaidWebhookVerifyService } from './plaid-webhook-verify.service';
+import { hasPlatformFeature } from '../../shared/common/utils/platform-features.util';
+import type { PlatformFeatures } from '../pricing/entities/pricing-plan.entity';
 import { mapPlaidTransactionToImportRow } from './plaid-transaction.util';
 
 type PlaidWebhookBody = {
@@ -40,11 +52,21 @@ export class PlaidService {
   constructor(
     @InjectRepository(PlaidItem)
     private readonly plaidItemsRepo: Repository<PlaidItem>,
+    @InjectRepository(PlaidWebhookEvent)
+    private readonly webhookEventsRepo: Repository<PlaidWebhookEvent>,
+    @InjectRepository(PlaidConnectReminder)
+    private readonly connectRemindersRepo: Repository<PlaidConnectReminder>,
     @InjectRepository(BankAccount)
     private readonly bankAccountsRepo: Repository<BankAccount>,
+    @InjectRepository(User)
+    private readonly usersRepo: Repository<User>,
+    @InjectRepository(Client)
+    private readonly clientsRepo: Repository<Client>,
     private readonly accountingService: AccountingService,
     private readonly encryption: UserSecretEncryptionService,
     private readonly partnerTenantsService: PartnerTenantsService,
+    private readonly webhookVerify: PlaidWebhookVerifyService,
+    private readonly emailService: EmailService,
   ) {}
 
   isConfigured(): boolean {
@@ -83,6 +105,50 @@ export class PlaidService {
     if (!process.env.USER_SECRETS_ENCRYPTION_KEY?.trim()) {
       throw new BadRequestException(
         'USER_SECRETS_ENCRYPTION_KEY no configurada; no se pueden guardar tokens Plaid.',
+      );
+    }
+  }
+
+  private async isPartnerClient(userId: number): Promise<boolean> {
+    const client = await this.clientsRepo.findOne({
+      where: { userId },
+      select: ['id', 'partnerId'],
+    });
+    return !!client?.partnerId;
+  }
+
+  async userHasAccountingPlaid(userId: number): Promise<boolean> {
+    const user = await this.usersRepo.findOne({
+      where: { id: userId },
+      select: ['id', 'type', 'platformFeatures'],
+    });
+    if (!user || user.type !== 'client') return false;
+    const isPartnerClient = await this.isPartnerClient(userId);
+    return hasPlatformFeature(
+      user.platformFeatures as PlatformFeatures | null | undefined,
+      'accountingPlaid',
+      { isPartnerClient },
+    );
+  }
+
+  private async assertAccountingPlaidAccess(userId: number): Promise<void> {
+    const user = await this.usersRepo.findOne({
+      where: { id: userId },
+      select: ['id', 'type', 'platformFeatures'],
+    });
+    if (!user || user.type !== 'client') {
+      throw new ForbiddenException('Plaid solo está disponible para clientes.');
+    }
+    const isPartnerClient = await this.isPartnerClient(userId);
+    if (
+      !hasPlatformFeature(
+        user.platformFeatures as PlatformFeatures | null | undefined,
+        'accountingPlaid',
+        { isPartnerClient },
+      )
+    ) {
+      throw new ForbiddenException(
+        'Tu plan no incluye sincronización bancaria con Plaid.',
       );
     }
   }
@@ -151,6 +217,7 @@ export class PlaidService {
     tenantHost?: string,
     plaidItemDbId?: number,
   ) {
+    await this.assertAccountingPlaidAccess(ownerUserId);
     const plaid = this.requireConfigured();
     const clientName = await this.resolveLinkClientName(tenantHost);
     const request: Parameters<PlaidApi['linkTokenCreate']>[0] = {
@@ -195,6 +262,7 @@ export class PlaidService {
       accounts?: Array<{ mask?: string }>;
     },
   ) {
+    await this.assertAccountingPlaidAccess(ownerUserId);
     this.requireEncryptionKey();
     const plaid = this.requireConfigured();
     let accessToken: string;
@@ -273,6 +341,7 @@ export class PlaidService {
   }
 
   async listItems(ownerUserId: number) {
+    await this.assertAccountingPlaidAccess(ownerUserId);
     const rows = await this.plaidItemsRepo.find({
       where: { ownerUserId },
       order: { id: 'DESC' },
@@ -283,14 +352,77 @@ export class PlaidService {
   }
 
   async getStatus(ownerUserId: number) {
+    const featureEnabled = await this.userHasAccountingPlaid(ownerUserId);
     const items = await this.plaidItemsRepo.find({
       where: { ownerUserId },
     });
     const active = items.filter((i) => i.status !== 'revoked');
     return {
-      configured: this.isConfigured(),
+      configured: this.isConfigured() && featureEnabled,
+      featureEnabled,
       itemsCount: active.length,
       loginRequired: active.some((i) => i.status === 'login_required'),
+    };
+  }
+
+  /** Saldo actual de cuentas de depósito conectadas vía Plaid (útil para renovación LLC). */
+  async getBankBalance(ownerUserId: number) {
+    await this.assertAccountingPlaidAccess(ownerUserId);
+    const plaid = this.requireConfigured();
+    const items = await this.plaidItemsRepo.find({
+      where: { ownerUserId },
+    });
+    const active = items.filter((i) => i.status === 'active' || i.status === 'login_required');
+    if (active.length === 0) {
+      throw new NotFoundException('No hay bancos conectados vía Plaid.');
+    }
+
+    let total = 0;
+    const accounts: Array<{
+      institutionName: string | null;
+      name: string;
+      mask: string | null;
+      balance: number;
+      currency: string;
+    }> = [];
+
+    for (const item of active) {
+      if (item.status === 'revoked') continue;
+      try {
+        const accessToken = this.decryptAccessToken(item);
+        const res = await plaid.accountsGet({ access_token: accessToken });
+        for (const acc of res.data.accounts || []) {
+          if (acc.type !== 'depository') continue;
+          const current = Number(acc.balances?.current ?? acc.balances?.available ?? 0);
+          if (!Number.isFinite(current)) continue;
+          total += current;
+          accounts.push({
+            institutionName: item.institutionName,
+            name: acc.name || acc.official_name || 'Account',
+            mask: acc.mask ?? item.accountMask,
+            balance: current,
+            currency: acc.balances?.iso_currency_code || 'USD',
+          });
+        }
+      } catch (err) {
+        this.logger.warn(
+          `accountsGet item=${item.plaidItemId}: ${this.plaidErrorMessage(err)}`,
+        );
+      }
+    }
+
+    if (accounts.length === 0) {
+      throw new BadRequestException(
+        'No se pudo obtener saldo de las cuentas conectadas.',
+      );
+    }
+
+    return {
+      totalBalance: Math.round(total * 100) / 100,
+      currency: accounts[0]?.currency || 'USD',
+      asOf: new Date().toISOString(),
+      source: 'plaid' as const,
+      accounts,
     };
   }
 
@@ -317,6 +449,7 @@ export class PlaidService {
   }
 
   async syncItemForUser(ownerUserId: number, itemDbId: number) {
+    await this.assertAccountingPlaidAccess(ownerUserId);
     const item = await this.getOwnedItem(ownerUserId, itemDbId);
     if (item.status === 'revoked') {
       throw new BadRequestException('La conexión fue revocada.');
@@ -330,6 +463,7 @@ export class PlaidService {
   }
 
   async disconnectItem(ownerUserId: number, itemDbId: number) {
+    await this.assertAccountingPlaidAccess(ownerUserId);
     const item = await this.getOwnedItem(ownerUserId, itemDbId);
     const plaid = this.requireConfigured();
     try {
@@ -404,9 +538,49 @@ export class PlaidService {
     };
   }
 
-  async handleWebhook(body: PlaidWebhookBody): Promise<{ ok: true }> {
+  async handleWebhook(
+    rawBody: Buffer,
+    verificationHeader: string | undefined,
+  ): Promise<{ ok: true }> {
+    if (!this.isConfigured()) {
+      return { ok: true };
+    }
+
+    const plaid = this.requireConfigured();
+    const verified = await this.webhookVerify.verify(
+      plaid,
+      rawBody,
+      verificationHeader,
+    );
+    if (!verified) {
+      throw new UnauthorizedException('Webhook Plaid no verificado');
+    }
+
+    const eventId = createHash('sha256').update(rawBody).digest('hex');
+    const existing = await this.webhookEventsRepo.findOne({ where: { id: eventId } });
+    if (existing) {
+      return { ok: true };
+    }
+
+    let body: PlaidWebhookBody;
+    try {
+      body = JSON.parse(rawBody.toString('utf8')) as PlaidWebhookBody;
+    } catch {
+      throw new BadRequestException('JSON inválido en webhook Plaid');
+    }
+
     const code = body.webhook_code;
+    const webhookType = body.webhook_type || 'unknown';
     const plaidItemId = body.item_id;
+
+    await this.webhookEventsRepo.save(
+      this.webhookEventsRepo.create({
+        id: eventId,
+        type: `${webhookType}:${code || 'unknown'}`,
+        itemId: plaidItemId ?? null,
+      }),
+    );
+
     if (!plaidItemId) {
       return { ok: true };
     }
@@ -451,6 +625,62 @@ export class PlaidService {
       } catch (err) {
         this.logger.warn(
           `Cron sync item=${item.plaidItemId}: ${this.plaidErrorMessage(err)}`,
+        );
+      }
+    }
+  }
+
+  /** Recordatorio opcional a clientes con contabilidad sin banco conectado. */
+  @Cron(CronExpression.EVERY_WEEK)
+  async cronConnectBankReminders(): Promise<void> {
+    const enabled = process.env.PLAID_CONNECT_REMINDER_ENABLED;
+    if (enabled !== 'true' && enabled !== '1') return;
+    if (!this.isConfigured()) return;
+
+    const rows: Array<{
+      user_id: number;
+      email: string;
+      first_name: string | null;
+      last_name: string | null;
+    }> = await this.usersRepo.query(`
+        SELECT u.id AS user_id, u.email, u.first_name, u.last_name
+        FROM users u
+        LEFT JOIN plaid_items pi
+          ON pi.owner_user_id = u.id AND pi.status != 'revoked'
+        LEFT JOIN plaid_connect_reminders pcr ON pcr.user_id = u.id
+        WHERE u.type = 'client'
+          AND u.email IS NOT NULL
+          AND (u.platform_features->>'accounting')::boolean IS TRUE
+          AND COALESCE((u.platform_features->>'accountingPlaid')::boolean, TRUE) IS TRUE
+          AND pi.id IS NULL
+          AND (pcr.user_id IS NULL OR pcr.sent_at < NOW() - INTERVAL '30 days')
+        LIMIT 50
+      `);
+
+    const panelUrl =
+      process.env.FRONTEND_PANEL_URL?.trim() ||
+      process.env.FRONTEND_BASE_URL?.trim() ||
+      'https://panel.startcompanies.io';
+
+    for (const row of rows) {
+      const userId = Number(row.user_id);
+      if (!userId || !row.email) continue;
+      const displayName =
+        [row.first_name, row.last_name].filter(Boolean).join(' ').trim() || row.email;
+      try {
+        const sent = await this.emailService.sendPlaidConnectReminderEmail({
+          email: row.email,
+          name: displayName,
+          panelUrl: `${panelUrl.replace(/\/$/, '')}/panel/contabilidad`,
+        });
+        if (sent) {
+          await this.connectRemindersRepo.save(
+            this.connectRemindersRepo.create({ userId, sentAt: new Date() }),
+          );
+        }
+      } catch (err) {
+        this.logger.warn(
+          `Reminder Plaid user=${userId}: ${err instanceof Error ? err.message : err}`,
         );
       }
     }

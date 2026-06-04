@@ -419,6 +419,28 @@ export class AccountingService {
     return { detectedBank, rows: preview, totalRows };
   }
 
+  /** Evita duplicar el mismo movimiento importado por CSV y por Plaid. */
+  private async hasCrossSourceDuplicate(
+    bankAccountId: number,
+    txDate: string,
+    amount: number,
+    payeeNormalized: string | null,
+  ): Promise<boolean> {
+    const absAmt = Math.abs(Number(amount));
+    const qb = this.txRepo
+      .createQueryBuilder('tx')
+      .innerJoin(BankImport, 'imp', 'imp.id = tx.bank_import_id')
+      .where('imp.bank_account_id = :bankAccountId', { bankAccountId })
+      .andWhere('tx.tx_date = :txDate', { txDate })
+      .andWhere('ABS(tx.amount::numeric) = :absAmt', { absAmt });
+    const pk = payeeNormalized?.trim();
+    if (pk && pk.length >= 3) {
+      qb.andWhere('tx.payee_normalized = :pk', { pk });
+    }
+    const n = await qb.getCount();
+    return n > 0;
+  }
+
   async importCsv(
     user: PanelUser,
     body: { bankAccountId?: number; importedByUserId?: number; fileName: string; csv: string },
@@ -451,6 +473,17 @@ export class AccountingService {
         .digest('hex');
       const exists = await this.txRepo.findOne({ where: { fingerprint } });
       if (exists) {
+        skippedDuplicates += 1;
+        continue;
+      }
+      if (
+        await this.hasCrossSourceDuplicate(
+          bankAccountId,
+          parsed.txDate,
+          parsed.amount,
+          parsed.payeeNormalized ?? null,
+        )
+      ) {
         skippedDuplicates += 1;
         continue;
       }
@@ -507,6 +540,17 @@ export class AccountingService {
         skippedDuplicates += 1;
         continue;
       }
+      if (
+        await this.hasCrossSourceDuplicate(
+          bankAccountId,
+          parsed.txDate,
+          parsed.amount,
+          parsed.payeeNormalized,
+        )
+      ) {
+        skippedDuplicates += 1;
+        continue;
+      }
       await this.txRepo.save(
         this.txRepo.create({
           bankImportId: bankImport.id,
@@ -546,7 +590,8 @@ export class AccountingService {
     const o = typeof opts === 'boolean' ? { uncategorized: opts } : opts ?? {};
     const qb = this.txScopeQuery(user).orderBy('tx.tx_date', 'DESC').addOrderBy('tx.id', 'DESC');
     if (o.needsReview) {
-      qb.andWhere('tx.needs_review = TRUE');
+      qb.andWhere('tx.needs_review = TRUE')
+        .andWhere("tx.suggested_account_code IS NOT NULL AND TRIM(tx.suggested_account_code) <> ''");
     } else if (o.uncategorized) {
       qb.andWhere("(tx.account_code IS NULL OR TRIM(tx.account_code) = '')");
     } else {
@@ -749,8 +794,27 @@ export class AccountingService {
     };
   }
 
+  /** Filas marcadas en revisión sin código sugerido (legacy / migraciones). */
+  private async resetOrphanReviewTransactions(user: PanelUser): Promise<number> {
+    const sub = this.txScopeQuery(user)
+      .select('tx.id')
+      .andWhere('tx.needs_review = TRUE')
+      .andWhere("(tx.suggested_account_code IS NULL OR TRIM(tx.suggested_account_code) = '')")
+      .andWhere("(tx.account_code IS NULL OR TRIM(tx.account_code) = '')");
+    const ids = (await sub.getMany()).map((r) => r.id);
+    if (!ids.length) return 0;
+    await this.txRepo
+      .createQueryBuilder()
+      .update(BankTransaction)
+      .set({ needsReview: false, categorizationStatus: 'pendiente' })
+      .whereInIds(ids)
+      .execute();
+    return ids.length;
+  }
+
   /** Aprueba todas las sugerencias en revisión del usuario (scope por cuenta bancaria). */
-  async bulkApproveSuggestions(user: PanelUser): Promise<{ approved: number }> {
+  async bulkApproveSuggestions(user: PanelUser): Promise<{ approved: number; resetOrphans: number }> {
+    const resetOrphans = await this.resetOrphanReviewTransactions(user);
     const rows = await this.listTransactions(user, { needsReview: true });
     let approved = 0;
     for (const row of rows) {
@@ -758,7 +822,7 @@ export class AccountingService {
       await this.approveSuggestion(user, row.id);
       approved += 1;
     }
-    return { approved };
+    return { approved, resetOrphans };
   }
 
   /** Sugerencia alineada al catálogo + umbral; fallback plan numérico legacy. */

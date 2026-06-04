@@ -79,7 +79,9 @@ export class PlatformAiService {
 
   async getStatus(user: { id: number; accountOwnerId?: number }): Promise<PlatformAiStatus> {
     const ownerId = this.resolveOwnerUserId(user);
-    await this.assertAccountingAiClient(ownerId);
+    if (!(await this.canUseAccountingAi(ownerId))) {
+      return { provider: 'gemini', configured: false, scope: null };
+    }
     const scope = await this.resolveScopeForUser(ownerId);
     const configured = !!this.getApiKeyForScope(scope);
     return { provider: 'gemini', configured, scope };

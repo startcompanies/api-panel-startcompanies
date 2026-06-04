@@ -1,8 +1,8 @@
 {
   "name": "api-panel-startcompanies",
-  "version": "0.0.1",
-  "description": "",
-  "author": "",
+  "version": "1.2.0",
+  "description": "API Panel StartCompanies",
+  "author": "Benjamin Montes <Digital Conquest>",
   "private": true,
   "license": "UNLICENSED",
   "scripts": {
@@ -70,6 +70,7 @@
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
     "form-data": "^4.0.5",
+    "jose": "^6.2.3",
     "pdfkit": "^0.18.0",
     "pg": "^8.16.3",
     "plaid": "^42.2.0",
