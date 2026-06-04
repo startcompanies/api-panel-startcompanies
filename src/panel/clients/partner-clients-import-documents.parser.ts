@@ -1,17 +1,23 @@
 import AdmZip from 'adm-zip';
 
+/** Metadatos de un archivo dentro del ZIP (sin cargar contenido). */
+export interface PartnerDocumentsZipFileEntryMeta {
+  relativePath: string;
+}
+
+/** Archivo listo para subir a WorkDrive. */
 export interface PartnerDocumentsZipFileEntry {
-  /** Ruta dentro de la carpeta LLC (p. ej. `LLC MAIN DOCUMENTS/operating-agreement.pdf`). */
   relativePath: string;
   buffer: Buffer;
 }
 
 export interface PartnerDocumentsZipIndex {
-  /** Clave normalizada (nombre LLC) → archivos de esa carpeta. */
-  foldersByLlcKey: Map<string, PartnerDocumentsZipFileEntry[]>;
+  /** Clave normalizada (nombre LLC) → archivos de esa carpeta (solo rutas). */
+  foldersByLlcKey: Map<string, PartnerDocumentsZipFileEntryMeta[]>;
   /** Nombres de carpeta raíz tal como aparecen en el ZIP. */
   folderNames: string[];
   totalFiles: number;
+  pathOffset: number;
 }
 
 export interface PartnerDocumentsZipMatchSummary {
@@ -68,43 +74,40 @@ export function detectZipLlcPathOffset(pathPartsList: string[][]): number {
   return 0;
 }
 
-/**
- * Indexa un ZIP con carpetas por LLC (nombre = `apertura_llc_name`).
- * Acepta LLC en la raíz del ZIP o dentro de una carpeta contenedora única.
- */
-export function parsePartnerClientsDocumentsZip(
-  buffer: Buffer,
-): PartnerDocumentsZipIndex {
-  const zip = new AdmZip(buffer);
-  const foldersByLlcKey = new Map<string, PartnerDocumentsZipFileEntry[]>();
-  const folderNameByKey = new Map<string, string>();
-  let totalFiles = 0;
-
+function collectZipFilePathParts(zip: AdmZip): string[][] {
   const rawPaths: string[][] = [];
-  const fileEntries: Array<{ parts: string[]; buffer: Buffer }> = [];
-
   for (const entry of zip.getEntries()) {
     if (entry.isDirectory) {
       continue;
     }
-
     const entryPath = entry.entryName.replace(/\\/g, '/');
     if (shouldSkipZipEntry(entryPath)) {
       continue;
     }
-
     const parts = entryPath.split('/').filter(Boolean);
     if (parts.length < 2) {
       continue;
     }
-
     rawPaths.push(parts);
-    fileEntries.push({ parts, buffer: entry.getData() });
   }
+  return rawPaths;
+}
 
+/**
+ * Indexa un ZIP sin extraer el contenido de los archivos (rápido; apto para preview).
+ */
+export function indexPartnerClientsDocumentsZip(
+  buffer: Buffer,
+): PartnerDocumentsZipIndex {
+  const zip = new AdmZip(buffer);
+  const foldersByLlcKey = new Map<string, PartnerDocumentsZipFileEntryMeta[]>();
+  const folderNameByKey = new Map<string, string>();
+  let totalFiles = 0;
+
+  const rawPaths = collectZipFilePathParts(zip);
   const pathOffset = detectZipLlcPathOffset(rawPaths);
 
-  for (const { parts, buffer: fileBuffer } of fileEntries) {
+  for (const parts of rawPaths) {
     const llcIndex = pathOffset;
     if (parts.length <= llcIndex + 1) {
       continue;
@@ -118,10 +121,7 @@ export function parsePartnerClientsDocumentsZip(
 
     const key = normalizeLlcFolderKey(llcFolderName);
     const list = foldersByLlcKey.get(key) ?? [];
-    list.push({
-      relativePath,
-      buffer: fileBuffer,
-    });
+    list.push({ relativePath });
     foldersByLlcKey.set(key, list);
     folderNameByKey.set(key, llcFolderName);
     totalFiles++;
@@ -131,6 +131,84 @@ export function parsePartnerClientsDocumentsZip(
     foldersByLlcKey,
     folderNames: [...folderNameByKey.values()],
     totalFiles,
+    pathOffset,
+  };
+}
+
+/**
+ * Extrae archivos de una LLC concreta (carga buffers; usar en execute, no en preview).
+ */
+export function extractLlcDocumentFilesFromZip(
+  buffer: Buffer,
+  llcFolderName: string,
+  pathOffset?: number,
+): PartnerDocumentsZipFileEntry[] {
+  const zip = new AdmZip(buffer);
+  const offset =
+    pathOffset ?? detectZipLlcPathOffset(collectZipFilePathParts(zip));
+  const targetKey = normalizeLlcFolderKey(llcFolderName);
+  const results: PartnerDocumentsZipFileEntry[] = [];
+
+  for (const entry of zip.getEntries()) {
+    if (entry.isDirectory) {
+      continue;
+    }
+
+    const entryPath = entry.entryName.replace(/\\/g, '/');
+    if (shouldSkipZipEntry(entryPath)) {
+      continue;
+    }
+
+    const parts = entryPath.split('/').filter(Boolean);
+    if (parts.length <= offset + 1) {
+      continue;
+    }
+
+    const llcNameInPath = parts[offset];
+    if (normalizeLlcFolderKey(llcNameInPath) !== targetKey) {
+      continue;
+    }
+
+    const relativePath = parts.slice(offset + 1).join('/');
+    if (!relativePath) {
+      continue;
+    }
+
+    results.push({
+      relativePath,
+      buffer: entry.getData(),
+    });
+  }
+
+  return results;
+}
+
+/**
+ * @deprecated Usar {@link indexPartnerClientsDocumentsZip} en preview y
+ * {@link extractLlcDocumentFilesFromZip} al subir documentos.
+ */
+export function parsePartnerClientsDocumentsZip(
+  buffer: Buffer,
+): PartnerDocumentsZipIndex & {
+  foldersByLlcKey: Map<string, PartnerDocumentsZipFileEntry[]>;
+} {
+  const index = indexPartnerClientsDocumentsZip(buffer);
+  const withBuffers = new Map<string, PartnerDocumentsZipFileEntry[]>();
+
+  for (const folderName of index.folderNames) {
+    withBuffers.set(
+      normalizeLlcFolderKey(folderName),
+      extractLlcDocumentFilesFromZip(
+        buffer,
+        folderName,
+        index.pathOffset,
+      ),
+    );
+  }
+
+  return {
+    ...index,
+    foldersByLlcKey: withBuffers,
   };
 }
 

@@ -21,7 +21,8 @@ import {
 } from './partner-clients-import.parser';
 import {
   normalizeLlcFolderKey,
-  parsePartnerClientsDocumentsZip,
+  indexPartnerClientsDocumentsZip,
+  extractLlcDocumentFilesFromZip,
   PartnerDocumentsZipMatchSummary,
   PartnerLlcWorkDriveTarget,
   summarizeDocumentsZipAgainstPartnerLlcs,
@@ -186,7 +187,7 @@ export class PartnerClientsImportService {
     partnerId: number,
     documentsZipBuffer: Buffer,
   ): Promise<PartnerClientImportPreviewResult> {
-    const zipIndex = parsePartnerClientsDocumentsZip(documentsZipBuffer);
+    const zipIndex = indexPartnerClientsDocumentsZip(documentsZipBuffer);
     if (zipIndex.folderNames.length === 0) {
       return {
         mode: 'zip',
@@ -284,7 +285,7 @@ export class PartnerClientsImportService {
       };
     }
 
-    const zipIndex = parsePartnerClientsDocumentsZip(documentsZipBuffer);
+    const zipIndex = indexPartnerClientsDocumentsZip(documentsZipBuffer);
     const resultRows: PartnerClientImportExecuteResult['rows'] = [];
     let importedCount = 0;
     let skippedCount = 0;
@@ -333,9 +334,12 @@ export class PartnerClientsImportService {
         continue;
       }
 
-      const llcKey = normalizeLlcFolderKey(row.aperturaLlcName);
-      const docFiles = zipIndex.foldersByLlcKey.get(llcKey);
-      if (!docFiles?.length) {
+      const docFiles = extractLlcDocumentFilesFromZip(
+        documentsZipBuffer,
+        row.aperturaLlcName,
+        zipIndex.pathOffset,
+      );
+      if (!docFiles.length) {
         skippedCount++;
         resultRows.push({
           lineNumber: row.lineNumber,
@@ -475,7 +479,7 @@ export class PartnerClientsImportService {
       rows,
       documentsZip: documentsZipBuffer
         ? summarizeDocumentsZipMatch(
-            parsePartnerClientsDocumentsZip(documentsZipBuffer),
+            indexPartnerClientsDocumentsZip(documentsZipBuffer),
             rows
               .filter((r) => r.status === 'valid' && r.aperturaLlcName)
               .map((r) => ({
@@ -493,7 +497,7 @@ export class PartnerClientsImportService {
     options?: { tenantHost?: string; documentsZipBuffer?: Buffer },
   ): Promise<PartnerClientImportExecuteResult> {
     const documentsZipIndex = options?.documentsZipBuffer
-      ? parsePartnerClientsDocumentsZip(options.documentsZipBuffer)
+      ? indexPartnerClientsDocumentsZip(options.documentsZipBuffer)
       : undefined;
 
     const preview = await this.preview(
@@ -582,10 +586,13 @@ export class PartnerClientsImportService {
           workDriveId = zoho.workDriveId;
           message = 'Importado y sincronizado con CRM/WorkDrive';
 
-          if (documentsZipIndex && workDriveId) {
-            const llcKey = normalizeLlcFolderKey(row.aperturaLlcName);
-            const docFiles = documentsZipIndex.foldersByLlcKey.get(llcKey);
-            if (docFiles?.length) {
+          if (documentsZipIndex && workDriveId && options?.documentsZipBuffer) {
+            const docFiles = extractLlcDocumentFilesFromZip(
+              options.documentsZipBuffer,
+              row.aperturaLlcName,
+              documentsZipIndex.pathOffset,
+            );
+            if (docFiles.length) {
               try {
                 const uploadResult =
                   await this.zohoWorkDriveService.uploadDocumentTree(
