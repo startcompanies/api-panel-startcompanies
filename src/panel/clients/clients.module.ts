@@ -12,6 +12,7 @@ import { ZohoConfigModule } from '../../zoho-config/zoho-config.module';
 import { CommonModule } from '../../shared/common/common.module';
 import { PartnerTenantsModule } from '../partner-tenants/partner-tenants.module';
 import { BillingModule } from '../billing/billing.module';
+import { UploadFileModule } from '../../shared/upload-file/upload-file.module';
 
 @Module({
   controllers: [ClientsController],
@@ -22,6 +23,7 @@ import { BillingModule } from '../billing/billing.module';
     CommonModule,
     PartnerTenantsModule,
     BillingModule,
+    UploadFileModule,
   ],
   exports: [ClientsService],
 })

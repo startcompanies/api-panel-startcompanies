@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -28,6 +29,11 @@ import {
   summarizeDocumentsZipAgainstPartnerLlcs,
   summarizeDocumentsZipMatch,
 } from './partner-clients-import-documents.parser';
+import { UploadFileService } from '../../shared/upload-file/upload-file.service';
+
+/** ZIPs mayores se suben directo a S3 (Cloudflare/proxy suele limitar ~100 MB). */
+export const PARTNER_IMPORT_ZIP_DIRECT_UPLOAD_MAX_BYTES = 95 * 1024 * 1024;
+export const PARTNER_IMPORT_ZIP_MAX_BYTES = 200 * 1024 * 1024;
 
 export type PartnerClientImportMode = 'csv' | 'zip' | 'csv_zip';
 
@@ -82,6 +88,8 @@ export interface PartnerClientImportExecuteResult {
 
 @Injectable()
 export class PartnerClientsImportService {
+  private readonly logger = new Logger(PartnerClientsImportService.name);
+
   constructor(
     @InjectRepository(Client)
     private readonly clientRepository: Repository<Client>,
@@ -93,6 +101,7 @@ export class PartnerClientsImportService {
     private readonly zohoSyncService: ZohoSyncService,
     private readonly zohoWorkDriveService: ZohoWorkDriveService,
     private readonly dataSource: DataSource,
+    private readonly uploadFileService: UploadFileService,
   ) {}
 
   getSampleCsv(): { filename: string; content: Buffer } {
@@ -114,44 +123,106 @@ export class PartnerClientsImportService {
   assertImportInputs(
     csvFile?: Express.Multer.File,
     documentsZipFile?: Express.Multer.File,
+    options?: { documentsZipS3Key?: string },
   ): {
     mode: PartnerClientImportMode;
     csvContent?: string;
-    documentsZipBuffer?: Buffer;
+    hasDocumentsZip: boolean;
+    documentsZipS3Key?: string;
   } {
     const csvContent = csvFile?.buffer
       ? this.assertCsvFile(csvFile)
       : undefined;
-    const documentsZipBuffer = this.parseOptionalDocumentsZip(documentsZipFile);
+    const hasMultipartZip = !!(documentsZipFile?.buffer?.length);
+    const documentsZipS3Key = options?.documentsZipS3Key?.trim() || undefined;
+    const hasDocumentsZip = hasMultipartZip || !!documentsZipS3Key;
 
-    if (!csvContent && !documentsZipBuffer) {
+    if (!csvContent && !hasDocumentsZip) {
       throw new BadRequestException(
         'Sube un archivo CSV, un ZIP de documentos, o ambos',
       );
     }
 
     const mode: PartnerClientImportMode =
-      csvContent && documentsZipBuffer
+      csvContent && hasDocumentsZip
         ? 'csv_zip'
         : csvContent
           ? 'csv'
           : 'zip';
 
-    return { mode, csvContent, documentsZipBuffer };
+    return { mode, csvContent, hasDocumentsZip, documentsZipS3Key };
+  }
+
+  async createDocumentsZipUploadUrl(
+    partnerId: number,
+    filename: string,
+    sizeBytes: number,
+  ): Promise<{ uploadUrl: string; s3Key: string; expiresIn: number }> {
+    if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
+      throw new BadRequestException('Tamaño de archivo inválido');
+    }
+    if (sizeBytes > PARTNER_IMPORT_ZIP_MAX_BYTES) {
+      throw new BadRequestException(
+        `El ZIP no puede superar ${Math.floor(PARTNER_IMPORT_ZIP_MAX_BYTES / (1024 * 1024))} MB`,
+      );
+    }
+
+    const s3Key = this.uploadFileService.buildPartnerClientsImportZipKey(
+      partnerId,
+      filename,
+    );
+    const presigned = await this.uploadFileService.createPresignedPutUrl({
+      key: s3Key,
+      contentType: 'application/zip',
+      expiresInSeconds: 3600,
+    });
+
+    this.logger.log(
+      `Presigned ZIP import partner=${partnerId} size=${sizeBytes} key=${s3Key}`,
+    );
+
+    return {
+      uploadUrl: presigned.uploadUrl,
+      s3Key: presigned.key,
+      expiresIn: presigned.expiresIn,
+    };
   }
 
   async previewImport(
     partnerId: number,
     csvFile?: Express.Multer.File,
     documentsZipFile?: Express.Multer.File,
+    options?: { documentsZipS3Key?: string },
   ): Promise<PartnerClientImportPreviewResult> {
-    const { mode, csvContent, documentsZipBuffer } = this.assertImportInputs(
+    const zipMb = documentsZipFile?.size
+      ? (documentsZipFile.size / (1024 * 1024)).toFixed(1)
+      : options?.documentsZipS3Key
+        ? 's3'
+        : '0';
+    this.logger.log(
+      `previewImport partner=${partnerId} csv=${!!csvFile} zip=${!!documentsZipFile || !!options?.documentsZipS3Key} zipMb=${zipMb}`,
+    );
+
+    const { mode, csvContent, documentsZipS3Key } = this.assertImportInputs(
       csvFile,
       documentsZipFile,
+      { documentsZipS3Key: options?.documentsZipS3Key },
+    );
+    const documentsZipBuffer = await this.loadDocumentsZipBuffer(
+      documentsZipFile,
+      documentsZipS3Key,
+      partnerId,
     );
 
     if (mode === 'zip') {
-      return this.previewZipOnly(partnerId, documentsZipBuffer!);
+      if (!documentsZipBuffer) {
+        throw new BadRequestException('ZIP de documentos requerido');
+      }
+      const result = await this.previewZipOnly(partnerId, documentsZipBuffer);
+      this.logger.log(
+        `previewImport zip-only partner=${partnerId} rows=${result.totalRows} valid=${result.validCount}`,
+      );
+      return result;
     }
 
     const result = await this.preview(
@@ -166,15 +237,24 @@ export class PartnerClientsImportService {
     partnerId: number,
     csvFile?: Express.Multer.File,
     documentsZipFile?: Express.Multer.File,
-    options?: { tenantHost?: string },
+    options?: { tenantHost?: string; documentsZipS3Key?: string },
   ): Promise<PartnerClientImportExecuteResult> {
-    const { mode, csvContent, documentsZipBuffer } = this.assertImportInputs(
+    const { mode, csvContent, documentsZipS3Key } = this.assertImportInputs(
       csvFile,
       documentsZipFile,
+      { documentsZipS3Key: options?.documentsZipS3Key },
+    );
+    const documentsZipBuffer = await this.loadDocumentsZipBuffer(
+      documentsZipFile,
+      documentsZipS3Key,
+      partnerId,
     );
 
     if (mode === 'zip') {
-      return this.executeZipOnly(partnerId, documentsZipBuffer!);
+      if (!documentsZipBuffer) {
+        throw new BadRequestException('ZIP de documentos requerido');
+      }
+      return this.executeZipOnly(partnerId, documentsZipBuffer);
     }
 
     return this.execute(csvContent!, partnerId, {
@@ -867,5 +947,32 @@ export class PartnerClientsImportService {
       return undefined;
     }
     return this.assertZipFile(file);
+  }
+
+  async loadDocumentsZipBuffer(
+    file?: Express.Multer.File,
+    s3Key?: string,
+    partnerId?: number,
+  ): Promise<Buffer | undefined> {
+    if (file?.buffer?.length) {
+      return this.assertZipFile(file);
+    }
+    if (!s3Key?.trim()) {
+      return undefined;
+    }
+    if (partnerId == null) {
+      throw new BadRequestException('Partner requerido para leer ZIP desde S3');
+    }
+    this.assertPartnerImportZipS3Key(s3Key, partnerId);
+    this.logger.log(`Leyendo ZIP import desde S3 key=${s3Key.trim()}`);
+    return this.uploadFileService.getObjectBufferByKey(s3Key.trim());
+  }
+
+  private assertPartnerImportZipS3Key(s3Key: string, partnerId: number): void {
+    const normalized = s3Key.trim().replace(/^\/+/, '');
+    const expectedPrefix = `imports/partner-clients/${partnerId}/`;
+    if (!normalized.startsWith(expectedPrefix)) {
+      throw new BadRequestException('Referencia de ZIP no válida para este partner');
+    }
   }
 }

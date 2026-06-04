@@ -5,8 +5,11 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   ListObjectsV2Command,
+  PutObjectCommand,
 } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Upload } from '@aws-sdk/lib-storage';
+import { randomUUID } from 'crypto';
 import axios from 'axios';
 import { awsConfigService } from '../../config/aws.config.service';
 import { HandleExceptionsService } from 'src/shared/common/common.service';
@@ -148,6 +151,69 @@ export class UploadFileService {
       );
       return null;
     }
+  }
+
+  /** Lee un objeto del bucket por key (p. ej. ZIP de importación temporal). */
+  async getObjectBufferByKey(key: string): Promise<Buffer> {
+    const normalizedKey = (key || '').trim().replace(/^\/+/, '');
+    if (!normalizedKey) {
+      throw new BadRequestException('Key S3 inválida');
+    }
+
+    try {
+      const out = await this.s3Client.send(
+        new GetObjectCommand({
+          Bucket: this.bucketName,
+          Key: normalizedKey,
+        }),
+      );
+      const body = out.Body;
+      if (!body) {
+        throw new BadRequestException('El archivo no existe en almacenamiento');
+      }
+      const chunks: Uint8Array[] = [];
+      for await (const chunk of body as AsyncIterable<Uint8Array>) {
+        chunks.push(chunk);
+      }
+      return Buffer.concat(chunks);
+    } catch (error: any) {
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+      this.logger.error(
+        `Error al leer S3 key=${normalizedKey}: ${error?.message ?? error}`,
+      );
+      throw new BadRequestException(
+        'No se pudo leer el ZIP desde almacenamiento. Vuelve a subirlo.',
+      );
+    }
+  }
+
+  /** URL prefirmada PUT para subir archivos grandes directo a S3 (evita límites del proxy). */
+  async createPresignedPutUrl(options: {
+    key: string;
+    contentType: string;
+    expiresInSeconds?: number;
+  }): Promise<{ uploadUrl: string; key: string; expiresIn: number }> {
+    const key = options.key.replace(/^\/+/, '');
+    const expiresIn = options.expiresInSeconds ?? 3600;
+    const command = new PutObjectCommand({
+      Bucket: this.bucketName,
+      Key: key,
+      ContentType: options.contentType,
+    });
+    const uploadUrl = await getSignedUrl(this.s3Client, command, {
+      expiresIn,
+    });
+    return { uploadUrl, key, expiresIn };
+  }
+
+  /** Key temporal para ZIP de importación de clientes partner. */
+  buildPartnerClientsImportZipKey(partnerId: number, filename: string): string {
+    const safeName = (filename || 'documents.zip')
+      .replace(/[^a-zA-Z0-9._-]/g, '_')
+      .slice(0, 120);
+    return `imports/partner-clients/${partnerId}/${Date.now()}-${randomUUID()}-${safeName}`;
   }
 
   async uploadFile(

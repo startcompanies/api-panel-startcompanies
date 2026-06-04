@@ -106,6 +106,25 @@ export class ClientsController {
     res.send(sample.content);
   }
 
+  @Post('import/documents-zip/upload-url')
+  @UseGuards(RolesGuard)
+  @Roles('partner')
+  @ApiOperation({
+    summary: 'URL prefirmada para subir ZIP grande directo a S3',
+    description:
+      'Para ZIP >95 MB. El cliente sube con PUT a uploadUrl y luego envía s3Key en preview/import.',
+  })
+  createDocumentsZipUploadUrl(
+    @Body() body: { filename?: string; sizeBytes?: number },
+    @Request() req,
+  ) {
+    return this.partnerClientsImportService.createDocumentsZipUploadUrl(
+      req.user.id,
+      body?.filename || 'documents.zip',
+      Number(body?.sizeBytes ?? 0),
+    );
+  }
+
   @Post('import/preview')
   @UseGuards(RolesGuard)
   @Roles('partner')
@@ -133,6 +152,10 @@ export class ClientsController {
           format: 'binary',
           description: 'ZIP opcional con carpetas por LLC y documentos',
         },
+        documentsZipS3Key: {
+          type: 'string',
+          description: 'Key S3 si el ZIP se subió con upload-url (ZIP grande)',
+        },
       },
     },
   })
@@ -143,12 +166,14 @@ export class ClientsController {
   previewImport(
     @UploadedFiles()
     files: { file?: Express.Multer.File[]; documentsZip?: Express.Multer.File[] },
+    @Body('documentsZipS3Key') documentsZipS3Key: string | undefined,
     @Request() req,
   ) {
     return this.partnerClientsImportService.previewImport(
       req.user.id,
       files?.file?.[0],
       files?.documentsZip?.[0],
+      { documentsZipS3Key: documentsZipS3Key?.trim() || undefined },
     );
   }
 
@@ -179,6 +204,10 @@ export class ClientsController {
           format: 'binary',
           description: 'ZIP opcional con carpetas por LLC y documentos',
         },
+        documentsZipS3Key: {
+          type: 'string',
+          description: 'Key S3 si el ZIP se subió con upload-url (ZIP grande)',
+        },
       },
     },
   })
@@ -189,6 +218,7 @@ export class ClientsController {
   executeImport(
     @UploadedFiles()
     files: { file?: Express.Multer.File[]; documentsZip?: Express.Multer.File[] },
+    @Body('documentsZipS3Key') documentsZipS3Key: string | undefined,
     @Request() req,
   ) {
     const tenantHost =
@@ -199,7 +229,10 @@ export class ClientsController {
       req.user.id,
       files?.file?.[0],
       files?.documentsZip?.[0],
-      { tenantHost },
+      {
+        tenantHost,
+        documentsZipS3Key: documentsZipS3Key?.trim() || undefined,
+      },
     );
   }
 
