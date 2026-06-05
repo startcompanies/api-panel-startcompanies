@@ -1183,11 +1183,20 @@ export class RequestsService {
           if (aperturaDataFieldsAny.bankAccountLinkedPhone === undefined) delete aperturaDataToCreate.bankAccountLinkedPhone;
           if (aperturaDataFieldsAny.actividadFinancieraEsperada === undefined) delete aperturaDataToCreate.actividadFinancieraEsperada;
           if (aperturaDataFieldsAny.projectOrCompanyUrl === undefined) delete aperturaDataToCreate.projectOrCompanyUrl;
+          if (aperturaDataFieldsAny.bankVerifierPassportUrl === undefined) delete aperturaDataToCreate.bankVerifierPassportUrl;
         }
         
-        // Eliminar campos que no existen en el formulario (EIN relacionados)
-        delete aperturaDataToCreate.hasEin;
+        // einNumber (legacy/API) -> ein (columna BD)
+        if (
+          aperturaDataToCreate.einNumber !== undefined &&
+          aperturaDataToCreate.ein === undefined
+        ) {
+          aperturaDataToCreate.ein = aperturaDataToCreate.einNumber;
+        }
         delete aperturaDataToCreate.einNumber;
+
+        // Eliminar campos que no existen en el formulario (EIN relacionados, no persistidos)
+        delete aperturaDataToCreate.hasEin;
         delete aperturaDataToCreate.einDocumentUrl;
         delete aperturaDataToCreate.noEinReason;
         delete aperturaDataToCreate.incorporationDate;
@@ -1998,11 +2007,16 @@ export class RequestsService {
             if (!(aperturaDataFieldsAny.bankAccountLinkedPhone !== undefined)) delete dataToAssign.bankAccountLinkedPhone;
             if (!(aperturaDataFieldsAny.actividadFinancieraEsperada !== undefined)) delete dataToAssign.actividadFinancieraEsperada;
             if (!(aperturaDataFieldsAny.projectOrCompanyUrl !== undefined)) delete dataToAssign.projectOrCompanyUrl;
+            if (!(aperturaDataFieldsAny.bankVerifierPassportUrl !== undefined)) delete dataToAssign.bankVerifierPassportUrl;
           }
           
+          if (dataToAssign.einNumber !== undefined && dataToAssign.ein === undefined) {
+            dataToAssign.ein = dataToAssign.einNumber;
+          }
+          delete dataToAssign.einNumber;
+
           // Eliminar campos que no existen en el formulario (EIN relacionados y otros campos no usados)
           delete dataToAssign.hasEin;
-          delete dataToAssign.einNumber;
           delete dataToAssign.einDocumentUrl;
           delete dataToAssign.noEinReason;
           delete dataToAssign.incorporationDate;
@@ -3530,6 +3544,7 @@ export class RequestsService {
           'certificateOfFormationUrl',
           'serviceBillUrl',
           'bankStatementUrl',
+          'bankVerifierPassportUrl',
         ];
         if (updateUrlsInObject(request.aperturaLlcRequest, urlFields)) {
           await queryRunner.manager.save(AperturaLlcRequest, request.aperturaLlcRequest);

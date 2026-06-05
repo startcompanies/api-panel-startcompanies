@@ -48,6 +48,7 @@ export const VALIDATION_RULES: ServiceValidationRules = {
     3: [
       { field: 'serviceBillUrl', type: 'url', required: true },
       { field: 'bankStatementUrl', type: 'url', required: true },
+      { field: 'bankVerifierPassportUrl', type: 'url', required: true },
       { field: 'periodicIncome10k', type: 'string', required: true, enum: ['si', 'no'] },
       { field: 'bankAccountLinkedEmail', type: 'email', required: true },
       { field: 'bankAccountLinkedPhone', type: 'string', required: true },

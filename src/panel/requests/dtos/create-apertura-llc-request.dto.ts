@@ -139,6 +139,19 @@ export class CreateAperturaLlcRequestDto {
   incorporationState?: string;
 
   @ApiPropertyOptional({
+    example: '1600 Van Lennen Ave Ste 101, Cheyenne, Wyoming 82001, United States',
+    description: 'Dirección completa de la LLC constituida (domicilio principal)',
+  })
+  @IsOptional()
+  @IsString()
+  llcAddress?: string;
+
+  @ApiPropertyOptional({ example: '12-3456789', description: 'Número EIN de la LLC' })
+  @IsOptional()
+  @IsString()
+  ein?: string;
+
+  @ApiPropertyOptional({
     example: 'Entrepreneur',
     description: 'Plan del servicio (Entrepreneur, Elite, Premium). Se guarda en el request para validaciones al recargar.',
   })
@@ -250,6 +263,14 @@ export class CreateAperturaLlcRequestDto {
   @IsOptional()
   @IsString()
   projectOrCompanyUrl?: string;
+
+  @ApiPropertyOptional({
+    example: 'https://example.com/bank-verifier-passport.jpg',
+    description: 'URL de la foto de pasaporte del validador bancario (sección 3)',
+  })
+  @IsOptional()
+  @IsString()
+  bankVerifierPassportUrl?: string;
 
   // Paso 4: Dirección Personal del Propietario
   @ApiPropertyOptional({ example: 'Mexicana', description: 'Nacionalidad del propietario' })

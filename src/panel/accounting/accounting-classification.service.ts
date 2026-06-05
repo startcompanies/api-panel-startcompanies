@@ -4,6 +4,7 @@ import type { CanonicalTx } from './accounting-canonical.types';
 import type { AccountCatalog } from './entities/account-catalog.entity';
 import type { UserClassificationRule } from './entities/user-classification-rule.entity';
 import { AccountingAiSuggestService } from './accounting-ai-suggest.service';
+import { resolveRuleCodeInCatalog } from './accounting-catalog-bridge';
 
 export type ClassificationLayerSource = 'exact' | 'fuzzy' | 'ai';
 
@@ -291,14 +292,14 @@ export class AccountingClassificationService {
         const rf = normalizeSourceBankFilter(rule.sourceFilter);
         if (rf && rf !== srcKey) continue;
       }
-      const code = rule.accountCode.toUpperCase();
-      if (!allowed.has(code)) continue;
+      const resolved = resolveRuleCodeInCatalog(rule.accountCode, allowed, labels);
+      if (!resolved) continue;
       return {
-        accountCode: code,
+        accountCode: resolved.code,
         confidence: 1,
         source: 'exact',
         needsReview: false,
-        label: labels[code] ?? code,
+        label: resolved.label,
       };
     }
 
@@ -307,14 +308,14 @@ export class AccountingClassificationService {
       if (sr.payeeKey !== tx.payeeNormalized) continue;
       if (sr.incomeOnly && !tx.isIncome) continue;
       if (sr.expenseOnly && tx.isIncome) continue;
-      const code = sr.code.toUpperCase();
-      if (!allowed.has(code)) continue;
+      const resolved = resolveRuleCodeInCatalog(sr.code, allowed, labels);
+      if (!resolved) continue;
       return {
-        accountCode: code,
+        accountCode: resolved.code,
         confidence: 0.92,
         source: 'fuzzy',
         needsReview: false,
-        label: labels[code] ?? code,
+        label: resolved.label,
       };
     }
 
@@ -323,26 +324,29 @@ export class AccountingClassificationService {
       if (fr.incomeOnly && !tx.isIncome) continue;
       if (fr.expenseOnly && tx.isIncome) continue;
       if (!fr.re.test(haystack)) continue;
-      const code = fr.code.toUpperCase();
-      if (!allowed.has(code)) continue;
+      const resolved = resolveRuleCodeInCatalog(fr.code, allowed, labels);
+      if (!resolved) continue;
       return {
-        accountCode: code,
+        accountCode: resolved.code,
         confidence: fr.confidence,
         source: 'fuzzy',
         needsReview: false,
-        label: labels[code] ?? code,
+        label: resolved.label,
       };
     }
 
-    // 5. Red de seguridad: ingreso sin clasificar → SALES provisional para revisión
-    if (tx.isIncome && allowed.has('SALES')) {
-      return {
-        accountCode: 'SALES',
-        confidence: 0.65,
-        source: 'fuzzy',
-        needsReview: true,
-        label: labels['SALES'] ?? 'SALES',
-      };
+    // 5. Red de seguridad: ingreso sin clasificar → ingresos por servicios provisional
+    if (tx.isIncome) {
+      const resolved = resolveRuleCodeInCatalog('SALES', allowed, labels);
+      if (resolved) {
+        return {
+          accountCode: resolved.code,
+          confidence: 0.65,
+          source: 'fuzzy',
+          needsReview: true,
+          label: resolved.label,
+        };
+      }
     }
 
     return null;
@@ -371,14 +375,14 @@ export class AccountingClassificationService {
       },
     );
     if (!ai.accountCode || !allowedSet.has(ai.accountCode)) {
-      if (ai.errorStatus) {
+      if (ai.errorStatus || ai.errorMessage) {
         return {
           accountCode: null,
           confidence: 0,
           source: 'ai',
           needsReview: true,
           label: null,
-          aiErrorStatus: ai.errorStatus,
+          aiErrorStatus: ai.errorStatus ?? 422,
         };
       }
       return null;

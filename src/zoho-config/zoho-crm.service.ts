@@ -36,6 +36,18 @@ export class ZohoCrmService {
     return `https://www.zohoapis.${domain}/crm/v8`;
   }
 
+  /** Base URL CRM v7 (funciones Deluge / serverless). */
+  private getCrmFunctionsBaseUrl(region: string): string {
+    const regionMap: Record<string, string> = {
+      eu: 'eu',
+      in: 'in',
+      cn: 'com.cn',
+      au: 'com.au',
+    };
+    const domain = regionMap[region] || 'com';
+    return `https://www.zohoapis.${domain}/crm/v7`;
+  }
+
   /**
    * Obtiene o refresca el token de acceso de Zoho CRM
    * Implementa caché en memoria para evitar refrescar tokens innecesariamente
@@ -119,6 +131,7 @@ export class ZohoCrmService {
     return {
       token,
       baseUrl: this.getCrmBaseUrl(config.region),
+      region: config.region,
     };
   }
 
@@ -699,6 +712,107 @@ export class ZohoCrmService {
       throw new HttpException(
         error.response?.data || 'Error al subir adjunto a Zoho CRM',
         error.response?.status || HttpStatus.BAD_REQUEST,
+      );
+    }
+  }
+
+  /**
+   * Ejecuta una función Deluge expuesta como REST API (CRM Functions).
+   * @see https://www.zoho.com/crm/developer/docs/functions/serverless-functions.html
+   */
+  async executeFunction(
+    apiName: string,
+    args: Record<string, unknown>,
+    org: string = 'startcompanies',
+    options?: { apiKey?: string },
+  ): Promise<{ output: unknown; raw: unknown }> {
+    const creds = await this.getCredentialsAndToken(org);
+    const functionsBase = this.getCrmFunctionsBaseUrl(creds.region);
+    const argumentsJson = JSON.stringify(args);
+
+    const tryOAuth = async () => {
+      const url = `${functionsBase}/functions/${encodeURIComponent(apiName)}/actions/execute?auth_type=oauth`;
+      this.logger.log(`Ejecutando función CRM ${apiName} (oauth) org=${org}`);
+      const response = await lastValueFrom(
+        this.httpService.post(
+          url,
+          new URLSearchParams({ arguments: argumentsJson }).toString(),
+          {
+            headers: {
+              Authorization: `Zoho-oauthtoken ${creds.token}`,
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+          },
+        ),
+      );
+      return response.data;
+    };
+
+    const tryApiKey = async (apiKey: string) => {
+      const url = `${functionsBase}/functions/${encodeURIComponent(apiName)}/actions/execute?auth_type=apikey&zapikey=${encodeURIComponent(apiKey)}`;
+      this.logger.log(`Ejecutando función CRM ${apiName} (apikey) org=${org}`);
+      const response = await lastValueFrom(
+        this.httpService.post(
+          url,
+          new URLSearchParams({ arguments: argumentsJson }).toString(),
+          {
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+          },
+        ),
+      );
+      return response.data;
+    };
+
+    try {
+      let raw: unknown;
+      try {
+        raw = await tryOAuth();
+      } catch (oauthError: any) {
+        const apiKey =
+          options?.apiKey?.trim() ||
+          process.env.ZOHO_CRM_FUNCTIONS_API_KEY?.trim();
+        if (!apiKey) {
+          throw oauthError;
+        }
+        this.logger.warn(
+          `Función CRM ${apiName}: OAuth falló, reintentando con apikey`,
+        );
+        raw = await tryApiKey(apiKey);
+      }
+
+      const output =
+        (raw as { details?: { output?: unknown }; output?: unknown })?.details
+          ?.output ??
+        (raw as { output?: unknown })?.output ??
+        raw;
+
+      if (
+        typeof output === 'string' &&
+        output.trim().toLowerCase().startsWith('error:')
+      ) {
+        throw new HttpException(
+          `Función CRM ${apiName}: ${output}`,
+          HttpStatus.BAD_GATEWAY,
+        );
+      }
+
+      return { output, raw };
+    } catch (error: any) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      this.logger.error(
+        `Error al ejecutar función CRM ${apiName}:`,
+        error.response?.data || error.message,
+      );
+      throw new HttpException(
+        error.response?.data?.message ||
+          error.response?.data ||
+          error.message ||
+          `Error al ejecutar función CRM ${apiName}`,
+        error.response?.status || HttpStatus.BAD_GATEWAY,
       );
     }
   }

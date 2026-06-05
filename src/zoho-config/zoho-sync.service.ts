@@ -708,6 +708,153 @@ export class ZohoSyncService implements OnModuleInit {
   }
 
   /**
+   * Tras importación CSV partner: Account en CRM + carpeta WorkDrive (API nativa).
+   */
+  async syncImportedRequestToCrm(
+    requestId: number,
+    org: string = 'startcompanies',
+  ): Promise<{
+    accountId: string;
+    workDriveId?: string;
+    workDriveUrlExternal?: string;
+  }> {
+    const syncResult = await this.syncRequestToZoho(requestId, org);
+    const accountId = String(syncResult.accountId);
+
+    const request = await this.requestRepository.findOne({
+      where: { id: requestId },
+      relations: ['aperturaLlcRequest'],
+    });
+    if (!request) {
+      throw new HttpException(
+        `Solicitud ${requestId} no encontrada tras sync CRM`,
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    const folderName =
+      request.aperturaLlcRequest?.llcName?.trim() ||
+      request.company?.trim() ||
+      'LLC';
+
+    const wd = await this.provisionWorkDriveForCrmAccount({
+      zohoAccountId: accountId,
+      folderName,
+      org,
+      requestId,
+    });
+
+    return {
+      accountId,
+      workDriveId: wd.workDriveId,
+      workDriveUrlExternal: wd.embedUrl,
+    };
+  }
+
+  /**
+   * Crea carpeta WorkDrive + subcarpetas + plantillas (ref. Deluge createFolderWorkDrive),
+   * actualiza Account CRM y guarda embed en Request.
+   */
+  private async provisionWorkDriveForCrmAccount(params: {
+    zohoAccountId: string;
+    folderName: string;
+    org: string;
+    requestId: number;
+  }): Promise<{
+    workDriveId: string;
+    embedUrl: string;
+    clientShareLink?: string;
+  }> {
+    let existingWorkDriveId: string | undefined;
+
+    try {
+      const accountResponse = await this.zohoCrmService.getRecordById(
+        'Accounts',
+        params.zohoAccountId,
+        params.org,
+        'workDriveId,workDriveUrl,workDriveUrlExternal,personal_folder,llc_folder',
+      );
+      existingWorkDriveId = accountResponse?.data?.[0]?.workDriveId;
+    } catch (lookupError: any) {
+      this.logger.warn(
+        `No se pudo leer Account ${params.zohoAccountId} antes de WorkDrive: ${lookupError?.message ?? lookupError}`,
+      );
+    }
+
+    if (existingWorkDriveId) {
+      this.logger.log(
+        `Account ${params.zohoAccountId} ya tiene workDriveId=${existingWorkDriveId}`,
+      );
+      const embedUrl = await this.ensureRequestWorkDriveEmbed(
+        params.requestId,
+        existingWorkDriveId,
+      );
+      return {
+        workDriveId: existingWorkDriveId,
+        embedUrl,
+      };
+    }
+
+    const wd = await this.zohoWorkDriveService.provisionAccountFolderStructure(
+      params.folderName,
+    );
+
+    await this.zohoCrmService.updateRecords(
+      'Accounts',
+      [
+        {
+          id: params.zohoAccountId,
+          workDriveId: wd.workDriveId,
+          workDriveUrl: wd.workDriveUrl,
+          workDriveUrlExternal: wd.clientShareLink,
+          personal_folder: wd.personalFolderId,
+          llc_folder: wd.llcFolderId,
+        },
+      ],
+      params.org,
+    );
+
+    await this.requestRepository.update(params.requestId, {
+      workDriveId: wd.workDriveId,
+      workDriveUrlExternal: wd.embedUrl,
+    });
+
+    this.logger.log(
+      `WorkDrive aprovisionado Account ${params.zohoAccountId}: folder=${wd.workDriveId}, embed=${wd.embedUrl}`,
+    );
+
+    return {
+      workDriveId: wd.workDriveId,
+      embedUrl: wd.embedUrl,
+      clientShareLink: wd.clientShareLink,
+    };
+  }
+
+  private async ensureRequestWorkDriveEmbed(
+    requestId: number,
+    workDriveId: string,
+  ): Promise<string> {
+    const request = await this.requestRepository.findOne({
+      where: { id: requestId },
+    });
+    if (request?.workDriveUrlExternal?.includes('workdrive.zohoexternal.com/embed/')) {
+      return request.workDriveUrlExternal;
+    }
+
+    const permalink =
+      await this.zohoWorkDriveService.generateEmbedPermalink(workDriveId);
+    const embedUrl =
+      this.zohoWorkDriveService.convertPermalinkToEmbedUrl(permalink);
+
+    await this.requestRepository.update(requestId, {
+      workDriveId,
+      workDriveUrlExternal: embedUrl,
+    });
+
+    return embedUrl;
+  }
+
+  /**
    * Enlace Contact ↔ Account en módulo ContactsxAccounts (no bloqueante: errores internos solo log).
    */
   private async syncContactAccountLink(
@@ -829,6 +976,8 @@ export class ZohoSyncService implements OnModuleInit {
         Nombre_de_la_LLC_Opci_n_3: apertura.llcNameOption3 || '',
         Estado_de_Registro: normalizeUsStateForZoho(apertura.incorporationState || ''),
         Actividad_Principal_de_la_LLC: apertura.businessDescription || '',
+        N_mero_de_EIN: apertura.ein || '',
+        Domicilio_Principal: apertura.llcAddress || '',
         Estructura_Societaria:
           apertura.llcType === 'single'
             ? ZOHO_LLC_ESTRUCTURA_SINGLE
@@ -1695,6 +1844,7 @@ export class ZohoSyncService implements OnModuleInit {
         'P_gina_web_de_la_LLC',
         'Website',
         'N_mero_de_EIN',
+        'Domicilio_Principal',
         'Nombre_de_la_LLC_Opci_n_2',
         'Nombre_de_la_LLC_Opci_n_3',
         'LinkedIn',
@@ -2659,6 +2809,7 @@ export class ZohoSyncService implements OnModuleInit {
 
     const refreshed = await this.requestRepository.findOne({
       where: { id: request.id },
+      relations: ['aperturaLlcRequest'],
     });
     if (!refreshed) {
       throw new HttpException(
@@ -2675,6 +2826,8 @@ export class ZohoSyncService implements OnModuleInit {
       status: refreshed.status,
       stage: refreshed.stage ?? null,
       workDriveUrlExternal: refreshed.workDriveUrlExternal ?? null,
+      ein: refreshed.aperturaLlcRequest?.ein ?? null,
+      llcAddress: refreshed.aperturaLlcRequest?.llcAddress ?? null,
     };
   }
 
@@ -2712,6 +2865,8 @@ export class ZohoSyncService implements OnModuleInit {
       llcNameOption2: account.Nombre_de_la_LLC_Opci_n_2 || undefined,
       llcNameOption3: account.Nombre_de_la_LLC_Opci_n_3 || undefined,
       linkedin: account.LinkedIn || undefined,
+      ein: account.N_mero_de_EIN || undefined,
+      llcAddress: account.Domicilio_Principal || undefined,
       actividadFinancieraEsperada: account.Actividad_financiera_esperada || undefined,
       bankAccountLinkedEmail: account.Correo_Electr_nico_Vinculado_a_la_Cuenta_Bancaria || undefined,
       bankAccountLinkedPhone: account.N_mero_de_Tel_fono_Vinculado_a_la_Cuenta_Bancaria || undefined,
@@ -3292,6 +3447,8 @@ export class ZohoSyncService implements OnModuleInit {
             needsUpdate = true;
             this.logger.log(`Request ${request.id} actualizado con workDriveUrlExternal: ${account.workDriveUrlExternal}`);
           }
+
+          await this.syncAperturaLlcFieldsFromCrmAccount(request, account);
         }
       } catch (accountError: any) {
         this.logger.warn(`Error al obtener Account para actualizar workDriveUrlExternal (Request ${request.id}):`, accountError.message);
@@ -3306,6 +3463,57 @@ export class ZohoSyncService implements OnModuleInit {
     } catch (error: any) {
       this.logger.error(`Error al actualizar status/stage/workDriveUrlExternal desde Deals/Account para Request ${request.id}:`, error);
       // No lanzar error, solo loguear
+    }
+  }
+
+  /**
+   * Sincroniza EIN y domicilio principal desde Account CRM → apertura_llc_requests.
+   */
+  private async syncAperturaLlcFieldsFromCrmAccount(
+    request: Request,
+    account: Record<string, unknown>,
+  ): Promise<void> {
+    if (request.type !== 'apertura-llc') {
+      return;
+    }
+
+    const einRaw = account.N_mero_de_EIN;
+    const addressRaw = account.Domicilio_Principal;
+    const ein =
+      typeof einRaw === 'string' ? einRaw.trim() : einRaw != null ? String(einRaw).trim() : '';
+    const llcAddress =
+      typeof addressRaw === 'string'
+        ? addressRaw.trim()
+        : addressRaw != null
+          ? String(addressRaw).trim()
+          : '';
+
+    if (!ein && !llcAddress) {
+      return;
+    }
+
+    let apertura = await this.aperturaRepo.findOne({
+      where: { requestId: request.id },
+    });
+    if (!apertura) {
+      return;
+    }
+
+    let changed = false;
+    if (ein && apertura.ein !== ein) {
+      apertura.ein = ein;
+      changed = true;
+    }
+    if (llcAddress && apertura.llcAddress !== llcAddress) {
+      apertura.llcAddress = llcAddress;
+      changed = true;
+    }
+
+    if (changed) {
+      await this.aperturaRepo.save(apertura);
+      this.logger.log(
+        `Request ${request.id}: N_mero_de_EIN/Domicilio_Principal sincronizados desde CRM`,
+      );
     }
   }
 

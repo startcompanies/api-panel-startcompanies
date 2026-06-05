@@ -33,6 +33,58 @@ function zohoApiErrorsMessage(data: unknown): string | undefined {
   return err.errors.map((e) => (e.id && e.title ? `${e.id}: ${e.title}` : e.title || e.id)).join('; ');
 }
 
+interface WorkDriveFileResource {
+  id: string;
+  type?: string;
+  attributes?: {
+    permalink?: string;
+    name?: string;
+    [key: string]: unknown;
+  };
+}
+
+interface WorkDriveCreateFileResponse {
+  data?: WorkDriveFileResource;
+}
+
+interface WorkDriveLinkResponse {
+  data?: {
+    attributes?: {
+      link?: string;
+      permalink?: string;
+      [key: string]: unknown;
+    };
+  };
+}
+
+/** Resultado al aprovisionar carpeta LLC (equivalente a createFolderWorkDrive en Deluge). */
+export interface ProvisionAccountWorkDriveResult {
+  workDriveId: string;
+  workDriveUrl: string;
+  clientShareLink: string;
+  personalFolderId: string;
+  llcFolderId: string;
+  embedPermalink: string;
+  embedUrl: string;
+}
+
+const DEFAULT_ACCOUNTS_PARENT_FOLDER = 'okew5f51e0430b0d44acdb8d9b944a35d15b1';
+
+const DEFAULT_WORKDRIVE_TEMPLATE_FILE_IDS = [
+  '8646642eb502f0c3848e5ab32a0b269fec1e9',
+  '86466728b0dd1543645da8165aef702bc8f06',
+  '8646617b20db9a00a459f9303d24db893b5ad',
+  '8z28qf8a58af45e5741d19f0b94b5cf4ae7b8',
+];
+
+const ACCOUNT_SUBFOLDER_NAMES = [
+  'PERSONAL DOCUMENTS',
+  'LLC MAIN DOCUMENTS',
+  'INVOICES',
+  'EXTRACTOS BANCARIOS',
+  'DOCUMENTOS RECIBIDOS',
+] as const;
+
 @Injectable()
 export class ZohoWorkDriveService {
   private readonly logger = new Logger(ZohoWorkDriveService.name);
@@ -288,6 +340,415 @@ export class ZohoWorkDriveService {
       `Formato de permalink no válido: ${permalink}. Se esperaba /file/ o /folder/ con un ID válido.`,
       HttpStatus.BAD_REQUEST,
     );
+  }
+
+  /**
+   * Aprovisiona carpeta WorkDrive para un Account CRM (referencia: Deluge createFolderWorkDrive).
+   * Crea estructura, link cliente, plantillas y permalink embebido del panel.
+   */
+  async provisionAccountFolderStructure(
+    folderName: string,
+  ): Promise<ProvisionAccountWorkDriveResult> {
+    const trimmedName = folderName.trim() || 'LLC';
+    const parentFolderId =
+      process.env.ZOHO_WORKDRIVE_ACCOUNTS_PARENT_FOLDER?.trim() ||
+      DEFAULT_ACCOUNTS_PARENT_FOLDER;
+
+    const mainFolder = await this.createFolder(trimmedName, parentFolderId);
+    const workDriveId = mainFolder.id;
+    const workDriveUrl = mainFolder.permalink || '';
+
+    const clientShareLink = await this.createClientShareLink(workDriveId);
+
+    const personalFolder = await this.createFolder(
+      'PERSONAL DOCUMENTS',
+      workDriveId,
+    );
+    const llcMainFolder = await this.createFolder(
+      'LLC MAIN DOCUMENTS',
+      workDriveId,
+    );
+
+    for (const subName of ACCOUNT_SUBFOLDER_NAMES.slice(2)) {
+      await this.createFolder(subName, workDriveId);
+    }
+
+    const presentationFolderName = `${new Date().getFullYear()} PRESENTATION`;
+    await this.createFolder(presentationFolderName, workDriveId);
+
+    await this.copyTemplateFilesToFolder(workDriveId);
+
+    const embedPermalink = await this.generateEmbedPermalink(workDriveId);
+    const embedUrl = this.convertPermalinkToEmbedUrl(embedPermalink);
+
+    return {
+      workDriveId,
+      workDriveUrl,
+      clientShareLink,
+      personalFolderId: personalFolder.id,
+      llcFolderId: llcMainFolder.id,
+      embedPermalink,
+      embedUrl,
+    };
+  }
+
+  private wdJsonHeaders(accessToken: string): Record<string, string> {
+    return {
+      Authorization: `Zoho-oauthtoken ${accessToken}`,
+      Accept: 'application/vnd.api+json',
+      'Content-Type': 'application/json',
+    };
+  }
+
+  private parseTemplateFileIds(): string[] {
+    const raw = process.env.ZOHO_WORKDRIVE_TEMPLATE_FILE_IDS?.trim();
+    if (!raw) {
+      return DEFAULT_WORKDRIVE_TEMPLATE_FILE_IDS;
+    }
+    if (raw.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(raw) as string[];
+        return parsed.filter(Boolean);
+      } catch {
+        return DEFAULT_WORKDRIVE_TEMPLATE_FILE_IDS;
+      }
+    }
+    return raw
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+  }
+
+  private async createFolder(
+    name: string,
+    parentId: string,
+  ): Promise<{ id: string; permalink?: string }> {
+    const { accessToken, baseUrl } = await this.getCredentialsAndToken();
+    const body = {
+      data: {
+        attributes: {
+          name,
+          parent_id: parentId,
+        },
+        type: 'files',
+      },
+    };
+
+    try {
+      const response = await lastValueFrom(
+        this.httpService.post<WorkDriveCreateFileResponse>(
+          `${baseUrl}/files`,
+          body,
+          {
+            headers: {
+              ...this.wdJsonHeaders(accessToken),
+              checkduplicatename: 'true',
+            },
+          },
+        ),
+      );
+
+      const resource = response.data?.data;
+      const id = resource?.id;
+      if (!id) {
+        throw new HttpException(
+          'WorkDrive no devolvió id al crear carpeta',
+          HttpStatus.BAD_GATEWAY,
+        );
+      }
+
+      return {
+        id,
+        permalink: resource?.attributes?.permalink,
+      };
+    } catch (error: any) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      const detail = zohoApiErrorsMessage(error.response?.data) || error.message;
+      this.logger.error(`WorkDrive createFolder "${name}": ${detail}`);
+      throw new HttpException(
+        `Error al crear carpeta WorkDrive: ${detail}`,
+        error.response?.status || HttpStatus.BAD_GATEWAY,
+      );
+    }
+  }
+
+  /** Link externo compartible (Deluge POST /links, role_id 7). */
+  private async createClientShareLink(resourceId: string): Promise<string> {
+    const { accessToken, baseUrl } = await this.getCredentialsAndToken();
+    const body = {
+      data: {
+        attributes: {
+          resource_id: resourceId,
+          link_name: 'client',
+          request_user_data: 'false',
+          allow_download: 'true',
+          role_id: '7',
+        },
+        type: 'links',
+      },
+    };
+
+    try {
+      const response = await lastValueFrom(
+        this.httpService.post<WorkDriveLinkResponse>(`${baseUrl}/links`, body, {
+          headers: this.wdJsonHeaders(accessToken),
+        }),
+      );
+
+      const link =
+        response.data?.data?.attributes?.link ||
+        response.data?.data?.attributes?.permalink;
+      if (!link) {
+        throw new HttpException(
+          'WorkDrive no devolvió link de cliente',
+          HttpStatus.BAD_GATEWAY,
+        );
+      }
+      return link;
+    } catch (error: any) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      const detail = zohoApiErrorsMessage(error.response?.data) || error.message;
+      this.logger.error(`WorkDrive createClientShareLink: ${detail}`);
+      throw new HttpException(
+        `Error al crear link WorkDrive: ${detail}`,
+        error.response?.status || HttpStatus.BAD_GATEWAY,
+      );
+    }
+  }
+
+  /** Lista subcarpetas directas de un folder WorkDrive. */
+  async listChildFolders(
+    parentId: string,
+  ): Promise<Array<{ id: string; name: string }>> {
+    const { accessToken, baseUrl } = await this.getCredentialsAndToken();
+
+    try {
+      const response = await lastValueFrom(
+        this.httpService.get<{ data?: WorkDriveFileResource[] }>(
+          `${baseUrl}/files/${parentId}/files`,
+          {
+            headers: {
+              Authorization: `Zoho-oauthtoken ${accessToken}`,
+              Accept: 'application/vnd.api+json',
+            },
+            params: {
+              'filter[type]': 'folder',
+              'page[limit]': 200,
+            },
+          },
+        ),
+      );
+
+      return (response.data?.data ?? [])
+        .map((item) => ({
+          id: item.id,
+          name: String(item.attributes?.name ?? '').trim(),
+        }))
+        .filter((item) => item.id && item.name);
+    } catch (error: any) {
+      const detail = zohoApiErrorsMessage(error.response?.data) || error.message;
+      this.logger.warn(`WorkDrive listChildFolders ${parentId}: ${detail}`);
+      return [];
+    }
+  }
+
+  /** Busca subcarpeta por nombre (insensible a mayúsculas) o la crea. */
+  async ensureChildFolder(parentId: string, name: string): Promise<string> {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      return parentId;
+    }
+
+    const children = await this.listChildFolders(parentId);
+    const existing = this.findMatchingChildFolder(children, trimmed);
+    if (existing) {
+      return existing.id;
+    }
+
+    const created = await this.createFolder(trimmed, parentId);
+    return created.id;
+  }
+
+  /**
+   * Resuelve alias de subcarpetas (p. ej. `2025 PRESENTATIONS` → `2025 PRESENTATION`).
+   */
+  private findMatchingChildFolder(
+    children: Array<{ id: string; name: string }>,
+    requestedName: string,
+  ): { id: string; name: string } | undefined {
+    const normalized = requestedName.trim().toLowerCase();
+    const exact = children.find(
+      (child) => child.name.trim().toLowerCase() === normalized,
+    );
+    if (exact) {
+      return exact;
+    }
+
+    const presentationMatch = normalized.match(/^(\d{4})\s+presentations?$/);
+    if (presentationMatch) {
+      const year = presentationMatch[1];
+      return children.find((child) => {
+        const childName = child.name.trim().toLowerCase();
+        return (
+          childName === `${year} presentation` ||
+          childName === `${year} presentations`
+        );
+      });
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Sube un archivo a WorkDrive (POST /upload).
+   * @returns resource_id del archivo subido
+   */
+  async uploadFileBuffer(
+    parentId: string,
+    filename: string,
+    content: Buffer,
+  ): Promise<string> {
+    const { accessToken, baseUrl } = await this.getCredentialsAndToken();
+    const FormData = (await import('form-data')).default;
+    const form = new FormData();
+    form.append('content', content, {
+      filename,
+      contentType: 'application/octet-stream',
+    });
+
+    const encodedName = encodeURIComponent(filename);
+    const url =
+      `${baseUrl}/upload?parent_id=${encodeURIComponent(parentId)}` +
+      `&filename=${encodedName}&override-name-exist=true`;
+
+    try {
+      const response = await lastValueFrom(
+        this.httpService.post<{
+          data?: Array<{
+            attributes?: {
+              resource_id?: string;
+              FileName?: string;
+              'File INFO'?: string;
+            };
+          }>;
+        }>(url, form, {
+          headers: {
+            Authorization: `Zoho-oauthtoken ${accessToken}`,
+            ...form.getHeaders(),
+          },
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity,
+        }),
+      );
+
+      const attrs = response.data?.data?.[0]?.attributes;
+      let resourceId = attrs?.resource_id;
+      if (!resourceId && attrs?.['File INFO']) {
+        try {
+          const info = JSON.parse(attrs['File INFO']) as { RESOURCE_ID?: string };
+          resourceId = info.RESOURCE_ID;
+        } catch {
+          /* ignore parse */
+        }
+      }
+
+      if (!resourceId) {
+        throw new HttpException(
+          'WorkDrive no devolvió resource_id al subir archivo',
+          HttpStatus.BAD_GATEWAY,
+        );
+      }
+
+      return resourceId;
+    } catch (error: any) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      const detail = zohoApiErrorsMessage(error.response?.data) || error.message;
+      this.logger.error(`WorkDrive upload "${filename}": ${detail}`);
+      throw new HttpException(
+        `Error al subir archivo a WorkDrive: ${detail}`,
+        error.response?.status || HttpStatus.BAD_GATEWAY,
+      );
+    }
+  }
+
+  /** Sube árbol de archivos bajo la carpeta raíz de la LLC. */
+  async uploadDocumentTree(
+    rootFolderId: string,
+    files: Array<{ relativePath: string; buffer: Buffer }>,
+  ): Promise<{ uploaded: number; failed: number; errors: string[] }> {
+    let uploaded = 0;
+    let failed = 0;
+    const errors: string[] = [];
+
+    for (const file of files) {
+      const segments = file.relativePath
+        .replace(/\\/g, '/')
+        .split('/')
+        .filter(Boolean);
+      if (segments.length === 0) {
+        continue;
+      }
+
+      const fileName = segments.pop()!;
+      let parentId = rootFolderId;
+
+      try {
+        for (const segment of segments) {
+          parentId = await this.ensureChildFolder(parentId, segment);
+        }
+        await this.uploadFileBuffer(parentId, fileName, file.buffer);
+        uploaded++;
+      } catch (error: any) {
+        failed++;
+        const detail =
+          error instanceof HttpException
+            ? error.message
+            : error?.message || 'Error desconocido';
+        errors.push(`${file.relativePath}: ${detail}`);
+        this.logger.warn(
+          `Import docs: falló subida ${file.relativePath} → ${detail}`,
+        );
+      }
+    }
+
+    return { uploaded, failed, errors };
+  }
+
+  /** Copia archivos plantilla al folder raíz de la LLC (Deluge POST /files/{id}/copy). */
+  private async copyTemplateFilesToFolder(targetFolderId: string): Promise<void> {
+    const templateIds = this.parseTemplateFileIds();
+    if (templateIds.length === 0) {
+      return;
+    }
+
+    const { accessToken, baseUrl } = await this.getCredentialsAndToken();
+    const body = {
+      data: templateIds.map((resourceId) => ({
+        attributes: { resource_id: resourceId },
+        type: 'files',
+      })),
+    };
+
+    try {
+      await lastValueFrom(
+        this.httpService.post(
+          `${baseUrl}/files/${targetFolderId}/copy`,
+          body,
+          { headers: this.wdJsonHeaders(accessToken) },
+        ),
+      );
+    } catch (error: any) {
+      const detail = zohoApiErrorsMessage(error.response?.data) || error.message;
+      this.logger.warn(
+        `WorkDrive copy templates a ${targetFolderId} (no bloqueante): ${detail}`,
+      );
+    }
   }
 }
 

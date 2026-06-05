@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, type GenerateContentResult } from '@google/generative-ai';
 import {
   ACCOUNT_CHART_CODES,
   ACCOUNT_CHART_LABELS,
@@ -75,20 +75,61 @@ FORMATO DE RESPUESTA (solo esto, nada más):
 {"account_code": "CODIGO", "confidence": 0.00, "reason": "explicación breve"}`;
 }
 
+function extractGeminiResponseText(result: GenerateContentResult): string {
+  const response = result.response;
+  const finishReason = response.candidates?.[0]?.finishReason;
+
+  try {
+    const direct = response.text();
+    if (direct?.trim()) return direct.trim();
+  } catch {
+    // response.text() throws when there is no plain-text part
+  }
+
+  const parts = response.candidates?.[0]?.content?.parts ?? [];
+  const chunks: string[] = [];
+  for (const part of parts) {
+    const p = part as { text?: string; thought?: boolean };
+    if (typeof p.text === 'string' && p.text.trim() && !p.thought) {
+      chunks.push(p.text.trim());
+    }
+  }
+  const combined = chunks.join('\n').trim();
+  if (combined) return combined;
+
+  if (finishReason && finishReason !== 'STOP') {
+    throw new Error(`Gemini finish reason: ${finishReason}`);
+  }
+  throw new Error('Empty model response');
+}
+
 function parseCatalogModelJson(
   text: string,
   allowed: Set<string>,
 ): { accountCode?: string; confidence: number } {
   const t = text.trim();
+  if (!t) throw new Error('Empty model response');
+
   const fence = /^```(?:json)?\s*([\s\S]*?)```$/m.exec(t);
   const body = fence ? fence[1].trim() : t;
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
   } catch {
-    const m = body.match(/\{[\s\S]*\}/);
-    if (!m) throw new Error('No JSON object');
-    parsed = JSON.parse(m[0]);
+    const jsonChunks = [...body.matchAll(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g)].map((m) => m[0]);
+    if (!jsonChunks.length) throw new Error('No JSON object');
+    let lastErr: unknown;
+    for (const chunk of jsonChunks.reverse()) {
+      try {
+        parsed = JSON.parse(chunk);
+        break;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    if (parsed === undefined) {
+      throw lastErr instanceof Error ? lastErr : new Error('No JSON object');
+    }
   }
   if (typeof parsed !== 'object' || parsed === null) {
     return { confidence: 0 };
@@ -99,6 +140,13 @@ function parseCatalogModelJson(
   if (!allowed.has(code)) {
     const hit = [...allowed].find((c) => c.toUpperCase() === code);
     if (hit) code = hit;
+  }
+  if (!allowed.has(code)) {
+    const digits = code.replace(/\D/g, '');
+    if (digits.length >= 4) {
+      const d4 = digits.slice(0, 4);
+      if (allowed.has(d4)) code = d4;
+    }
   }
   const accountCode = allowed.has(code) ? code : undefined;
   let confidence = 0.65;
@@ -124,7 +172,7 @@ export class AccountingAiSuggestService {
   constructor(private readonly config: ConfigService) {}
 
   geminiModel(): string {
-    return this.config.get<string>('GEMINI_MODEL') || 'gemini-2.0-flash';
+    return this.config.get<string>('GEMINI_MODEL') || 'gemini-3.5-flash';
   }
 
   async suggestAccountCodeFromCatalog(
@@ -139,9 +187,10 @@ export class AccountingAiSuggestService {
     );
     const allowed = new Set(codes);
     const d = (description || '').trim() || 'Sin descripción';
+    let rawText = '';
     try {
-      const text = await this.dispatchGeminiCatalog(d, codes, labels, ctx, apiKey);
-      const parsed = parseCatalogModelJson(text, allowed);
+      rawText = await this.dispatchGeminiCatalog(d, codes, labels, ctx, apiKey);
+      const parsed = parseCatalogModelJson(rawText, allowed);
       if (!parsed.accountCode) {
         return {
           accountCode: null,
@@ -158,13 +207,16 @@ export class AccountingAiSuggestService {
       };
     } catch (e) {
       const err = extractGeminiError(e);
-      this.log.warn(`Catalog AI suggest failed (gemini): ${err.message}`);
+      const preview = rawText.replace(/\s+/g, ' ').trim().slice(0, 160);
+      this.log.warn(
+        `Catalog AI suggest failed (gemini): ${err.message}${preview ? `; raw=${preview}` : ''}`,
+      );
       return {
         accountCode: null,
         label: null,
         source: 'gemini',
         confidence: 0,
-        errorStatus: err.status,
+        errorStatus: err.status ?? 422,
         errorMessage: err.message,
       };
     }
@@ -178,16 +230,24 @@ export class AccountingAiSuggestService {
     apiKey: string,
   ): Promise<string> {
     const genAI = new GoogleGenerativeAI(apiKey);
+    const modelName = this.geminiModel();
+    const generationConfig: Record<string, unknown> = {
+      responseMimeType: 'application/json',
+      maxOutputTokens: 512,
+      temperature: 0.1,
+    };
+    // Modelos 2.5+ pueden gastar el presupuesto en "thinking" y devolver texto vacío.
+    if (/gemini-2\.5|gemini-3/i.test(modelName)) {
+      generationConfig.thinkingConfig = { thinkingBudget: 0 };
+    }
     const model = genAI.getGenerativeModel({
-      model: this.geminiModel(),
-      generationConfig: {
-        responseMimeType: 'application/json',
-        maxOutputTokens: 256,
-        temperature: 0.2,
-      },
+      model: modelName,
+      generationConfig: generationConfig as Parameters<
+        GoogleGenerativeAI['getGenerativeModel']
+      >[0]['generationConfig'],
     });
     const result = await model.generateContent(buildCatalogPrompt(description, codes, labels, ctx));
-    return result.response.text();
+    return extractGeminiResponseText(result);
   }
 
   /** Legacy chart codes (4 dígitos); mantenido por compatibilidad interna. */
@@ -206,11 +266,22 @@ Description: ${(description || '').slice(0, 800)}
 Respond JSON only: {"accountCode":"5100","confidence":0.85}`;
     try {
       const genAI = new GoogleGenerativeAI(apiKey);
+      const modelName = this.geminiModel();
+      const generationConfig: Record<string, unknown> = {
+        responseMimeType: 'application/json',
+        maxOutputTokens: 256,
+        temperature: 0.1,
+      };
+      if (/gemini-2\.5|gemini-3/i.test(modelName)) {
+        generationConfig.thinkingConfig = { thinkingBudget: 0 };
+      }
       const model = genAI.getGenerativeModel({
-        model: this.geminiModel(),
-        generationConfig: { responseMimeType: 'application/json', maxOutputTokens: 128 },
+        model: modelName,
+        generationConfig: generationConfig as Parameters<
+          GoogleGenerativeAI['getGenerativeModel']
+        >[0]['generationConfig'],
       });
-      const text = (await model.generateContent(prompt)).response.text();
+      const text = extractGeminiResponseText(await model.generateContent(prompt));
       const fence = /^```(?:json)?\s*([\s\S]*?)```$/m.exec(text.trim());
       const body = fence ? fence[1].trim() : text.trim();
       const parsed = JSON.parse(body) as Record<string, unknown>;

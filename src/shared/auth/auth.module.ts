@@ -17,7 +17,7 @@ import { AccountTeamModule } from '../../panel/account-team/account-team.module'
 @Module({
   controllers: [AuthController],
   providers: [authService, HandleExceptionsService, RolesGuard, AuthGuard],
-  exports: [RolesGuard],
+  exports: [RolesGuard, authService],
   imports: [
     TypeOrmModule.forFeature([User, LoginOtpChallenge, TrustedLoginDevice]),
     CommonModule,

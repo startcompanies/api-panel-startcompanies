@@ -74,12 +74,14 @@ export class PlatformAiService {
   }
 
   geminiModel(): string {
-    return this.config.get<string>('GEMINI_MODEL') || 'gemini-2.0-flash';
+    return this.config.get<string>('GEMINI_MODEL') || 'gemini-3.5-flash';
   }
 
   async getStatus(user: { id: number; accountOwnerId?: number }): Promise<PlatformAiStatus> {
     const ownerId = this.resolveOwnerUserId(user);
-    await this.assertAccountingAiClient(ownerId);
+    if (!(await this.canUseAccountingAi(ownerId))) {
+      return { provider: 'gemini', configured: false, scope: null };
+    }
     const scope = await this.resolveScopeForUser(ownerId);
     const configured = !!this.getApiKeyForScope(scope);
     return { provider: 'gemini', configured, scope };

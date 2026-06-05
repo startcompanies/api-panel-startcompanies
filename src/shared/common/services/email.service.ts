@@ -817,6 +817,61 @@ export class EmailService {
   }
 
   /**
+   * Recordatorio para conectar banco vía Plaid en contabilidad.
+   * @returns true si Resend aceptó el envío.
+   */
+  async sendPlaidConnectReminderEmail(params: {
+    email: string;
+    name: string;
+    panelUrl: string;
+    branding?: Partial<EmailBranding>;
+  }): Promise<boolean> {
+    if (!this.resend) {
+      this.logger.warn(
+        `Recordatorio Plaid no enviado a ${params.email}: RESEND_API_KEY no configurada.`,
+      );
+      return false;
+    }
+
+    const b = this.mergeBranding(params.branding);
+    const bodyHtml = `
+      <p>Hola ${params.name},</p>
+      <p>Podés sincronizar automáticamente los movimientos de tu banco en EE.UU. desde la sección de contabilidad de <strong>${b.brandDisplayName}</strong>.</p>
+      <p>Conectá tu cuenta en unos minutos con Plaid; también podés seguir importando CSV si lo preferís.</p>
+    `;
+
+    try {
+      const { data, error } = await this.resend.emails.send({
+        from: this.formatResendFrom(b),
+        to: params.email,
+        subject: `Conectá tu banco para contabilidad — ${b.brandDisplayName}`,
+        html: this.getEmailHtml({
+          title: 'Sincronización bancaria',
+          bodyHtml,
+          button: { text: 'Ir a contabilidad', url: params.panelUrl },
+          branding: b,
+        }),
+      });
+
+      if (error) {
+        this.logger.error(
+          `Resend rechazó recordatorio Plaid a ${params.email}: ${error.message}`,
+          error,
+        );
+        return false;
+      }
+
+      this.logger.log(
+        `Recordatorio Plaid enviado a ${params.email} (id=${data?.id ?? 'sin-id'})`,
+      );
+      return true;
+    } catch (error) {
+      this.logger.error(`Error al enviar recordatorio Plaid a ${params.email}:`, error);
+      return false;
+    }
+  }
+
+  /**
    * Envía factura al cliente con PDF adjunto (Resend).
    * - Remitente: `RESEND_FROM_EMAIL` (dominio verificado en Resend).
    * - Respuestas: `replyTo` o variable `RESEND_REPLY_TO` (p. ej. tu buzón de facturación).

@@ -8,6 +8,10 @@
       {
         "include": "data/**/*.json",
         "watchAssets": true
+      },
+      {
+        "include": "panel/clients/assets/**/*",
+        "watchAssets": true
       }
     ]
   }

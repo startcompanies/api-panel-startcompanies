@@ -1,10 +1,15 @@
-import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+import { Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn, BeforeInsert, Index } from 'typeorm';
+import { v4 as uuidv4 } from 'uuid';
 import { PlatformFeatures } from '../../../panel/pricing/entities/pricing-plan.entity';
 
 @Entity('users')
+@Index(['uuid'])
 export class User {
   @PrimaryGeneratedColumn()
   id: number;
+
+  @Column({ type: 'varchar', length: 36, unique: true, nullable: true })
+  uuid: string | null;
 
   @Column({ unique: true })
   username: string;
@@ -104,5 +109,12 @@ export class User {
     default: () => 'CURRENT_TIMESTAMP',
   })
   updatedAt: Date;
+
+  @BeforeInsert()
+  generateUuid(): void {
+    if (!this.uuid) {
+      this.uuid = uuidv4();
+    }
+  }
 
 }

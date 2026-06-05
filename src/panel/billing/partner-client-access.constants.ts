@@ -5,6 +5,7 @@ export const PARTNER_CLIENT_PLATFORM_FEATURES: PlatformFeatures = {
   invoicing: true,
   accounting: true,
   accountingAi: true,
+  accountingPlaid: true,
   aiConfig: true,
   videos: true,
   guides: true,

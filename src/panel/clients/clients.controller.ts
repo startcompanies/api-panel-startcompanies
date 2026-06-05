@@ -10,6 +10,10 @@ import {
   UseGuards,
   Request,
   ParseIntPipe,
+  Res,
+  UploadedFile,
+  UploadedFiles,
+  UseInterceptors,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -19,12 +23,20 @@ import {
   ApiBody,
   ApiResponse,
   ApiParam,
+  ApiConsumes,
 } from '@nestjs/swagger';
+import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { ClientsService } from './clients.service';
+import {
+  PartnerClientsImportService,
+  PARTNER_IMPORT_ZIP_DIRECT_UPLOAD_MAX_BYTES,
+} from './partner-clients-import.service';
 import { CreateClientDto } from './dtos/create-client.dto';
 import { UpdateClientDto } from './dtos/update-client.dto';
 import { GetClientByUuidDto } from './dtos/get-client-by-uuid.dto';
 import { ConvertClientToPartnerDto } from './dtos/convert-client-to-partner.dto';
+import { InviteClientPortalDto } from './dtos/invite-client-portal.dto';
 import { AuthGuard } from '../../shared/auth/auth.guard';
 import { RolesGuard } from '../../shared/auth/roles.guard';
 import { Roles } from '../../shared/auth/roles.decorator';
@@ -34,18 +46,219 @@ import { Roles } from '../../shared/auth/roles.decorator';
 @UseGuards(AuthGuard)
 @ApiBearerAuth('JWT-auth')
 export class ClientsController {
-  constructor(private readonly clientsService: ClientsService) {}
+  constructor(
+    private readonly clientsService: ClientsService,
+    private readonly partnerClientsImportService: PartnerClientsImportService,
+  ) {}
 
   @Get('my-clients')
   @UseGuards(RolesGuard)
   @Roles('partner')
   @ApiOperation({
     summary: 'Listar clientes del partner actual',
-    description: 'Obtiene todos los clientes asociados al partner autenticado',
+    description:
+      'Sin query params devuelve todos los clientes. Con page/limit devuelve listado paginado con estadísticas.',
   })
-  getMyClients(@Request() req) {
+  @ApiQuery({ name: 'page', required: false, description: 'Página (1-based)', example: 1 })
+  @ApiQuery({ name: 'limit', required: false, description: 'Tamaño de página (máx. 100)', example: 12 })
+  @ApiQuery({ name: 'q', required: false, description: 'Buscar en nombre, email o empresa' })
+  @ApiQuery({ name: 'status', required: false, enum: ['all', 'active', 'inactive'] })
+  getMyClients(
+    @Request() req,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('q') q?: string,
+    @Query('status') status?: string,
+  ) {
     const partnerId = req.user.id;
+    const usePagination =
+      page != null ||
+      limit != null ||
+      (q != null && q.trim() !== '') ||
+      (status != null && status !== 'all');
+
+    if (usePagination) {
+      const p = page ? parseInt(page, 10) : 1;
+      const l = limit ? parseInt(limit, 10) : 12;
+      return this.clientsService.getMyClientsPaginated(partnerId, {
+        page: Number.isFinite(p) && p > 0 ? p : 1,
+        limit: Number.isFinite(l) && l > 0 ? l : 12,
+        q: q?.trim() || undefined,
+        status:
+          status === 'active' || status === 'inactive' || status === 'all'
+            ? status
+            : 'all',
+      });
+    }
+
     return this.clientsService.getMyClients(partnerId);
+  }
+
+  @Get('import/sample')
+  @UseGuards(RolesGuard)
+  @Roles('partner')
+  @ApiOperation({
+    summary: 'Descargar plantilla CSV de importación de clientes',
+  })
+  downloadImportSample(@Res() res: Response) {
+    const sample = this.partnerClientsImportService.getSampleCsv();
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${sample.filename}"`,
+    );
+    res.send(sample.content);
+  }
+
+  @Post('import/documents-zip/upload')
+  @UseGuards(RolesGuard)
+  @Roles('partner')
+  @UseInterceptors(
+    FileInterceptor('documentsZip', {
+      limits: { fileSize: PARTNER_IMPORT_ZIP_DIRECT_UPLOAD_MAX_BYTES },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Subir ZIP de documentos vía API (hasta 95 MB)',
+    description:
+      'Mismo patrón que /upload-file: la API sube a S3. Devuelve s3Key para preview/import.',
+  })
+  uploadDocumentsZip(
+    @UploadedFile() file: Express.Multer.File,
+    @Request() req,
+  ) {
+    return this.partnerClientsImportService.uploadDocumentsZip(req.user.id, file);
+  }
+
+  @Post('import/documents-zip/upload-url')
+  @UseGuards(RolesGuard)
+  @Roles('partner')
+  @ApiOperation({
+    summary: 'URL prefirmada para subir ZIP grande directo a S3',
+    description:
+      'Para ZIP >95 MB. El cliente sube con PUT a uploadUrl y luego envía s3Key en preview/import.',
+  })
+  createDocumentsZipUploadUrl(
+    @Body() body: { filename?: string; sizeBytes?: number },
+    @Request() req,
+  ) {
+    return this.partnerClientsImportService.createDocumentsZipUploadUrl(
+      req.user.id,
+      body?.filename || 'documents.zip',
+      Number(body?.sizeBytes ?? 0),
+    );
+  }
+
+  @Post('import/preview')
+  @UseGuards(RolesGuard)
+  @Roles('partner')
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'file', maxCount: 1 },
+        { name: 'documentsZip', maxCount: 1 },
+      ],
+      {
+        limits: {
+          fileSize: 200 * 1024 * 1024,
+        },
+      },
+    ),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', format: 'binary' },
+        documentsZip: {
+          type: 'string',
+          format: 'binary',
+          description: 'ZIP opcional con carpetas por LLC y documentos',
+        },
+        documentsZipS3Key: {
+          type: 'string',
+          description: 'Key S3 si el ZIP se subió con upload-url (ZIP grande)',
+        },
+      },
+    },
+  })
+  @ApiOperation({
+    summary:
+      'Vista previa: solo CSV, solo ZIP (documentos a LLCs existentes) o CSV + ZIP',
+  })
+  previewImport(
+    @UploadedFiles()
+    files: { file?: Express.Multer.File[]; documentsZip?: Express.Multer.File[] },
+    @Body('documentsZipS3Key') documentsZipS3Key: string | undefined,
+    @Request() req,
+  ) {
+    return this.partnerClientsImportService.previewImport(
+      req.user.id,
+      files?.file?.[0],
+      files?.documentsZip?.[0],
+      { documentsZipS3Key: documentsZipS3Key?.trim() || undefined },
+    );
+  }
+
+  @Post('import')
+  @UseGuards(RolesGuard)
+  @Roles('partner')
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'file', maxCount: 1 },
+        { name: 'documentsZip', maxCount: 1 },
+      ],
+      {
+        limits: {
+          fileSize: 200 * 1024 * 1024,
+        },
+      },
+    ),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', format: 'binary' },
+        documentsZip: {
+          type: 'string',
+          format: 'binary',
+          description: 'ZIP opcional con carpetas por LLC y documentos',
+        },
+        documentsZipS3Key: {
+          type: 'string',
+          description: 'Key S3 si el ZIP se subió con upload-url (ZIP grande)',
+        },
+      },
+    },
+  })
+  @ApiOperation({
+    summary:
+      'Ejecutar importación: solo CSV, solo ZIP (documentos) o CSV + ZIP',
+  })
+  executeImport(
+    @UploadedFiles()
+    files: { file?: Express.Multer.File[]; documentsZip?: Express.Multer.File[] },
+    @Body('documentsZipS3Key') documentsZipS3Key: string | undefined,
+    @Request() req,
+  ) {
+    const tenantHost =
+      typeof req.headers['x-tenant-host'] === 'string'
+        ? req.headers['x-tenant-host']
+        : undefined;
+    return this.partnerClientsImportService.executeImport(
+      req.user.id,
+      files?.file?.[0],
+      files?.documentsZip?.[0],
+      {
+        tenantHost,
+        documentsZipS3Key: documentsZipS3Key?.trim() || undefined,
+      },
+    );
   }
 
   @Get('self')
@@ -131,15 +344,24 @@ export class ClientsController {
   @UseGuards(RolesGuard)
   @Roles('partner', 'admin')
   @ApiOperation({
-    summary: 'Invitar cliente al portal',
+    summary: 'Invitar o reenviar acceso al portal del cliente',
     description:
-      'Crea o enlaza un usuario tipo client, asocia clients.user_id y envía email para establecer contraseña. URL y marca según partner_tenants.',
+      'Crea o enlaza un usuario tipo client, asocia clients.user_id y envía email para establecer contraseña. Partners: marca white-label. Admin SC: clientes sin partner o fila solo usuario (listItemUserOnly).',
   })
-  @ApiParam({ name: 'id', description: 'ID del cliente (tabla clients)' })
+  @ApiParam({ name: 'id', description: 'ID del cliente (tabla clients) o users.id si listItemUserOnly' })
+  @ApiBody({ type: InviteClientPortalDto, required: false })
   @ApiResponse({ status: 200, description: 'Invitación enviada' })
-  inviteClientToPortal(@Param('id', ParseIntPipe) id: number, @Request() req) {
+  inviteClientToPortal(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: InviteClientPortalDto | undefined,
+    @Request() req,
+  ) {
+    const actor = req.user;
+    const isAdmin = actor.type === 'admin';
     const partnerScopeId =
-      req.user.type === 'partner' ? req.user.id : undefined;
+      actor.type === 'partner'
+        ? (actor.accountOwnerId ?? actor.id)
+        : undefined;
     const tenantHost =
       typeof req.headers['x-tenant-host'] === 'string'
         ? req.headers['x-tenant-host']
@@ -147,6 +369,8 @@ export class ClientsController {
     return this.clientsService.inviteClientToPortal(id, {
       partnerScopeId,
       tenantHost,
+      platformScope: isAdmin,
+      listItemUserOnly: Boolean(body?.listItemUserOnly),
     });
   }
 
@@ -215,7 +439,10 @@ export class ClientsController {
     @Body() updateClientDto: UpdateClientDto,
     @Request() req,
   ) {
-    const partnerId = req.user.type === 'partner' ? req.user.id : undefined;
+    const partnerId =
+      req.user.type === 'partner'
+        ? (req.user.accountOwnerId ?? req.user.id)
+        : undefined;
     return this.clientsService.updateClient(
       parseInt(id, 10),
       updateClientDto,

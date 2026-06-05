@@ -17,6 +17,8 @@ import { PricingModule } from './pricing/pricing.module';
 import { AppLogsModule } from './app-logs/app-logs.module';
 import { PartnerTenantsModule } from './partner-tenants/partner-tenants.module';
 import { AccountTeamModule } from './account-team/account-team.module';
+import { PlaidModule } from './plaid/plaid.module';
+import { ViewAsModule } from './view-as/view-as.module';
 
 /**
  * Módulo wrapper que agrupa todos los módulos relacionados con el Panel Administrativo
@@ -42,6 +44,8 @@ import { AccountTeamModule } from './account-team/account-team.module';
     AppLogsModule,
     PartnerTenantsModule,
     AccountTeamModule,
+    PlaidModule,
+    ViewAsModule,
   ],
   exports: [
     RequestsModule,
@@ -62,6 +66,8 @@ import { AccountTeamModule } from './account-team/account-team.module';
     AppLogsModule,
     PartnerTenantsModule,
     AccountTeamModule,
+    PlaidModule,
+    ViewAsModule,
   ],
 })
 export class PanelModule {}

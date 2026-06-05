@@ -38,6 +38,13 @@ export class AperturaLlcRequest {
   @Column({ name: 'llc_type', nullable: true, length: 20 })
   llcType?: 'single' | 'multi';
 
+  /** Dirección completa de la LLC constituida (domicilio principal) */
+  @Column({ name: 'llc_address', nullable: true, type: 'text' })
+  llcAddress?: string;
+
+  @Column({ name: 'ein', nullable: true, length: 50 })
+  ein?: string;
+
   @Column({ name: 'llc_name_option_2', nullable: true, length: 255 })
   llcNameOption2?: string;
 
@@ -68,6 +75,10 @@ export class AperturaLlcRequest {
 
   @Column({ name: 'project_or_company_url', nullable: true, length: 500 })
   projectOrCompanyUrl?: string;
+
+  /** Foto de pasaporte del validador de cuenta bancaria (sección 3) */
+  @Column({ name: 'bank_verifier_passport_url', nullable: true, type: 'text' })
+  bankVerifierPassportUrl?: string;
 
   @CreateDateColumn({
     name: 'created_at',

@@ -21,6 +21,7 @@ export class PlatformFeaturesDto {
   @IsBoolean() invoicing: boolean;
   @IsBoolean() accounting: boolean;
   @IsBoolean() accountingAi: boolean;
+  @IsOptional() @IsBoolean() accountingPlaid?: boolean;
   @IsBoolean() aiConfig: boolean;
   @IsBoolean() videos: boolean;
   @IsBoolean() guides: boolean;

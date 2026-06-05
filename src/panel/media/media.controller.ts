@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Param,
   ParseIntPipe,
@@ -183,6 +184,153 @@ export class MediaController {
   @Roles('admin', 'user')
   adminDeleteGuide(@Param('id', ParseIntPipe) id: number) {
     return this.mediaService.adminDeleteGuide(id);
+  }
+
+  private partnerIdFromRequest(req: { user: { id: number; type: string } }): number {
+    if (req.user.type !== 'partner') {
+      throw new ForbiddenException('Solo partners pueden gestionar contenido del portal');
+    }
+    return req.user.id;
+  }
+
+  @Get('partner/videos')
+  @UseGuards(RolesGuard)
+  @Roles('partner')
+  partnerListVideos(@Request() req) {
+    return this.mediaService.partnerListVideos(this.partnerIdFromRequest(req));
+  }
+
+  @Post('partner/videos')
+  @UseGuards(RolesGuard)
+  @Roles('partner')
+  partnerCreateVideo(
+    @Request() req,
+    @Body()
+    body: {
+      title: string;
+      description: string;
+      videoUrl: string;
+      thumbnailUrl?: string | null;
+      isPublished?: boolean;
+    },
+  ) {
+    return this.mediaService.partnerCreateVideo(this.partnerIdFromRequest(req), body);
+  }
+
+  @Patch('partner/videos/:id')
+  @UseGuards(RolesGuard)
+  @Roles('partner')
+  partnerUpdateVideo(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+    @Body()
+    body: {
+      title?: string;
+      description?: string;
+      videoUrl?: string;
+      thumbnailUrl?: string | null;
+      isPublished?: boolean;
+    },
+  ) {
+    return this.mediaService.partnerUpdateVideo(this.partnerIdFromRequest(req), id, body);
+  }
+
+  @Delete('partner/videos/:id')
+  @UseGuards(RolesGuard)
+  @Roles('partner')
+  partnerDeleteVideo(@Request() req, @Param('id', ParseIntPipe) id: number) {
+    return this.mediaService.partnerDeleteVideo(this.partnerIdFromRequest(req), id);
+  }
+
+  @Get('partner/guides')
+  @UseGuards(RolesGuard)
+  @Roles('partner')
+  partnerListGuides(@Request() req) {
+    return this.mediaService.partnerListGuides(this.partnerIdFromRequest(req));
+  }
+
+  @Post('partner/guides')
+  @UseGuards(RolesGuard)
+  @Roles('partner')
+  partnerCreateGuide(
+    @Request() req,
+    @Body()
+    body: {
+      title: string;
+      content?: string;
+      contentHtml?: string | null;
+      attachmentUrl?: string | null;
+      attachmentMime?: string | null;
+      thumbnailUrl?: string | null;
+      isPublished?: boolean;
+    },
+  ) {
+    return this.mediaService.partnerCreateGuide(this.partnerIdFromRequest(req), body);
+  }
+
+  @Patch('partner/guides/:id')
+  @UseGuards(RolesGuard)
+  @Roles('partner')
+  partnerUpdateGuide(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+    @Body()
+    body: {
+      title?: string;
+      content?: string;
+      contentHtml?: string | null;
+      attachmentUrl?: string | null;
+      attachmentMime?: string | null;
+      thumbnailUrl?: string | null;
+      isPublished?: boolean;
+    },
+  ) {
+    return this.mediaService.partnerUpdateGuide(this.partnerIdFromRequest(req), id, body);
+  }
+
+  @Delete('partner/guides/:id')
+  @UseGuards(RolesGuard)
+  @Roles('partner')
+  partnerDeleteGuide(@Request() req, @Param('id', ParseIntPipe) id: number) {
+    return this.mediaService.partnerDeleteGuide(this.partnerIdFromRequest(req), id);
+  }
+
+  @Post('partner/thumbnails/upload')
+  @UseGuards(RolesGuard)
+  @Roles('partner')
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  async partnerUploadThumbnail(
+    @Request() req,
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: { type: 'videos' | 'guias'; id?: string },
+  ) {
+    if (!file) throw new BadRequestException('Archivo requerido');
+    const partnerId = this.partnerIdFromRequest(req);
+    const type = body.type === 'guias' ? 'guias' : 'videos';
+    const folder = body.id
+      ? `media/partners/${partnerId}/thumbnails/${type}/${body.id}`
+      : `media/partners/${partnerId}/thumbnails/${type}/temp`;
+    const result = await this.uploadFileService.uploadFile(file, undefined, undefined, folder);
+    if (!result) throw new BadRequestException('Error al subir thumbnail');
+    return { url: result.url, key: result.key };
+  }
+
+  @Post('partner/guides/attachment/upload')
+  @UseGuards(RolesGuard)
+  @Roles('partner')
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  async partnerUploadGuideAttachment(
+    @Request() req,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) throw new BadRequestException('Archivo requerido');
+    const partnerId = this.partnerIdFromRequest(req);
+    const folder = `media/partners/${partnerId}/guides`;
+    const result = await this.uploadFileService.uploadFile(file, undefined, undefined, folder);
+    if (!result) throw new BadRequestException('Error al subir adjunto');
+    return { url: result.url, key: result.key };
   }
 }
 

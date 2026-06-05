@@ -5,7 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, IsNull, Not } from 'typeorm';
+import { Repository, IsNull, Not, In } from 'typeorm';
 import { JwtService } from '@nestjs/jwt';
 import { Client } from './entities/client.entity';
 import { CreateClientDto } from './dtos/create-client.dto';
@@ -16,8 +16,10 @@ import { ZohoContactService } from '../../zoho-config/zoho-contact.service';
 import { EmailService } from '../../shared/common/services/email.service';
 import { PartnerTenantsService } from '../partner-tenants/partner-tenants.service';
 import { EmailTenantBrandingService } from '../partner-tenants/email-tenant-branding.service';
+import { EmailBranding } from '../../shared/common/types/email-branding.types';
 import { BillingService } from '../billing/billing.service';
 import { encodePassword } from '../../shared/common/utils/bcrypt';
+import { normalizeAuthEmail } from '../../shared/common/utils/normalize-auth-email';
 
 @Injectable()
 export class ClientsService {
@@ -55,11 +57,138 @@ export class ClientsService {
   }
 
   /**
+   * Listado paginado de clientes del partner con estadísticas incluidas.
+   */
+  async getMyClientsPaginated(
+    partnerId: number,
+    options?: {
+      page?: number;
+      limit?: number;
+      q?: string;
+      status?: 'all' | 'active' | 'inactive';
+    },
+  ): Promise<{
+    data: Array<{
+      id: number;
+      uuid: string;
+      partnerId?: number;
+      userId?: number | null;
+      full_name: string;
+      email: string;
+      phone?: string | null;
+      company?: string | null;
+      status: boolean;
+      createdAt: Date;
+      updatedAt: Date;
+      totalRequests: number;
+      activeRequests: number;
+      completedRequests: number;
+      lastRequestDate: Date | null;
+    }>;
+    total: number;
+    page: number;
+    limit: number;
+    summary: {
+      total: number;
+      activeCount: number;
+      totalRequests: number;
+    };
+  }> {
+    try {
+      const page = Math.max(1, options?.page ?? 1);
+      const limit = Math.min(100, Math.max(1, options?.limit ?? 12));
+      const q = options?.q?.trim().toLowerCase();
+      const statusFilter = options?.status ?? 'all';
+
+      const baseQb = this.clientRepository
+        .createQueryBuilder('c')
+        .leftJoinAndSelect('c.user', 'user')
+        .where('c.partnerId = :partnerId', { partnerId });
+
+      if (q) {
+        baseQb.andWhere(
+          '(LOWER(c.full_name) LIKE :q OR LOWER(c.email) LIKE :q OR LOWER(c.company) LIKE :q)',
+          { q: `%${q}%` },
+        );
+      }
+
+      const filteredQb = baseQb.clone();
+      if (statusFilter === 'active') {
+        filteredQb.andWhere('c.status = true');
+      } else if (statusFilter === 'inactive') {
+        filteredQb.andWhere('c.status = false');
+      }
+
+      const total = await filteredQb.getCount();
+
+      let activeCount = total;
+      if (statusFilter === 'all') {
+        const activeQb = baseQb.clone().andWhere('c.status = true');
+        activeCount = await activeQb.getCount();
+      } else if (statusFilter === 'inactive') {
+        activeCount = 0;
+      }
+
+      const filteredIds = await filteredQb.clone().select(['c.id']).getMany();
+      const allFilteredClientIds = filteredIds.map((row) => row.id);
+      const totalRequests =
+        allFilteredClientIds.length > 0
+          ? await this.requestRepository.count({
+              where: { partnerId, clientId: In(allFilteredClientIds) },
+            })
+          : 0;
+
+      const skip = (page - 1) * limit;
+      const pageClients = await filteredQb
+        .orderBy('c.createdAt', 'DESC')
+        .skip(skip)
+        .take(limit)
+        .getMany();
+
+      const pageClientIds = pageClients.map((c) => c.id);
+      const statsByClientId = await this.getRequestStatsByClientIds(
+        pageClientIds,
+        partnerId,
+      );
+
+      const data = pageClients.map((c) =>
+        this.mapMyClientWithStats(
+          c,
+          statsByClientId.get(c.id) ?? {
+            totalRequests: 0,
+            activeRequests: 0,
+            completedRequests: 0,
+            lastRequestDate: null,
+          },
+        ),
+      );
+
+      return {
+        data,
+        total,
+        page,
+        limit,
+        summary: {
+          total,
+          activeCount,
+          totalRequests,
+        },
+      };
+    } catch (e) {
+      console.error('Error al obtener clientes paginados del partner:', e);
+      throw new InternalServerErrorException(
+        'No se pudieron obtener los clientes',
+      );
+    }
+  }
+
+  /**
    * Clientes de un partner con estadísticas (admin y staff user).
    */
   async getClientsForPartnerWithStats(partnerId: number): Promise<
     Array<{
       id: number;
+      uuid: string;
       full_name: string;
       email: string;
       totalRequests: number;
@@ -95,6 +224,7 @@ export class ClientsService {
           });
           return {
             id: c.id,
+            uuid: c.uuid,
             full_name: c.full_name,
             email: c.email,
             totalRequests: stats.totalRequests,
@@ -268,6 +398,102 @@ export class ClientsService {
     };
   }
 
+  private mapMyClientWithStats(
+    c: Client,
+    stats: {
+      totalRequests: number;
+      activeRequests: number;
+      completedRequests: number;
+      lastRequestDate: Date | null;
+    },
+  ) {
+    return {
+      id: c.id,
+      uuid: c.uuid,
+      partnerId: c.partnerId,
+      userId: c.userId ?? null,
+      full_name: c.full_name,
+      email: c.email,
+      phone: c.phone ?? null,
+      company: c.company ?? null,
+      status: c.status,
+      createdAt: c.createdAt,
+      updatedAt: c.updatedAt,
+      totalRequests: stats.totalRequests,
+      activeRequests: stats.activeRequests,
+      completedRequests: stats.completedRequests,
+      lastRequestDate: stats.lastRequestDate,
+    };
+  }
+
+  private async getRequestStatsByClientIds(
+    clientIds: number[],
+    partnerId: number,
+  ): Promise<
+    Map<
+      number,
+      {
+        totalRequests: number;
+        activeRequests: number;
+        completedRequests: number;
+        lastRequestDate: Date | null;
+      }
+    >
+  > {
+    const stats = new Map<
+      number,
+      {
+        totalRequests: number;
+        activeRequests: number;
+        completedRequests: number;
+        lastRequestDate: Date | null;
+      }
+    >();
+
+    if (!clientIds.length) {
+      return stats;
+    }
+
+    for (const id of clientIds) {
+      stats.set(id, {
+        totalRequests: 0,
+        activeRequests: 0,
+        completedRequests: 0,
+        lastRequestDate: null,
+      });
+    }
+
+    const requests = await this.requestRepository.find({
+      where: { partnerId, clientId: In(clientIds) },
+      select: ['clientId', 'status', 'createdAt'],
+    });
+
+    for (const request of requests) {
+      const row = stats.get(request.clientId);
+      if (!row) {
+        continue;
+      }
+      row.totalRequests += 1;
+      if (
+        request.status === 'en-proceso' ||
+        request.status === 'pendiente'
+      ) {
+        row.activeRequests += 1;
+      }
+      if (request.status === 'completada') {
+        row.completedRequests += 1;
+      }
+      if (
+        !row.lastRequestDate ||
+        request.createdAt > row.lastRequestDate
+      ) {
+        row.lastRequestDate = request.createdAt;
+      }
+    }
+
+    return stats;
+  }
+
   /**
    * Fila `clients` del usuario portal con rol client (para flujo nueva solicitud sin paso de asociación).
    * 1) `user_id` = usuario; 2) mismo email (normalizado) y sin partner (alineado a solicitudes directas).
@@ -369,14 +595,17 @@ export class ClientsService {
       // Si es partner, asignar automáticamente su ID
       const finalPartnerId = partnerId || createClientDto.partnerId;
 
+      const emailNorm = normalizeAuthEmail(createClientDto.email);
+      if (!emailNorm) {
+        throw new BadRequestException('El email es requerido');
+      }
+
       // Validar email único por partner (si tiene partner)
       if (finalPartnerId) {
-        const existingClient = await this.clientRepository.findOne({
-          where: {
-            email: createClientDto.email,
-            partnerId: finalPartnerId,
-          },
-        });
+        const existingClient = await this.findClientByEmailInScope(
+          emailNorm,
+          finalPartnerId,
+        );
 
         if (existingClient) {
           throw new BadRequestException(
@@ -387,6 +616,7 @@ export class ClientsService {
 
       const client = this.clientRepository.create({
         ...createClientDto,
+        email: emailNorm,
         partnerId: finalPartnerId,
         status: createClientDto.status !== undefined ? createClientDto.status : true,
       });
@@ -428,43 +658,68 @@ export class ClientsService {
   }
 
   /**
-   * Actualizar un cliente
+   * Actualizar un cliente (y usuario portal vinculado si existe).
    */
   async updateClient(
     id: number,
     updateClientDto: UpdateClientDto,
     partnerId?: number,
-  ): Promise<Client> {
+  ): Promise<Client | User> {
     try {
-      const where: any = { id };
-      if (partnerId) {
-        where.partnerId = partnerId; // Partners solo pueden actualizar sus propios clientes
+      const { listItemUserOnly, ...patch } = updateClientDto;
+
+      if (listItemUserOnly && !partnerId) {
+        return this.updateAdminUserOnlyClient(id, patch);
       }
 
-      const client = await this.clientRepository.findOne({ where });
+      const where: { id: number; partnerId?: number } = { id };
+      if (partnerId) {
+        where.partnerId = partnerId;
+      }
+
+      const client = await this.clientRepository.findOne({
+        where,
+        relations: ['user'],
+      });
 
       if (!client) {
         throw new NotFoundException('Cliente no encontrado');
       }
 
-      // Validar email único si se está cambiando
-      if (updateClientDto.email && updateClientDto.email !== client.email) {
-        const existingClient = await this.clientRepository.findOne({
-          where: {
-            email: updateClientDto.email,
-            partnerId: client.partnerId || undefined,
-          },
-        });
-
-        if (existingClient && existingClient.id !== id) {
-          throw new BadRequestException(
-            'Ya existe un cliente con este email',
-          );
+      if (patch.email !== undefined) {
+        const emailNorm = normalizeAuthEmail(patch.email);
+        if (!emailNorm) {
+          throw new BadRequestException('El email es requerido');
+        }
+        const currentNorm = normalizeAuthEmail(client.email);
+        if (emailNorm !== currentNorm) {
+          await this.assertClientEmailAvailable(client, emailNorm, client.id);
+          patch.email = emailNorm;
+        } else {
+          delete patch.email;
         }
       }
 
-      Object.assign(client, updateClientDto);
-      return await this.clientRepository.save(client);
+      if (patch.full_name !== undefined) {
+        patch.full_name = patch.full_name.trim();
+        if (!patch.full_name) {
+          throw new BadRequestException('El nombre completo es requerido');
+        }
+      }
+
+      Object.assign(client, patch);
+      const savedClient = await this.clientRepository.save(client);
+
+      if (savedClient.userId) {
+        await this.syncLinkedPortalUser(savedClient, patch);
+        const refreshed = await this.clientRepository.findOne({
+          where: { id: savedClient.id },
+          relations: ['user'],
+        });
+        return refreshed ?? savedClient;
+      }
+
+      return savedClient;
     } catch (e) {
       if (e instanceof NotFoundException || e instanceof BadRequestException) {
         throw e;
@@ -472,6 +727,215 @@ export class ClientsService {
       console.error('Error al actualizar cliente:', e);
       throw new InternalServerErrorException('No se pudo actualizar el cliente');
     }
+  }
+
+  /**
+   * Listado admin: fila solo usuario portal (sin registro en clients).
+   */
+  private async updateAdminUserOnlyClient(
+    userId: number,
+    patch: Omit<UpdateClientDto, 'listItemUserOnly'>,
+  ): Promise<User> {
+    const user = await this.userRepository.findOne({
+      where: { id: userId, type: 'client' },
+    });
+    if (!user) {
+      throw new NotFoundException('Usuario cliente no encontrado');
+    }
+
+    if (patch.email !== undefined) {
+      const emailNorm = normalizeAuthEmail(patch.email);
+      if (!emailNorm) {
+        throw new BadRequestException('El email es requerido');
+      }
+      const currentNorm = normalizeAuthEmail(user.email);
+      if (emailNorm !== currentNorm) {
+        await this.assertEmailForPortalUser(user.id, emailNorm, null);
+        user.email = emailNorm;
+      }
+    }
+
+    if (patch.full_name !== undefined) {
+      const fullName = patch.full_name.trim();
+      if (!fullName) {
+        throw new BadRequestException('El nombre completo es requerido');
+      }
+      const { first, last } = this.splitFullName(fullName);
+      user.first_name = first;
+      user.last_name = last;
+    }
+
+    if (patch.phone !== undefined) {
+      user.phone = patch.phone?.trim() ? patch.phone.trim() : (null as unknown as string);
+    }
+    if (patch.company !== undefined) {
+      user.company = patch.company?.trim() ? patch.company.trim() : (null as unknown as string);
+    }
+    if (patch.status !== undefined) {
+      user.status = patch.status;
+    }
+
+    const savedUser = await this.userRepository.save(user);
+
+    const linkedClients = await this.clientRepository.find({
+      where: { userId: savedUser.id },
+    });
+    for (const row of linkedClients) {
+      if (patch.email !== undefined) {
+        row.email = savedUser.email;
+      }
+      if (patch.full_name !== undefined) {
+        row.full_name =
+          `${savedUser.first_name || ''} ${savedUser.last_name || ''}`.trim() ||
+          savedUser.username ||
+          savedUser.email;
+      }
+      if (patch.phone !== undefined) {
+        row.phone = patch.phone;
+      }
+      if (patch.company !== undefined) {
+        row.company = patch.company;
+      }
+      if (patch.status !== undefined) {
+        row.status = patch.status;
+      }
+      await this.clientRepository.save(row);
+    }
+
+    delete (savedUser as { password?: string }).password;
+    return savedUser;
+  }
+
+  /**
+   * Misma lógica que inviteClientToPortal: unicidad por partner/tenant y rol en users.
+   */
+  private async assertClientEmailAvailable(
+    client: Client,
+    newEmailNorm: string,
+    clientId: number,
+  ): Promise<void> {
+    const duplicateClient = await this.findClientByEmailInScope(
+      newEmailNorm,
+      client.partnerId ?? null,
+      clientId,
+    );
+    if (duplicateClient) {
+      throw new BadRequestException(
+        client.partnerId
+          ? 'Ya existe un cliente con este email para este partner'
+          : 'Ya existe un cliente con este email',
+      );
+    }
+    await this.assertEmailForPortalUser(
+      client.userId ?? null,
+      newEmailNorm,
+      client.partnerId ?? null,
+    );
+  }
+
+  private async assertEmailForPortalUser(
+    currentUserId: number | null,
+    newEmailNorm: string,
+    partnerId: number | null,
+  ): Promise<void> {
+    const existingUser = await this.findUserByEmailNorm(newEmailNorm);
+    if (!existingUser) {
+      return;
+    }
+    if (currentUserId != null && existingUser.id === currentUserId) {
+      return;
+    }
+    if (existingUser.type !== 'client') {
+      throw new BadRequestException(
+        'Ya existe una cuenta con este email con otro rol en el sistema',
+      );
+    }
+    const otherClient = await this.clientRepository.findOne({
+      where: { userId: existingUser.id },
+    });
+    if (!otherClient) {
+      throw new BadRequestException('El correo ya está en uso por otra cuenta');
+    }
+    if (partnerId != null) {
+      if (
+        otherClient.partnerId != null &&
+        otherClient.partnerId !== partnerId
+      ) {
+        throw new BadRequestException(
+          'Este email ya está vinculado a un cliente de otro partner',
+        );
+      }
+    } else if (otherClient.partnerId != null) {
+      throw new BadRequestException(
+        'Este email ya está vinculado a un cliente de un partner',
+      );
+    }
+    throw new BadRequestException('El correo ya está en uso por otra cuenta');
+  }
+
+  private async findUserByEmailNorm(emailNorm: string): Promise<User | null> {
+    return this.userRepository
+      .createQueryBuilder('u')
+      .where('LOWER(TRIM(u.email)) = :email', { email: emailNorm })
+      .getOne();
+  }
+
+  private async findClientByEmailInScope(
+    emailNorm: string,
+    partnerId: number | null,
+    excludeClientId?: number,
+  ): Promise<Client | null> {
+    const qb = this.clientRepository
+      .createQueryBuilder('c')
+      .where('LOWER(TRIM(c.email)) = :email', { email: emailNorm });
+    if (partnerId != null) {
+      qb.andWhere('c.partner_id = :partnerId', { partnerId });
+    } else {
+      qb.andWhere('c.partner_id IS NULL');
+    }
+    if (excludeClientId != null) {
+      qb.andWhere('c.id != :excludeClientId', { excludeClientId });
+    }
+    return qb.getOne();
+  }
+
+  private async syncLinkedPortalUser(
+    client: Client,
+    patch: Omit<UpdateClientDto, 'listItemUserOnly'>,
+  ): Promise<void> {
+    const user = await this.userRepository.findOne({
+      where: { id: client.userId! },
+    });
+    if (!user) {
+      return;
+    }
+    if (user.type !== 'client') {
+      throw new BadRequestException(
+        'El email ya está asociado a una cuenta que no es de cliente',
+      );
+    }
+
+    if (patch.email !== undefined) {
+      user.email = client.email;
+    }
+    if (patch.full_name !== undefined) {
+      const { first, last } = this.splitFullName(client.full_name);
+      user.first_name = first;
+      user.last_name = last;
+    }
+    if (patch.phone !== undefined) {
+      user.phone = patch.phone?.trim() ? patch.phone.trim() : (null as unknown as string);
+    }
+    if (patch.company !== undefined) {
+      user.company = patch.company?.trim()
+        ? patch.company.trim()
+        : (null as unknown as string);
+    }
+    if (patch.status !== undefined) {
+      user.status = patch.status;
+    }
+
+    await this.userRepository.save(user);
   }
 
   /**
@@ -721,17 +1185,27 @@ export class ClientsService {
 
   /**
    * Crea o reutiliza un usuario `client`, enlaza `clients.user_id` y envía invitación.
-   * Solo clientes con `partner_id` (white-label).
+   * Partners: solo clientes con `partner_id`. Admin SC: clientes sin partner o fila solo usuario.
    */
   async inviteClientToPortal(
     clientId: number,
-    options?: { partnerScopeId?: number; tenantHost?: string },
+    options?: {
+      partnerScopeId?: number;
+      tenantHost?: string;
+      /** Admin en plataforma Start Companies (cliente sin partner_id). */
+      platformScope?: boolean;
+      listItemUserOnly?: boolean;
+    },
   ): Promise<{
     userId: number;
     invited: boolean;
     resent: boolean;
     message: string;
   }> {
+    if (options?.listItemUserOnly && options?.platformScope) {
+      return this.invitePlatformClientByUserId(clientId, options.tenantHost);
+    }
+
     const where: { id: number; partnerId?: number } = { id: clientId };
     if (options?.partnerScopeId) {
       where.partnerId = options.partnerScopeId;
@@ -741,7 +1215,7 @@ export class ClientsService {
     if (!client) {
       throw new NotFoundException('Cliente no encontrado');
     }
-    if (!client.partnerId) {
+    if (!client.partnerId && !options?.platformScope) {
       throw new BadRequestException(
         'Solo los clientes de un partner pueden recibir acceso al portal',
       );
@@ -750,23 +1224,25 @@ export class ClientsService {
       throw new BadRequestException('El cliente debe tener un email válido');
     }
 
-    const tenant = options?.tenantHost
-      ? await this.partnerTenantsService.resolveByHost(options.tenantHost)
-      : await this.partnerTenantsService.resolveByPartnerId(client.partnerId);
+    const branding = client.partnerId
+      ? await this.resolvePartnerInviteBranding(client.partnerId, options?.tenantHost)
+      : this.emailTenantBranding.platformBranding();
 
-    if (
-      tenant.kind === 'partner' &&
-      tenant.partnerId != null &&
-      tenant.partnerId !== client.partnerId
-    ) {
-      throw new BadRequestException(
-        'El dominio del tenant no coincide con el partner del cliente',
-      );
+    if (client.partnerId) {
+      const tenant = options?.tenantHost
+        ? await this.partnerTenantsService.resolveByHost(options.tenantHost)
+        : await this.partnerTenantsService.resolveByPartnerId(client.partnerId);
+
+      if (
+        tenant.kind === 'partner' &&
+        tenant.partnerId != null &&
+        tenant.partnerId !== client.partnerId
+      ) {
+        throw new BadRequestException(
+          'El dominio del tenant no coincide con el partner del cliente',
+        );
+      }
     }
-
-    const branding = await this.emailTenantBranding.resolveByPartnerId(
-      client.partnerId,
-    );
 
     let user: User | null = null;
     let resent = false;
@@ -808,6 +1284,15 @@ export class ClientsService {
             'Este email ya está vinculado a un cliente de otro partner',
           );
         }
+        if (
+          otherClient &&
+          !client.partnerId &&
+          otherClient.partnerId != null
+        ) {
+          throw new BadRequestException(
+            'Este email ya está vinculado a un cliente de un partner',
+          );
+        }
         user = existingByEmail;
         client.userId = user.id;
         await this.clientRepository.save(client);
@@ -835,8 +1320,84 @@ export class ClientsService {
       await this.clientRepository.save(client);
     }
 
-    await this.billingService.ensurePartnerClientAccess(user);
+    if (client.partnerId) {
+      await this.billingService.ensurePartnerClientAccess(user);
+    } else {
+      await this.billingService.ensureTrialWindow(user);
+    }
 
+    return this.sendClientPortalInvitationEmail(user, client.full_name, branding, resent);
+  }
+
+  /** Admin SC: reenviar invitación a usuario client sin fila en `clients`. */
+  private async invitePlatformClientByUserId(
+    userId: number,
+    tenantHost?: string,
+  ): Promise<{
+    userId: number;
+    invited: boolean;
+    resent: boolean;
+    message: string;
+  }> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user || user.type !== 'client') {
+      throw new NotFoundException('Usuario cliente no encontrado');
+    }
+    if (!user.email?.trim()) {
+      throw new BadRequestException('El cliente debe tener un email válido');
+    }
+    if (!user.status) {
+      throw new BadRequestException(
+        'No se puede enviar invitación a un usuario inactivo',
+      );
+    }
+
+    const clientRow = await this.clientRepository.findOne({
+      where: { userId: user.id, partnerId: IsNull() },
+    });
+    if (clientRow && !clientRow.email?.trim()) {
+      clientRow.email = user.email.trim();
+      await this.clientRepository.save(clientRow);
+    }
+
+    await this.billingService.ensureTrialWindow(user);
+
+    const branding = tenantHost
+      ? await this.emailTenantBranding.resolveForUser(user, tenantHost)
+      : this.emailTenantBranding.platformBranding();
+
+    const displayName =
+      `${user.first_name || ''} ${user.last_name || ''}`.trim() ||
+      clientRow?.full_name ||
+      user.username;
+
+    return this.sendClientPortalInvitationEmail(user, displayName, branding, true);
+  }
+
+  private async resolvePartnerInviteBranding(
+    partnerId: number,
+    tenantHost?: string,
+  ) {
+    if (tenantHost?.trim()) {
+      const tenant = await this.partnerTenantsService.resolveByHost(tenantHost);
+      if (tenant.kind === 'partner' && tenant.partnerId === partnerId) {
+        return this.emailTenantBranding.resolveByPartnerId(partnerId);
+      }
+    }
+    return this.emailTenantBranding.resolveByPartnerId(partnerId);
+  }
+
+  private async sendClientPortalInvitationEmail(
+    user: User,
+    displayNameFallback: string | undefined,
+    branding: EmailBranding,
+    resent: boolean,
+  ): Promise<{
+    userId: number;
+    invited: boolean;
+    resent: boolean;
+    message: string;
+  }> {
     const resetToken = await this.jwtService.signAsync(
       { id: user.id, email: user.email, type: 'password-setup' },
       { expiresIn: '24h' },
@@ -844,7 +1405,7 @@ export class ClientsService {
 
     const displayName =
       `${user.first_name || ''} ${user.last_name || ''}`.trim() ||
-      client.full_name ||
+      displayNameFallback ||
       user.username;
 
     try {

@@ -1,0 +1,3 @@
+client_full_name,client_email,apertura_llc_name,apertura_incorporation_state,apertura_llc_type,client_phone,client_company,client_notes,client_invite_to_portal,request_notes,request_status,request_plan,apertura_ein,apertura_llc_address,apertura_business_description
+Maria Lopez,maria@example.com,MARIA HOLDINGS LLC,Wyoming,single,+17865550100,MARIA HOLDINGS LLC,Importada desde archivo histórico,no,LLC constituida antes del panel,completada,,12-3456789,"1600 Van Lennen Ave Ste 101, Cheyenne, Wyoming 82001, United States",Servicios de consultoría
+Juan Perez,juan@example.com,JUAN VENTURES LLC,Florida,single,,,,no,,completada,,,
