@@ -1183,6 +1183,7 @@ export class RequestsService {
           if (aperturaDataFieldsAny.bankAccountLinkedPhone === undefined) delete aperturaDataToCreate.bankAccountLinkedPhone;
           if (aperturaDataFieldsAny.actividadFinancieraEsperada === undefined) delete aperturaDataToCreate.actividadFinancieraEsperada;
           if (aperturaDataFieldsAny.projectOrCompanyUrl === undefined) delete aperturaDataToCreate.projectOrCompanyUrl;
+          if (aperturaDataFieldsAny.bankVerifierPassportUrl === undefined) delete aperturaDataToCreate.bankVerifierPassportUrl;
         }
         
         // einNumber (legacy/API) -> ein (columna BD)
@@ -2006,6 +2007,7 @@ export class RequestsService {
             if (!(aperturaDataFieldsAny.bankAccountLinkedPhone !== undefined)) delete dataToAssign.bankAccountLinkedPhone;
             if (!(aperturaDataFieldsAny.actividadFinancieraEsperada !== undefined)) delete dataToAssign.actividadFinancieraEsperada;
             if (!(aperturaDataFieldsAny.projectOrCompanyUrl !== undefined)) delete dataToAssign.projectOrCompanyUrl;
+            if (!(aperturaDataFieldsAny.bankVerifierPassportUrl !== undefined)) delete dataToAssign.bankVerifierPassportUrl;
           }
           
           if (dataToAssign.einNumber !== undefined && dataToAssign.ein === undefined) {
@@ -3542,6 +3544,7 @@ export class RequestsService {
           'certificateOfFormationUrl',
           'serviceBillUrl',
           'bankStatementUrl',
+          'bankVerifierPassportUrl',
         ];
         if (updateUrlsInObject(request.aperturaLlcRequest, urlFields)) {
           await queryRunner.manager.save(AperturaLlcRequest, request.aperturaLlcRequest);

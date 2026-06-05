@@ -76,6 +76,10 @@ export class AperturaLlcRequest {
   @Column({ name: 'project_or_company_url', nullable: true, length: 500 })
   projectOrCompanyUrl?: string;
 
+  /** Foto de pasaporte del validador de cuenta bancaria (sección 3) */
+  @Column({ name: 'bank_verifier_passport_url', nullable: true, type: 'text' })
+  bankVerifierPassportUrl?: string;
+
   @CreateDateColumn({
     name: 'created_at',
     type: 'timestamp with time zone',

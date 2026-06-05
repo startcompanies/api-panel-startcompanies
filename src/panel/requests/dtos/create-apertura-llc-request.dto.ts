@@ -264,6 +264,14 @@ export class CreateAperturaLlcRequestDto {
   @IsString()
   projectOrCompanyUrl?: string;
 
+  @ApiPropertyOptional({
+    example: 'https://example.com/bank-verifier-passport.jpg',
+    description: 'URL de la foto de pasaporte del validador bancario (sección 3)',
+  })
+  @IsOptional()
+  @IsString()
+  bankVerifierPassportUrl?: string;
+
   // Paso 4: Dirección Personal del Propietario
   @ApiPropertyOptional({ example: 'Mexicana', description: 'Nacionalidad del propietario' })
   @IsOptional()

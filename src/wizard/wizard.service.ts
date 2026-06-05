@@ -769,6 +769,7 @@ export class WizardService {
           delete aperturaDataRaw.bankAccountLinkedPhone;
           delete aperturaDataRaw.actividadFinancieraEsperada;
           delete aperturaDataRaw.projectOrCompanyUrl;
+          delete aperturaDataRaw.bankVerifierPassportUrl;
         }
 
         const wizAperturaWebErr = applyOptionalPublicWebUrlsToObject(
@@ -1642,6 +1643,7 @@ export class WizardService {
             aperturaDataRaw.bankAccountLinkedPhone,
             aperturaDataRaw.actividadFinancieraEsperada,
             aperturaDataRaw.projectOrCompanyUrl,
+            aperturaDataRaw.bankVerifierPassportUrl,
           ].some((v) => v !== undefined && v !== null && String(v).trim() !== '');
 
           // Sección bancaria (última del formulario LLC): no descartar si ya hay datos en el payload
@@ -1654,6 +1656,7 @@ export class WizardService {
             delete aperturaDataRaw.bankAccountLinkedPhone;
             delete aperturaDataRaw.actividadFinancieraEsperada;
             delete aperturaDataRaw.projectOrCompanyUrl;
+            delete aperturaDataRaw.bankVerifierPassportUrl;
           }
 
           const wizAperturaUpWebErr = applyOptionalPublicWebUrlsToObject(
