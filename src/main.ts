@@ -9,6 +9,10 @@ import { ResponseSanitizerInterceptor } from './shared/common/interceptors/respo
 import { ThrottlerExceptionFilter } from './shared/common/filters/throttler-exception.filter';
 import { SocketIoAdapter } from './socket-io.adapter';
 import { createCorsOriginCallback, logAllowedCorsOrigins, setRuntimeTenantCorsOrigins } from './config/cors-origins';
+import {
+  NOINDEX_ROBOTS_HEADER_VALUE,
+  shouldSendNoIndexHeaders,
+} from './config/noindex-headers.util';
 import { PartnerTenantsService } from './panel/partner-tenants/partner-tenants.service';
 
 async function bootstrap() {
@@ -23,6 +27,16 @@ async function bootstrap() {
   if (typeof httpServer?.disable === 'function') {
     httpServer.disable('x-powered-by');
   }
+
+  // Staging / dev / local: impedir indexación en buscadores (todas las respuestas HTTP).
+  app.use((req, res, next) => {
+    const host =
+      (req.headers['x-forwarded-host'] as string | undefined) || req.headers.host;
+    if (shouldSendNoIndexHeaders(host)) {
+      res.setHeader('X-Robots-Tag', NOINDEX_ROBOTS_HEADER_VALUE);
+    }
+    next();
+  });
 
   // Configurar cookie parser para SSO
   app.use(cookieParser());
