@@ -45,6 +45,7 @@ import {
   RequestSubmittedNotificationsService,
 } from '../notifications/request-submitted-notifications.service';
 import { applyOptionalPublicWebUrlsToObject } from '../../shared/common/utils/public-web-url.util';
+import { applySolicitudRecibidaStatusPromotion } from './utils/request-status.util';
 export type { RequestType } from './types/request-type';
 
 @Injectable()
@@ -1921,6 +1922,8 @@ export class RequestsService {
         signatureUrl: request.signatureUrl,
         currentStep: request.currentStep,
       });
+
+      applySolicitudRecibidaStatusPromotion(request);
       
       await queryRunner.manager.save(Request, request);
       

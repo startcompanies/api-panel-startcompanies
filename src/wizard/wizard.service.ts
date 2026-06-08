@@ -29,6 +29,7 @@ import { RequestSubmittedNotificationsService } from '../panel/notifications/req
 import { applyOptionalPublicWebUrlsToObject } from '../shared/common/utils/public-web-url.util';
 import { ZohoContactService } from '../zoho-config/zoho-contact.service';
 import { PricingService } from '../panel/pricing/pricing.service';
+import { applySolicitudRecibidaStatusPromotion } from '../panel/requests/utils/request-status.util';
 import * as crypto from 'crypto';
 
 @Injectable()
@@ -1588,6 +1589,8 @@ export class WizardService {
       ) {
         request.status = 'solicitud-recibida';
       }
+
+      applySolicitudRecibidaStatusPromotion(request);
 
       await queryRunner.manager.save(Request, request);
 
