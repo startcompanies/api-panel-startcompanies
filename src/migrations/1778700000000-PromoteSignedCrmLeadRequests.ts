@@ -10,7 +10,7 @@ export class PromoteSignedCrmLeadRequests1778700000000 implements MigrationInter
     await queryRunner.query(`
       UPDATE "requests"
       SET "status" = 'solicitud-recibida',
-          "updated_at" = NOW()
+          "updatedAt" = NOW()
       WHERE "status" = 'pendiente'
         AND "signature_url" IS NOT NULL
         AND TRIM("signature_url") <> ''

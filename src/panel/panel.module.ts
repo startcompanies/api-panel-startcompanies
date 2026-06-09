@@ -18,6 +18,7 @@ import { AppLogsModule } from './app-logs/app-logs.module';
 import { PartnerTenantsModule } from './partner-tenants/partner-tenants.module';
 import { AccountTeamModule } from './account-team/account-team.module';
 import { PlaidModule } from './plaid/plaid.module';
+import { GlobalAccountModule } from './global-account/global-account.module';
 import { ViewAsModule } from './view-as/view-as.module';
 
 /**
@@ -45,6 +46,7 @@ import { ViewAsModule } from './view-as/view-as.module';
     PartnerTenantsModule,
     AccountTeamModule,
     PlaidModule,
+    GlobalAccountModule,
     ViewAsModule,
   ],
   exports: [
@@ -67,6 +69,7 @@ import { ViewAsModule } from './view-as/view-as.module';
     PartnerTenantsModule,
     AccountTeamModule,
     PlaidModule,
+    GlobalAccountModule,
     ViewAsModule,
   ],
 })
