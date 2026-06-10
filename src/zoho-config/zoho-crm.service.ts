@@ -3,6 +3,7 @@ import { HttpService } from '@nestjs/axios';
 import { lastValueFrom } from 'rxjs';
 import axios from 'axios';
 import { ZohoConfigService } from './zoho-config.service';
+import { formatZohoHttpError } from './zoho-api-error.util';
 
 interface TokenResponse {
   access_token: string;
@@ -428,7 +429,7 @@ export class ZohoCrmService {
     } catch (error: any) {
       this.logger.error(`Error al realizar upsert en ${module}:`, error.response?.data || error.message);
       throw new HttpException(
-        error.response?.data || 'Error al realizar upsert en Zoho CRM',
+        formatZohoHttpError(error),
         error.response?.status || HttpStatus.BAD_REQUEST,
       );
     }
