@@ -700,6 +700,9 @@ export class ZohoSyncService implements OnModuleInit {
       };
     } catch (error: any) {
       this.logger.error(`Error al sincronizar solicitud ${requestId} a Zoho:`, error);
+      if (error instanceof HttpException) {
+        throw error;
+      }
       throw new HttpException(
         error.message || 'Error al sincronizar con Zoho CRM',
         error.status || HttpStatus.INTERNAL_SERVER_ERROR,
@@ -1023,16 +1026,8 @@ export class ZohoSyncService implements OnModuleInit {
         A_o_de_la_Declaraci_n_Fiscal: renovacion.declaracionAnoCorriente ? '2025' : '',
         Nuevo_nombre_de_la_LLC: renovacion.cambioNombre ? renovacion.llcName || '' : '',
         // Declaraciones_Juradas_Anteriores: this.mapBooleanToPickList(renovacion.declaracionAnosAnteriores), // Comentado temporalmente - error de validación en Zoho (maximum_length: 1)
-        // Multiselect: Tipo de Declaración — valores separados por ";"
-        Tipo_de_Declaracion: [
-          renovacion.declaracionInicial && 'Declaracion Inicial',
-          renovacion.declaracionAnoCorriente && 'Declaracion Ano Corriente',
-          renovacion.cambioDireccionRA && 'Cambio de Direccion RA',
-          renovacion.cambioNombre && 'Cambio de Nombre',
-          renovacion.declaracionAnosAnteriores && 'Declaracion Anos Anteriores',
-          renovacion.agregarCambiarSocio && 'Agregar Cambiar Socio',
-          renovacion.declaracionCierre && 'Declaracion de Cierre',
-        ].filter(Boolean).join(';') || null,
+        // Multiselect: Zoho espera jsonarray, no string con ";"
+        ...(this.buildTipoDeclaracionForZoho(renovacion)),
         Cu_nto_cost_abrir_la_LLC_en_Estados_Unidos: renovacion.llcOpeningCost ? String(renovacion.llcOpeningCost) : '',
         Pagos_a_familiares_servicios: renovacion.paidToFamilyMembers ? String(renovacion.paidToFamilyMembers) : '',
         Cu_nto_pag_la_LLC_a_empresas_locales_En_otro_Pa: renovacion.paidToLocalCompanies ? String(renovacion.paidToLocalCompanies) : '',
@@ -1553,6 +1548,31 @@ export class ZohoSyncService implements OnModuleInit {
     const query = `SELECT ${fields.join(', ')} FROM Propietarios_LLC WHERE LLC.id = '${accountId}' ORDER BY Created_Time ASC LIMIT 200`;
     const response = await this.zohoCrmService.queryWithCoql(query, undefined, org);
     return response.data || [];
+  }
+
+  /**
+   * Multiselect Tipo_de_Declaracion — Zoho CRM espera jsonarray.
+   */
+  private buildTipoDeclaracionForZoho(renovacion: {
+    declaracionInicial?: boolean;
+    declaracionAnoCorriente?: boolean;
+    cambioDireccionRA?: boolean;
+    cambioNombre?: boolean;
+    declaracionAnosAnteriores?: boolean;
+    agregarCambiarSocio?: boolean;
+    declaracionCierre?: boolean;
+  }): { Tipo_de_Declaracion?: string[] } {
+    const valores = [
+      renovacion.declaracionInicial && 'Declaracion Inicial',
+      renovacion.declaracionAnoCorriente && 'Declaracion Ano Corriente',
+      renovacion.cambioDireccionRA && 'Cambio de Direccion RA',
+      renovacion.cambioNombre && 'Cambio de Nombre',
+      renovacion.declaracionAnosAnteriores && 'Declaracion Anos Anteriores',
+      renovacion.agregarCambiarSocio && 'Agregar Cambiar Socio',
+      renovacion.declaracionCierre && 'Declaracion de Cierre',
+    ].filter((v): v is string => typeof v === 'string');
+
+    return valores.length > 0 ? { Tipo_de_Declaracion: valores } : {};
   }
 
   /**
