@@ -9,7 +9,8 @@ export class PromoteSignedCrmLeadRequests1778700000000 implements MigrationInter
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`
       UPDATE "requests"
-      SET "status" = 'solicitud-recibida'
+      SET "status" = 'solicitud-recibida',
+          "updatedAt" = NOW()
       WHERE "status" = 'pendiente'
         AND "signature_url" IS NOT NULL
         AND TRIM("signature_url") <> ''
